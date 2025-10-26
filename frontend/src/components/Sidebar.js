@@ -85,7 +85,13 @@ const Sidebar = ({ collapsed, onCollapse }) => {
         },
     ];
 
-    const allMenuItems = [...mainMenuItems, ...adminMenuItems, ...systemMenuItems];
+    // 根據用戶權限組合選單項目
+    const allMenuItems = [
+        ...mainMenuItems,
+        // 只有已登入且是 admin 的用戶才能看到管理功能和系統設定
+        ...(isAuthenticated && user?.is_staff ? adminMenuItems : []),
+        ...(isAuthenticated && user?.is_staff ? systemMenuItems : []),
+    ];
 
     return (
         <Sider
