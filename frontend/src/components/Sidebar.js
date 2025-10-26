@@ -49,11 +49,6 @@ const Sidebar = ({ collapsed, onCollapse }) => {
     // 主選單項目
     const mainMenuItems = [
         {
-            key: 'dashboard',
-            icon: <HomeOutlined />,
-            label: 'Dashboard',
-        },
-        {
             key: 'dhcp-analytics',
             icon: <BarChartOutlined />,
             label: 'DHCP Server 分析',
