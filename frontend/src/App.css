@@ -1,0 +1,93 @@
+/* NT Network Toolbox - Application Styles */
+
+.App {
+    min-height: 100vh;
+    background: #f5f5f5;
+}
+
+/* 防止抖動的全域設定 */
+* {
+    box-sizing: border-box;
+}
+
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+/* Layout 樣式 */
+.ant-layout {
+    min-height: 100vh;
+    background: #f5f5f5;
+}
+
+.ant-layout-content {
+    background: #f5f5f5;
+    padding: 24px;
+    min-height: calc(100vh - 64px);
+}
+
+/* Sidebar 明亮風格覆寫 */
+.ant-layout-sider {
+    background: #ffffff !important;
+    border-right: 1px solid #e0e0e0;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Menu 明亮風格 */
+.ant-menu-light {
+    background: #ffffff;
+    color: #37474f;
+}
+
+.ant-menu-light .ant-menu-item {
+    color: #37474f;
+    margin: 4px 12px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.ant-menu-light .ant-menu-item:hover {
+    background: #f5f5f5;
+    color: #1976d2;
+}
+
+.ant-menu-light .ant-menu-item-selected {
+    background: #e3f2fd;
+    color: #1976d2;
+    border-left: 4px solid #2196f3;
+}
+
+.ant-menu-light .ant-menu-submenu-title:hover {
+    background: #f5f5f5;
+    color: #1976d2;
+}
+
+/* Card 樣式 */
+.ant-card {
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+/* Button 樣式 */
+.ant-btn-primary {
+    background: #2196f3;
+    border-color: #2196f3;
+}
+
+.ant-btn-primary:hover {
+    background: #1976d2;
+    border-color: #1976d2;
+}
+
+/* Statistic 樣式 */
+.ant-statistic-title {
+    color: #757575;
+    font-size: 14px;
+}
+
+.ant-statistic-content {
+    color: #37474f;
+    font-size: 28px;
+    font-weight: 600;
+}

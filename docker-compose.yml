@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: nt-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: network_toolbox
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: Asia/Taipei
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - nt_network
+    profiles:
+      - with-postgres # 只在指定 profile 時啟動
+
+  adminer:
+    image: adminer:latest
+    container_name: nt-adminer
+    restart: unless-stopped
+    ports:
+      - "9090:8080"
+    network_mode: "host" # 使用 host 網路模式以訪問本機 PostgreSQL
+
+  django:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nt-django
+    restart: unless-stopped
+    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      - TZ=Asia/Taipei
+      - DEBUG=1
+      - DB_HOST=host.docker.internal # 使用 Docker 的特殊 DNS 名稱連接本機
+      - DB_PORT=5432
+      - DB_NAME=network_toolbox
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres123
+    volumes:
+      - ./backend:/app
+      - ./library:/app/library
+      - static_files:/app/static
+      - media_files:/app/media
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # 讓容器能訪問宿主機
+    networks:
+      - nt_network
+
+  react:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nt-react
+    restart: unless-stopped
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - REACT_APP_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    networks:
+      - nt_network
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: nt-nginx
+    restart: unless-stopped
+    volumes:
+      - static_files:/app/static:ro
+      - media_files:/app/media:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - django
+      - react
+    networks:
+      - nt_network
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: nt-portainer
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer_data:/data
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+
+volumes:
+  postgres_data:
+  static_files:
+  media_files:
+  portainer_data:
+
+
+networks:
+  nt_network:
+    driver: bridge

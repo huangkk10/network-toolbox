@@ -1,0 +1,69 @@
+/* Dashboard Page Styles */
+
+.dashboard-page {
+    padding: 24px;
+}
+
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.page-header h2 {
+    font-size: 24px;
+    font-weight: 600;
+    color: #37474f;
+    margin: 0;
+}
+
+.stat-footer {
+    margin-top: 12px;
+    font-size: 13px;
+    color: #757575;
+}
+
+.stat-footer .anticon {
+    margin-right: 4px;
+}
+
+/* Card 樣式覆寫 */
+.dashboard-page .ant-card {
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.dashboard-page .ant-card-head {
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.dashboard-page .ant-card-head-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #37474f;
+}
+
+/* Table 樣式 */
+.dashboard-page .ant-table {
+    background: #ffffff;
+}
+
+.dashboard-page .ant-table-thead>tr>th {
+    background: #fafafa;
+    color: #757575;
+    font-weight: 600;
+}
+
+/* 響應式 */
+@media (max-width: 768px) {
+    .dashboard-page {
+        padding: 16px;
+    }
+
+    .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+}
