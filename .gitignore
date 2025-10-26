@@ -131,3 +131,8 @@ Thumbs.db
 # Static and media files (in development)
 /backend/static/
 /backend/media/
+
+# Logs (保留 README.md，忽略其他)
+/logs/*.log
+/logs/*.log.*
+/logs/analysis_report_*.txt

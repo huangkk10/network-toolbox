@@ -1,9 +1,32 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
+from django.contrib.auth.models import User
 from .models import DHCPServer, DHCPLease
-from .serializers import DHCPServerSerializer, DHCPLeaseSerializer
+from .serializers import DHCPServerSerializer, DHCPLeaseSerializer, UserSerializer
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    """用戶管理 API ViewSet"""
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [AllowAny]  # 開發階段允許所有請求，生產環境應改為 IsAdminUser
+    pagination_class = None  # 禁用分頁，直接返回所有用戶
+    
+    @action(detail=True, methods=['post'])
+    def reset_password(self, request, pk=None):
+        """重設用戶密碼"""
+        user = self.get_object()
+        new_password = request.data.get('password')
+        if not new_password:
+            return Response(
+                {'error': '請提供新密碼'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        user.set_password(new_password)
+        user.save()
+        return Response({'message': '密碼重設成功'})
 
 
 class DHCPServerViewSet(viewsets.ModelViewSet):

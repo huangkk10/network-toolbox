@@ -50,6 +50,7 @@ services:
     volumes:
       - ./backend:/app
       - ./library:/app/library
+      - ./logs:/app/logs # 日誌目錄掛載
       - static_files:/app/static
       - media_files:/app/media
     ports:

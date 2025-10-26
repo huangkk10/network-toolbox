@@ -15,7 +15,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-producti
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,nt-django').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='*').split(',')
 
 # Application definition
 INSTALLED_APPS = [
@@ -145,3 +145,104 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost",
 ]
+
+# Logging Configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '[{levelname}] {asctime} | {name} | {funcName} | Line {lineno} | {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '[{levelname}] {asctime} {name}: {message}',
+            'style': '{',
+        },
+        'detailed': {
+            'format': '[{levelname}] {asctime} | PID:{process:d} | Thread:{thread:d} | {name} | {funcName} | Line {lineno} | {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        # 按日期分割的一般 log（每天午夜輪替，保留 30 天）
+        'daily_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': '/app/logs/django.log',
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 30,  # 保留 30 天
+            'formatter': 'verbose',
+            'encoding': 'utf-8',
+        },
+        # 按日期分割的錯誤 log（保留 60 天）
+        'daily_error_file': {
+            'level': 'ERROR',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': '/app/logs/django_error.log',
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 60,  # 錯誤 log 保留更久
+            'formatter': 'verbose',
+            'encoding': 'utf-8',
+        },
+        # DHCP 操作專用 log
+        'dhcp_operations_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': '/app/logs/dhcp_operations.log',
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 15,
+            'formatter': 'verbose',
+            'encoding': 'utf-8',
+        },
+        # API 訪問記錄（輕量級）
+        'api_access_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': '/app/logs/api_access.log',
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 7,  # API 訪問只保留 7 天
+            'formatter': 'simple',
+            'encoding': 'utf-8',
+        },
+    },
+    'loggers': {
+        # API Views
+        'api.views': {
+            'handlers': ['console', 'daily_file', 'daily_error_file', 'api_access_file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        # Django 核心
+        'django': {
+            'handlers': ['console', 'daily_file', 'daily_error_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Django Request（API 訪問）
+        'django.request': {
+            'handlers': ['console', 'daily_file', 'api_access_file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        # DHCP 相關操作
+        'api.services': {
+            'handlers': ['console', 'dhcp_operations_file', 'daily_error_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        # Root logger
+        '': {
+            'handlers': ['console', 'daily_file', 'daily_error_file'],
+            'level': 'INFO',
+        },
+    },
+}

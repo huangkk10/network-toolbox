@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 複製應用程式代碼
 COPY . /app/
 
+# 創建日誌目錄
+RUN mkdir -p /app/logs && chmod 777 /app/logs
+
 # 暴露端口
 EXPOSE 8000
 
