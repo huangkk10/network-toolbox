@@ -83,11 +83,6 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             icon: <SettingOutlined />,
             label: '系統設定',
         },
-        {
-            key: 'dev-tools',
-            icon: <ExperimentOutlined />,
-            label: '開發工具',
-        },
     ];
 
     const allMenuItems = [...mainMenuItems, ...adminMenuItems, ...systemMenuItems];
