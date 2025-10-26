@@ -98,17 +98,23 @@
     gap: 12px;
     padding: 4px 12px;
     border-radius: 8px;
-    cursor: pointer;
+    cursor: pointer !important;
     transition: all 0.3s ease;
+    user-select: none;
 }
 
 .user-info:hover {
     background: #f5f5f5;
 }
 
+.user-info:active {
+    background: #e0e0e0;
+}
+
 .user-avatar {
     background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
     flex-shrink: 0;
+    cursor: pointer !important;
 }
 
 .user-details {

@@ -8,23 +8,21 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // 模擬從 localStorage 或 API 獲取用戶資訊
+        // 從 localStorage 獲取用戶資訊
         const storedUser = localStorage.getItem('user');
         if (storedUser) {
-            const parsedUser = JSON.parse(storedUser);
-            setUser(parsedUser);
-            setIsAuthenticated(true);
+            try {
+                const parsedUser = JSON.parse(storedUser);
+                setUser(parsedUser);
+                setIsAuthenticated(true);
+            } catch (error) {
+                console.error('Failed to parse stored user:', error);
+                localStorage.removeItem('user');
+            }
         } else {
-            // 預設管理員用戶 (開發環境)
-            const defaultUser = {
-                username: 'admin',
-                email: 'admin@network-toolbox.local',
-                is_staff: true,
-                is_superuser: true,
-            };
-            setUser(defaultUser);
-            setIsAuthenticated(true);
-            localStorage.setItem('user', JSON.stringify(defaultUser));
+            // 訪客模式：允許未登入用戶訪問（無用戶選單）
+            setUser(null);
+            setIsAuthenticated(false);
         }
         setLoading(false);
     }, []);

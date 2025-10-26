@@ -9,6 +9,7 @@ import {
     ReloadOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 import './TopHeader.css';
 
 const { Header } = Layout;
@@ -16,6 +17,30 @@ const { Text } = Typography;
 
 const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions }) => {
     const { user, isAuthenticated, logout } = useAuth();
+    const navigate = useNavigate();
+
+    // 處理用戶選單點擊
+    const handleMenuClick = ({ key }) => {
+        console.log('User menu clicked:', key);
+        switch (key) {
+            case 'profile':
+                console.log('Navigate to profile');
+                // TODO: 導航到個人資料頁面
+                break;
+            case 'settings':
+                console.log('Navigate to settings');
+                // TODO: 導航到設定頁面
+                break;
+            case 'logout':
+                console.log('Logging out...');
+                logout();
+                // 登出後導向登入頁面
+                navigate('/login');
+                break;
+            default:
+                break;
+        }
+    };
 
     // 用戶下拉選單
     const userMenuItems = [
@@ -37,7 +62,6 @@ const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions }) => {
             icon: <LogoutOutlined />,
             label: '登出',
             danger: true,
-            onClick: logout,
         },
     ];
 
@@ -81,18 +105,31 @@ const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions }) => {
                         className="icon-button"
                     />
 
-                    {/* 用戶下拉選單 */}
+                    {/* 用戶選單或登入按鈕 */}
                     {isAuthenticated && user ? (
+                        // 已登入：顯示用戶下拉選單
                         <Dropdown
-                            menu={{ items: userMenuItems }}
+                            menu={{
+                                items: userMenuItems,
+                                onClick: handleMenuClick
+                            }}
                             placement="bottomRight"
                             trigger={['click']}
+                            arrow
                         >
-                            <div className="user-info">
+                            <div
+                                className="user-info"
+                                style={{ cursor: 'pointer' }}
+                                onClick={(e) => {
+                                    console.log('User info clicked', e);
+                                    e.stopPropagation();
+                                }}
+                            >
                                 <Avatar
                                     size={36}
                                     icon={<UserOutlined />}
                                     className="user-avatar"
+                                    style={{ cursor: 'pointer' }}
                                 />
                                 <div className="user-details">
                                     <Text className="user-name">{user.username || 'Admin'}</Text>
@@ -101,11 +138,14 @@ const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions }) => {
                             </div>
                         </Dropdown>
                     ) : (
-                        <Avatar
-                            size={36}
+                        // 訪客模式：顯示登入按鈕
+                        <Button
+                            type="primary"
                             icon={<UserOutlined />}
-                            className="user-avatar"
-                        />
+                            onClick={() => navigate('/login')}
+                        >
+                            登入
+                        </Button>
                     )}
                 </Space>
             </div>

@@ -4,9 +4,10 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import { Layout } from 'antd';
 import Sidebar from './components/Sidebar';
 import TopHeader from './components/TopHeader';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Pages
+import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import DHCPAnalyticsPage from './pages/DHCPAnalyticsPage';
 import DHCPServerManagementPage from './pages/DHCPServerManagementPage';
@@ -18,7 +19,7 @@ const { Content } = Layout;
 function App() {
     return (
         <AuthProvider>
-            <Router>
+            <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                 <AppLayout />
             </Router>
         </AuthProvider>
@@ -28,6 +29,7 @@ function App() {
 function AppLayout() {
     const [collapsed, setCollapsed] = useState(false);
     const location = useLocation();
+    const { isAuthenticated, loading } = useAuth();
 
     const toggleSidebar = () => {
         setCollapsed(!collapsed);
@@ -35,6 +37,8 @@ function AppLayout() {
 
     const getPageTitle = (pathname) => {
         switch (pathname) {
+            case '/login':
+                return '登入';
             case '/dashboard':
                 return 'Dashboard';
             case '/dhcp-analytics':
@@ -52,6 +56,21 @@ function AppLayout() {
 
     const currentPageTitle = getPageTitle(location.pathname);
 
+    // 載入中
+    if (loading) {
+        return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>載入中...</div>;
+    }
+
+    // 登入頁面（獨立布局）
+    if (location.pathname === '/login') {
+        return (
+            <Routes>
+                <Route path="/login" element={<LoginPage />} />
+            </Routes>
+        );
+    }
+
+    // 主要介面（支援訪客模式）
     return (
         <Layout style={{ minHeight: '100vh' }}>
             <Sidebar
@@ -73,7 +92,7 @@ function AppLayout() {
                     overflow: 'auto'
                 }}>
                     <Routes>
-                        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                        <Route path="/" element={<Navigate to="/dhcp-analytics" replace />} />
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/dhcp-analytics" element={<DHCPAnalyticsPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />
