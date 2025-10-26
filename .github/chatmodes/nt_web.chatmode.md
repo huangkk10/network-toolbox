@@ -215,9 +215,190 @@ docker compose up -d --build react
 - **側邊欄**：白色背景，藍色選中高亮
 - **品牌名稱**：NT（Network Toolbox）
 
+### UI 組件庫：Ant Design（預設使用）
+
+**本專案預設使用 Ant Design 5.x 作為 UI 組件庫**
+
+#### 常用組件清單
+
+**佈局組件**：
+- `Layout`, `Header`, `Sider`, `Content`, `Footer` - 頁面佈局
+- `Row`, `Col` - 網格系統（響應式佈局）
+- `Space` - 間距組件
+- `Divider` - 分隔線
+
+**數據展示**：
+- `Table` - 數據表格（支援排序、篩選、分頁）
+- `Card` - 卡片容器
+- `Statistic` - 統計數值展示
+- `Tag` - 標籤
+- `Badge` - 徽標
+- `Descriptions` - 描述列表
+- `Timeline` - 時間軸
+- `Tree` - 樹形控件
+
+**數據輸入**：
+- `Form`, `Form.Item` - 表單容器
+- `Input`, `Input.Password`, `Input.TextArea` - 輸入框
+- `Select`, `Select.Option` - 下拉選擇
+- `DatePicker`, `RangePicker` - 日期選擇
+- `Checkbox`, `Radio` - 選擇器
+- `Switch` - 開關
+- `Slider` - 滑動輸入條
+- `Upload` - 文件上傳
+
+**操作反饋**：
+- `Button` - 按鈕（type: primary, default, dashed, text, link）
+- `Modal` - 對話框
+- `message` - 全局提示訊息
+- `notification` - 通知提醒框
+- `Popconfirm` - 氣泡確認框
+- `Drawer` - 抽屜
+- `Progress` - 進度條
+- `Spin` - 載入中
+
+**導航**：
+- `Menu` - 導航菜單
+- `Dropdown` - 下拉菜單
+- `Breadcrumb` - 麵包屑
+- `Pagination` - 分頁
+- `Steps` - 步驟條
+
+**圖表組件（使用 recharts）**：
+- `LineChart` - 折線圖
+- `AreaChart` - 面積圖
+- `BarChart` - 柱狀圖
+- `PieChart` - 圓餅圖
+- `ResponsiveContainer` - 響應式容器
+
+#### 組件使用規範
+
+1. **顏色使用**：
+   ```javascript
+   // 狀態顏色
+   success: '#52c41a'  // 成功、活躍
+   warning: '#faad14'  // 警告、即將過期
+   error: '#ff4d4f'    // 錯誤、已過期
+   info: '#2196f3'     // 資訊、主色調
+   ```
+
+2. **按鈕規範**：
+   ```javascript
+   // 主要操作
+   <Button type="primary">確定</Button>
+   
+   // 次要操作
+   <Button>取消</Button>
+   
+   // 危險操作
+   <Button type="primary" danger>刪除</Button>
+   
+   // 圖標按鈕
+   <Button icon={<PlusOutlined />}>新增</Button>
+   ```
+
+3. **表格規範**：
+   ```javascript
+   <Table
+       columns={columns}
+       dataSource={data}
+       rowKey="id"              // 必須指定 rowKey
+       loading={loading}        // 載入狀態
+       pagination={{            // 分頁配置
+           pageSize: 10,
+           showSizeChanger: true,
+           showTotal: (total) => `共 ${total} 筆`
+       }}
+       size="middle"            // small, middle, large
+   />
+   ```
+
+4. **表單規範**：
+   ```javascript
+   <Form
+       form={form}
+       layout="vertical"        // horizontal, vertical, inline
+       onFinish={handleSubmit}
+   >
+       <Form.Item
+           label="欄位名稱"
+           name="fieldName"
+           rules={[
+               { required: true, message: '請輸入欄位名稱' }
+           ]}
+       >
+           <Input placeholder="請輸入..." />
+       </Form.Item>
+   </Form>
+   ```
+
+5. **訊息提示規範**：
+   ```javascript
+   import { message } from 'antd';
+   
+   message.success('操作成功！');
+   message.error('操作失敗！');
+   message.warning('請注意！');
+   message.info('提示訊息');
+   ```
+
+6. **Modal 對話框規範**：
+   ```javascript
+   <Modal
+       title="對話框標題"
+       open={visible}           // v5 使用 open 代替 visible
+       onOk={handleOk}
+       onCancel={handleCancel}
+       okText="確定"
+       cancelText="取消"
+   >
+       {/* 內容 */}
+   </Modal>
+   ```
+
+7. **響應式佈局**：
+   ```javascript
+   <Row gutter={[16, 16]}>
+       <Col xs={24} sm={12} md={8} lg={6}>
+           {/* xs: 手機, sm: 平板, md: 小桌面, lg: 大桌面 */}
+       </Col>
+   </Row>
+   ```
+
+#### 圖標使用（@ant-design/icons）
+
+常用圖標：
+```javascript
+import {
+    UserOutlined,
+    SettingOutlined,
+    LogoutOutlined,
+    PlusOutlined,
+    EditOutlined,
+    DeleteOutlined,
+    SearchOutlined,
+    ReloadOutlined,
+    CheckCircleOutlined,
+    CloseCircleOutlined,
+    BarChartOutlined,
+    GlobalOutlined,
+} from '@ant-design/icons';
+```
+
 ### 代碼風格
-- **前端**：函數式組件 + Hooks，Ant Design，axios，React Router v6
-- **後端**：ViewSet，RESTful API，詳細日誌記錄
+
+**前端開發規範**：
+- **組件類型**：函數式組件 + Hooks（不使用 Class 組件）
+- **UI 組件庫**：Ant Design 5.x（**預設使用**）
+- **圖表庫**：recharts（用於數據視覺化）
+- **HTTP 客戶端**：axios
+- **路由**：React Router v6
+- **狀態管理**：useState, useContext（小型專案不需要 Redux）
+
+**後端開發規範**：
+- **API 風格**：ViewSet + RESTful API
+- **序列化**：Django REST Framework Serializers
+- **日誌記錄**：詳細記錄操作和錯誤
 
 ## 數據模型
 
@@ -231,9 +412,39 @@ docker compose up -d --build react
 ### 添加新功能時
 
 1. **前端頁面**：
-   - 在 `frontend/src/pages/` 創建
+   - 在 `frontend/src/pages/` 創建（使用 Ant Design 組件）
    - 更新 `App.js` 路由
    - 更新 `Sidebar.js` 菜單
+   - **必須使用 Ant Design 組件**，不要使用原生 HTML 元素
+   
+   範例結構：
+   ```javascript
+   import React, { useState, useEffect } from 'react';
+   import { Card, Table, Button, Modal, Form, Input, message } from 'antd';
+   import { PlusOutlined } from '@ant-design/icons';
+   
+   const NewFeaturePage = () => {
+       const [data, setData] = useState([]);
+       const [loading, setLoading] = useState(false);
+       const [modalVisible, setModalVisible] = useState(false);
+       
+       // 使用 Ant Design 組件構建 UI
+       return (
+           <div style={{ padding: '24px' }}>
+               <Card 
+                   title="頁面標題"
+                   extra={<Button type="primary" icon={<PlusOutlined />}>新增</Button>}
+               >
+                   <Table 
+                       dataSource={data} 
+                       loading={loading}
+                       // ...其他配置
+                   />
+               </Card>
+           </div>
+       );
+   };
+   ```
 
 2. **後端 API**：
    - `models.py` 定義模型
@@ -251,19 +462,110 @@ docker compose up -d --build react
    logger.error('發生錯誤', exc_info=True)
    ```
 
+4. **前端數據請求**：
+   ```javascript
+   import axios from 'axios';
+   import { message } from 'antd';
+   
+   const fetchData = async () => {
+       setLoading(true);
+       try {
+           const response = await axios.get('/api/endpoint/');
+           setData(response.data);
+           message.success('載入成功');
+       } catch (error) {
+           console.error('Error:', error);
+           message.error('載入失敗：' + error.message);
+       } finally {
+           setLoading(false);
+       }
+   };
+   ```
+
+### 前端開發最佳實踐
+
+1. **永遠使用 Ant Design 組件**：
+   - ✅ 使用 `<Button>`，不要用 `<button>`
+   - ✅ 使用 `<Input>`，不要用 `<input>`
+   - ✅ 使用 `<Table>`，不要用 `<table>`
+   - ✅ 使用 `<Card>`，不要用 `<div className="card">`
+
+2. **響應式設計**：
+   ```javascript
+   <Row gutter={[16, 16]}>
+       <Col xs={24} sm={12} md={8} lg={6}>
+           <Card>內容</Card>
+       </Col>
+   </Row>
+   ```
+
+3. **狀態管理**：
+   - 使用 `useState` 管理組件狀態
+   - 使用 `useEffect` 處理副作用（API 請求）
+   - 複雜狀態使用 `useContext`
+
+4. **錯誤處理統一使用 message**：
+   ```javascript
+   message.success('操作成功');
+   message.error('操作失敗');
+   message.warning('請注意');
+   message.info('提示訊息');
+   ```
+
 ### API 開發規範
 
 - 使用 ViewSet
-- 禁用分頁：`pagination_class = None`
+- 禁用分頁：`pagination_class = None`（除非需要分頁）
 - 開發環境：`AllowAny`
 - 生產環境：`IsAuthenticated`
 
 ### 錯誤處理
 
+**後端**：
 - try-except 捕獲異常
 - 記錄到日誌（包含 stack trace）
 - 返回友好錯誤訊息
-- 前端使用 Ant Design message 提示
+
+**前端**：
+- 使用 Ant Design `message` 顯示錯誤
+- 使用 `loading` 狀態顯示載入動畫
+- 表單驗證使用 Form.Item 的 rules
+
+### 組件開發規範
+
+**頁面組件結構**：
+```javascript
+const PageComponent = () => {
+    // 1. Hooks（useState, useEffect, etc.）
+    const [data, setData] = useState([]);
+    const [loading, setLoading] = useState(false);
+    
+    // 2. 數據請求函數
+    const fetchData = async () => { /* ... */ };
+    
+    // 3. 事件處理函數
+    const handleAdd = () => { /* ... */ };
+    const handleEdit = (record) => { /* ... */ };
+    const handleDelete = (id) => { /* ... */ };
+    
+    // 4. useEffect
+    useEffect(() => {
+        fetchData();
+    }, []);
+    
+    // 5. 渲染配置（Table columns, etc.）
+    const columns = [ /* ... */ ];
+    
+    // 6. 返回 JSX（使用 Ant Design 組件）
+    return (
+        <div style={{ padding: '24px' }}>
+            <Card>
+                <Table columns={columns} dataSource={data} />
+            </Card>
+        </div>
+    );
+};
+```
 
 ## 故障排查
 
