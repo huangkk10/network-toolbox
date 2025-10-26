@@ -1,0 +1,92 @@
+.log-container {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 16px;
+    border-radius: 4px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    max-height: 500px;
+    overflow-y: auto;
+    line-height: 1.6;
+}
+
+.log-line {
+    margin-bottom: 4px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+}
+
+.log-line:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.log-time {
+    color: #858585;
+    margin-right: 12px;
+    font-weight: 500;
+}
+
+.log-message {
+    color: #d4d4d4;
+    word-break: break-word;
+}
+
+/* 日誌等級顏色 */
+.log-line.log-info {
+    border-left: 3px solid #2196f3;
+}
+
+.log-line.log-warn {
+    border-left: 3px solid #faad14;
+    background-color: rgba(250, 173, 20, 0.1);
+}
+
+.log-line.log-error {
+    border-left: 3px solid #ff4d4f;
+    background-color: rgba(255, 77, 79, 0.1);
+}
+
+.log-line.log-error .log-message {
+    color: #ff7875;
+    font-weight: 500;
+}
+
+.log-line.log-debug {
+    border-left: 3px solid #8c8c8c;
+    opacity: 0.7;
+}
+
+/* 滾動條樣式 */
+.log-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.log-container::-webkit-scrollbar-track {
+    background: #252525;
+    border-radius: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+    background: #4a4a4a;
+    border-radius: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+    background: #5a5a5a;
+}
+
+/* Tag 在日誌中的樣式 */
+.log-line .ant-tag {
+    margin: 0 8px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 11px;
+    font-weight: bold;
+    min-width: 55px;
+    text-align: center;
+}
+
+/* 空狀態樣式 */
+.log-container .ant-empty {
+    color: #858585;
+}
