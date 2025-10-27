@@ -1,0 +1,604 @@
+"""
+DHCP Server SSH 連接和資料擷取服務
+"""
+import paramiko
+import re
+import logging
+from datetime import datetime, timedelta
+from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+
+class DHCPServerSSH:
+    """SSH 連接管理器"""
+    
+    def __init__(self, host, port=22, username='root', password=None, key_file=None):
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.key_file = key_file
+        self.client = None
+    
+    def connect(self):
+        """建立 SSH 連接"""
+        try:
+            self.client = paramiko.SSHClient()
+            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            if self.key_file:
+                self.client.connect(
+                    self.host,
+                    port=self.port,
+                    username=self.username,
+                    key_filename=self.key_file,
+                    timeout=10
+                )
+            else:
+                self.client.connect(
+                    self.host,
+                    port=self.port,
+                    username=self.username,
+                    password=self.password,
+                    timeout=10
+                )
+            
+            logger.info(f'成功連接到 DHCP Server: {self.host}')
+            return True
+        except Exception as e:
+            logger.error(f'SSH 連接失敗 ({self.host}): {str(e)}', exc_info=True)
+            return False
+    
+    def execute_command(self, command):
+        """執行 SSH 指令"""
+        try:
+            if not self.client:
+                if not self.connect():
+                    return None, f'SSH 連接失敗: {self.host}'
+            
+            stdin, stdout, stderr = self.client.exec_command(command, timeout=30)
+            output = stdout.read().decode('utf-8')
+            error = stderr.read().decode('utf-8')
+            
+            if error:
+                logger.warning(f'指令執行警告 ({command}): {error}')
+            
+            logger.info(f'成功執行指令: {command}')
+            return output, None
+        except Exception as e:
+            error_msg = f'執行指令失敗 ({command}): {str(e)}'
+            logger.error(error_msg, exc_info=True)
+            return None, error_msg
+    
+    def close(self):
+        """關閉 SSH 連接"""
+        if self.client:
+            self.client.close()
+            logger.info(f'關閉 SSH 連接: {self.host}')
+    
+    def __enter__(self):
+        self.connect()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+
+class DHCPLeaseParser:
+    """DHCP Lease 資料解析器"""
+    
+    @staticmethod
+    def parse_leases_file(content):
+        """
+        解析 dhcpd.leases 檔案內容
+        
+        範例格式：
+        lease 192.168.1.100 {
+          starts 6 2025/10/26 14:30:22;
+          ends 0 2025/10/27 14:30:22;
+          hardware ethernet 00:1a:2b:3c:4d:5e;
+          client-hostname "desktop-001";
+        }
+        """
+        leases = []
+        
+        # 使用正則表達式解析每個 lease 區塊
+        lease_pattern = re.compile(
+            r'lease\s+([\d.]+)\s*\{([^}]+)\}',
+            re.MULTILINE | re.DOTALL
+        )
+        
+        for match in lease_pattern.finditer(content):
+            ip_address = match.group(1)
+            lease_block = match.group(2)
+            
+            # 解析租約詳細資訊
+            lease_info = {
+                'ip_address': ip_address,
+                'mac_address': '',
+                'hostname': '',
+                'lease_start': None,
+                'lease_end': None,
+                'is_active': False,
+            }
+            
+            # 提取 MAC 位址
+            mac_match = re.search(r'hardware\s+ethernet\s+([\da-fA-F:]+)', lease_block)
+            if mac_match:
+                lease_info['mac_address'] = mac_match.group(1).lower()
+            
+            # 提取主機名稱
+            hostname_match = re.search(r'client-hostname\s+"([^"]+)"', lease_block)
+            if hostname_match:
+                lease_info['hostname'] = hostname_match.group(1)
+            
+            # 提取開始時間
+            starts_match = re.search(r'starts\s+\d+\s+([\d/]+)\s+([\d:]+)', lease_block)
+            if starts_match:
+                date_str = starts_match.group(1).replace('/', '-')
+                time_str = starts_match.group(2)
+                try:
+                    lease_info['lease_start'] = datetime.strptime(
+                        f'{date_str} {time_str}', '%Y-%m-%d %H:%M:%S'
+                    )
+                except ValueError:
+                    pass
+            
+            # 提取結束時間
+            ends_match = re.search(r'ends\s+\d+\s+([\d/]+)\s+([\d:]+)', lease_block)
+            if ends_match:
+                date_str = ends_match.group(1).replace('/', '-')
+                time_str = ends_match.group(2)
+                try:
+                    lease_info['lease_end'] = datetime.strptime(
+                        f'{date_str} {time_str}', '%Y-%m-%d %H:%M:%S'
+                    )
+                except ValueError:
+                    pass
+            
+            # 判斷是否活躍
+            if lease_info['lease_end']:
+                lease_info['is_active'] = lease_info['lease_end'] > datetime.now()
+            
+            # 檢查是否為 binding state active
+            if 'binding state active' in lease_block:
+                lease_info['is_active'] = True
+            
+            leases.append(lease_info)
+        
+        logger.info(f'解析到 {len(leases)} 個租約')
+        return leases
+    
+    @staticmethod
+    def parse_dhcp_status(content):
+        """
+        解析 DHCP Server 狀態資訊
+        （可根據實際使用的 DHCP 軟體調整）
+        """
+        status_info = {
+            'is_running': False,
+            'total_pools': 0,
+            'pool_details': [],
+        }
+        
+        # 檢查服務是否運行
+        if 'active (running)' in content.lower() or 'is running' in content.lower():
+            status_info['is_running'] = True
+        
+        return status_info
+
+
+class DHCPDataService:
+    """DHCP 資料服務 - 整合 SSH 和解析功能"""
+    
+    def __init__(self, dhcp_server):
+        """
+        初始化服務
+        
+        Args:
+            dhcp_server: DHCPServer 模型實例
+        """
+        self.server = dhcp_server
+        self.ssh = None
+    
+    def get_leases(self):
+        """
+        從 DHCP Server 獲取租約資料
+        
+        Returns:
+            list: 租約列表
+        """
+        try:
+            # 建立 SSH 連接（需要在 DHCPServer 模型中儲存 SSH 憑證）
+            # 這裡假設使用 password 認證，實際可能需要使用 key file
+            self.ssh = DHCPServerSSH(
+                host=self.server.ip_address,
+                username='root',  # 從設定中讀取
+                password='your_password'  # 從加密儲存中讀取
+            )
+            
+            if not self.ssh.connect():
+                return []
+            
+            # 讀取 dhcpd.leases 檔案（路徑可能需要調整）
+            leases_file_paths = [
+                '/var/lib/dhcpd/dhcpd.leases',  # CentOS/RHEL
+                '/var/lib/dhcp/dhcpd.leases',   # Debian/Ubuntu
+                '/var/db/dhcpd.leases',         # FreeBSD
+            ]
+            
+            content = None
+            for path in leases_file_paths:
+                output, error = self.ssh.execute_command(f'cat {path}')
+                if output and not error:
+                    content = output
+                    logger.info(f'成功讀取租約檔案: {path}')
+                    break
+            
+            if not content:
+                logger.warning(f'無法讀取任何租約檔案 ({self.server.ip_address})')
+                return []
+            
+            # 解析租約資料
+            leases = DHCPLeaseParser.parse_leases_file(content)
+            
+            return leases
+        
+        except Exception as e:
+            logger.error(f'獲取租約資料失敗: {str(e)}', exc_info=True)
+            return []
+        
+        finally:
+            if self.ssh:
+                self.ssh.close()
+    
+    def get_server_status(self):
+        """
+        獲取 DHCP Server 狀態
+        
+        Returns:
+            dict: 狀態資訊
+        """
+        try:
+            self.ssh = DHCPServerSSH(
+                host=self.server.ip_address,
+                username='root',
+                password='your_password'
+            )
+            
+            if not self.ssh.connect():
+                return {'status': 'offline', 'is_running': False}
+            
+            # 檢查 DHCP 服務狀態（根據不同的 DHCP 軟體調整指令）
+            commands = [
+                'systemctl status dhcpd',      # CentOS/RHEL
+                'systemctl status isc-dhcp-server',  # Debian/Ubuntu
+                'service dhcpd status',
+            ]
+            
+            status_output = None
+            for cmd in commands:
+                output, error = self.ssh.execute_command(cmd)
+                if output:
+                    status_output = output
+                    break
+            
+            if status_output:
+                status_info = DHCPLeaseParser.parse_dhcp_status(status_output)
+                return {
+                    'status': 'online' if status_info['is_running'] else 'offline',
+                    'is_running': status_info['is_running'],
+                }
+            
+            return {'status': 'unknown', 'is_running': False}
+        
+        except Exception as e:
+            logger.error(f'獲取服務狀態失敗: {str(e)}', exc_info=True)
+            return {'status': 'offline', 'is_running': False}
+        
+        finally:
+            if self.ssh:
+                self.ssh.close()
+    
+    def sync_leases_to_db(self):
+        """
+        同步租約資料到資料庫
+        
+        Returns:
+            dict: 同步結果統計
+        """
+        from .models import DHCPLease
+        
+        leases = self.get_leases()
+        
+        stats = {
+            'total': len(leases),
+            'created': 0,
+            'updated': 0,
+            'errors': 0,
+        }
+        
+        for lease_data in leases:
+            try:
+                # 使用 update_or_create 來新增或更新租約
+                lease, created = DHCPLease.objects.update_or_create(
+                    server=self.server,
+                    ip_address=lease_data['ip_address'],
+                    mac_address=lease_data['mac_address'],
+                    defaults={
+                        'hostname': lease_data.get('hostname', ''),
+                        'lease_start': lease_data.get('lease_start'),
+                        'lease_end': lease_data.get('lease_end'),
+                        'is_active': lease_data.get('is_active', False),
+                    }
+                )
+                
+                if created:
+                    stats['created'] += 1
+                else:
+                    stats['updated'] += 1
+            
+            except Exception as e:
+                logger.error(f'同步租約失敗 ({lease_data.get("ip_address")}): {str(e)}')
+                stats['errors'] += 1
+        
+        logger.info(f'租約同步完成: {stats}')
+        return stats
+
+
+class DHCPLogParser:
+    """DHCP 日誌解析器"""
+    
+    # 日誌等級對應
+    LOG_LEVELS = {
+        'INFO': 'INFO',
+        'WARN': 'WARN',
+        'WARNING': 'WARN',
+        'ERROR': 'ERROR',
+        'ERR': 'ERROR',
+        'DEBUG': 'DEBUG',
+        'NOTICE': 'INFO',
+    }
+    
+    @staticmethod
+    def parse_dhcp_log_line(line):
+        """
+        解析單行 DHCP 日誌
+        
+        支援的格式：
+        - syslog: Oct 27 14:30:22 dhcpd[1234]: DHCP DISCOVER from ...
+        - dhcpd.log: 2025-10-27 14:30:22 INFO DHCP DISCOVER from ...
+        - 本地日誌: [INFO] 2025-10-27 14:30:22 | DHCP DISCOVER from ...
+        """
+        log_entry = {
+            'timestamp': None,
+            'level': 'INFO',
+            'message': '',
+            'raw': line.strip(),
+        }
+        
+        # 嘗試多種日誌格式
+        patterns = [
+            # 格式 1: [LEVEL] YYYY-MM-DD HH:MM:SS | message
+            r'\[(\w+)\]\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\|\s+(.+)',
+            
+            # 格式 2: YYYY-MM-DD HH:MM:SS LEVEL message
+            r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(\w+)\s+(.+)',
+            
+            # 格式 3: syslog - Oct 27 14:30:22 hostname dhcpd[pid]: message
+            r'(\w+\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+\S+:\s+(.+)',
+            
+            # 格式 4: 簡單格式 - timestamp message
+            r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(.+)',
+        ]
+        
+        for pattern in patterns:
+            match = re.match(pattern, line)
+            if match:
+                groups = match.groups()
+                
+                if len(groups) == 3:
+                    # 包含等級的格式
+                    if pattern == patterns[0]:  # [LEVEL] timestamp | message
+                        log_entry['level'] = groups[0].upper()
+                        log_entry['timestamp'] = groups[1]
+                        log_entry['message'] = groups[2]
+                    else:  # timestamp LEVEL message
+                        log_entry['timestamp'] = groups[0]
+                        log_entry['level'] = groups[1].upper()
+                        log_entry['message'] = groups[2]
+                elif len(groups) == 2:
+                    # 不包含等級的格式
+                    log_entry['timestamp'] = groups[0]
+                    log_entry['message'] = groups[1]
+                    # 根據關鍵字推測等級
+                    log_entry['level'] = DHCPLogParser._infer_log_level(groups[1])
+                
+                break
+        
+        # 如果沒有匹配到任何格式，直接使用原始內容
+        if not log_entry['message']:
+            log_entry['message'] = line.strip()
+            log_entry['level'] = DHCPLogParser._infer_log_level(line)
+        
+        # 標準化日誌等級
+        log_entry['level'] = DHCPLogParser.LOG_LEVELS.get(
+            log_entry['level'], 
+            'INFO'
+        )
+        
+        return log_entry
+    
+    @staticmethod
+    def _infer_log_level(message):
+        """根據訊息內容推測日誌等級"""
+        message_lower = message.lower()
+        
+        if any(keyword in message_lower for keyword in ['error', 'failed', 'fail', 'conflict']):
+            return 'ERROR'
+        elif any(keyword in message_lower for keyword in ['warn', 'warning', 'threshold']):
+            return 'WARN'
+        elif any(keyword in message_lower for keyword in ['debug', 'checking']):
+            return 'DEBUG'
+        else:
+            return 'INFO'
+    
+    @staticmethod
+    def parse_log_file(content, limit=100):
+        """
+        解析日誌檔案內容
+        
+        Args:
+            content: 日誌檔案內容
+            limit: 最多返回幾行（從最後往前取）
+        
+        Returns:
+            list: 解析後的日誌條目列表
+        """
+        lines = content.strip().split('\n')
+        
+        # 從最後往前取指定數量的行
+        lines = lines[-limit:] if len(lines) > limit else lines
+        
+        log_entries = []
+        for i, line in enumerate(lines, 1):
+            if line.strip():
+                entry = DHCPLogParser.parse_dhcp_log_line(line)
+                entry['id'] = i
+                log_entries.append(entry)
+        
+        return log_entries
+
+
+class DHCPLogService:
+    """DHCP 日誌服務"""
+    
+    def __init__(self, dhcp_server=None):
+        self.server = dhcp_server
+        self.ssh = None
+    
+    def get_local_logs(self, log_file='logs/dhcp_operations.log', limit=100, level=None, keyword=None):
+        """
+        讀取本地日誌檔案
+        
+        Args:
+            log_file: 日誌檔案路徑
+            limit: 最多返回幾行
+            level: 篩選日誌等級
+            keyword: 篩選關鍵字
+        
+        Returns:
+            list: 日誌條目列表
+        """
+        import os
+        
+        try:
+            # 確保路徑是相對於專案根目錄
+            if not log_file.startswith('/'):
+                log_file = os.path.join('/app', log_file)
+            
+            if not os.path.exists(log_file):
+                logger.warning(f'日誌檔案不存在: {log_file}')
+                return []
+            
+            with open(log_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            logs = DHCPLogParser.parse_log_file(content, limit=limit * 2)  # 多讀一些以備篩選
+            
+            # 篩選日誌等級
+            if level and level != 'ALL':
+                logs = [log for log in logs if log['level'] == level]
+            
+            # 篩選關鍵字
+            if keyword:
+                keyword_lower = keyword.lower()
+                logs = [
+                    log for log in logs 
+                    if keyword_lower in log['message'].lower()
+                ]
+            
+            # 限制返回數量
+            logs = logs[-limit:] if len(logs) > limit else logs
+            
+            logger.info(f'讀取本地日誌: {len(logs)} 筆')
+            return logs
+        
+        except Exception as e:
+            logger.error(f'讀取本地日誌失敗: {str(e)}', exc_info=True)
+            return []
+    
+    def get_remote_logs(self, limit=100, level=None, keyword=None):
+        """
+        透過 SSH 讀取遠端 DHCP Server 日誌
+        
+        Returns:
+            list: 日誌條目列表
+        """
+        if not self.server:
+            logger.error('未指定 DHCP Server')
+            return []
+        
+        try:
+            # 建立 SSH 連接
+            self.ssh = DHCPServerSSH(
+                host=self.server.ip_address,
+                port=self.server.ssh_port,
+                username=self.server.ssh_username,
+                password=self.server.ssh_password if self.server.ssh_password else None,
+                key_file=self.server.ssh_key_file if self.server.ssh_key_file else None
+            )
+            
+            if not self.ssh.connect():
+                return []
+            
+            # 嘗試讀取常見的 DHCP 日誌檔案
+            log_files = [
+                '/var/log/dhcpd.log',
+                '/var/log/dhcp.log',
+                '/var/log/syslog',
+                '/var/log/messages',
+            ]
+            
+            content = None
+            for log_file in log_files:
+                # 讀取最後 N 行
+                output, error = self.ssh.execute_command(f'tail -n {limit * 2} {log_file} 2>/dev/null')
+                if output and not error:
+                    content = output
+                    logger.info(f'成功讀取遠端日誌: {log_file}')
+                    break
+            
+            if not content:
+                logger.warning(f'無法讀取遠端日誌 ({self.server.ip_address})')
+                return []
+            
+            # 解析日誌
+            logs = DHCPLogParser.parse_log_file(content, limit=limit * 2)
+            
+            # 篩選日誌等級
+            if level and level != 'ALL':
+                logs = [log for log in logs if log['level'] == level]
+            
+            # 篩選關鍵字
+            if keyword:
+                keyword_lower = keyword.lower()
+                logs = [
+                    log for log in logs 
+                    if keyword_lower in log['message'].lower()
+                ]
+            
+            # 限制返回數量
+            logs = logs[-limit:] if len(logs) > limit else logs
+            
+            logger.info(f'讀取遠端日誌: {len(logs)} 筆')
+            return logs
+        
+        except Exception as e:
+            logger.error(f'讀取遠端日誌失敗: {str(e)}', exc_info=True)
+            return []
+        
+        finally:
+            if self.ssh:
+                self.ssh.close()

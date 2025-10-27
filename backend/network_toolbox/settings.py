@@ -233,9 +233,10 @@ LOGGING = {
             'level': 'WARNING',
             'propagate': False,
         },
-        # DHCP 相關操作
+        # DHCP 相關操作 - 只記錄到 django.log，不記錄到 dhcp_operations.log
+        # dhcp_operations.log 專門用於存儲真實的 DHCP Server 日誌
         'api.services': {
-            'handlers': ['console', 'dhcp_operations_file', 'daily_error_file'],
+            'handlers': ['console', 'daily_file', 'daily_error_file'],
             'level': 'INFO',
             'propagate': False,
         },

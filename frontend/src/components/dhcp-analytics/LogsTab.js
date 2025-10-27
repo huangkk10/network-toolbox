@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Select, Input, Switch, Button, Space, Tag, Empty, Spin } from 'antd';
+import { Card, Select, Input, Switch, Button, Space, Tag, Empty, Spin, Radio, message } from 'antd';
 import {
     DownloadOutlined,
     ReloadOutlined,
     ClearOutlined,
     SearchOutlined,
 } from '@ant-design/icons';
+import axios from 'axios';
 import './LogsTab.css';
 
 const { Option } = Select;
@@ -16,87 +17,13 @@ const LogsTab = ({ serverId }) => {
     const [logLevel, setLogLevel] = useState('ALL');
     const [keyword, setKeyword] = useState('');
     const [autoRefresh, setAutoRefresh] = useState(false);
+    const [source, setSource] = useState('local');  // local 或 remote
+    const [limit, setLimit] = useState(200);  // 默認顯示 200 條
     const logContainerRef = useRef(null);
-
-    // 模擬日誌數據
-    const mockLogs = [
-        {
-            id: 1,
-            timestamp: '2025-10-27 14:30:22',
-            level: 'INFO',
-            message: 'DHCP DISCOVER from 00:1A:2B:3C:4D:5E via eth0',
-        },
-        {
-            id: 2,
-            timestamp: '2025-10-27 14:30:23',
-            level: 'INFO',
-            message: 'DHCP OFFER on 192.168.1.100 to 00:1A:2B:3C:4D:5E via eth0',
-        },
-        {
-            id: 3,
-            timestamp: '2025-10-27 14:30:24',
-            level: 'WARN',
-            message: 'IP pool 192.168.1.0/24 usage at 85%, threshold warning',
-        },
-        {
-            id: 4,
-            timestamp: '2025-10-27 14:30:25',
-            level: 'INFO',
-            message: 'DHCP REQUEST for 192.168.1.100 from 00:1A:2B:3C:4D:5E via eth0',
-        },
-        {
-            id: 5,
-            timestamp: '2025-10-27 14:30:26',
-            level: 'INFO',
-            message: 'DHCP ACK on 192.168.1.100 to 00:1A:2B:3C:4D:5E via eth0',
-        },
-        {
-            id: 6,
-            timestamp: '2025-10-27 14:30:27',
-            level: 'ERROR',
-            message: 'Lease conflict detected: 192.168.1.105 already in use',
-        },
-        {
-            id: 7,
-            timestamp: '2025-10-27 14:30:28',
-            level: 'INFO',
-            message: 'DHCP RELEASE from 00:1A:2B:3C:4D:60 (192.168.2.50)',
-        },
-        {
-            id: 8,
-            timestamp: '2025-10-27 14:30:29',
-            level: 'INFO',
-            message: 'Lease expired: 192.168.1.88 (00:1A:2B:3C:4D:AA)',
-        },
-        {
-            id: 9,
-            timestamp: '2025-10-27 14:30:30',
-            level: 'WARN',
-            message: 'Failed to ping 192.168.1.120 before offering lease',
-        },
-        {
-            id: 10,
-            timestamp: '2025-10-27 14:30:31',
-            level: 'INFO',
-            message: 'DHCP DISCOVER from 00:1A:2B:3C:4D:70 via eth1',
-        },
-        {
-            id: 11,
-            timestamp: '2025-10-27 14:30:32',
-            level: 'DEBUG',
-            message: 'Checking available IP addresses in pool 10.0.1.0/24',
-        },
-        {
-            id: 12,
-            timestamp: '2025-10-27 14:30:33',
-            level: 'INFO',
-            message: 'DHCP OFFER on 10.0.1.200 to 00:1A:2B:3C:4D:70 via eth1',
-        },
-    ];
 
     useEffect(() => {
         loadLogs();
-    }, [serverId, logLevel, keyword]);
+    }, [serverId, logLevel, keyword, source, limit]);
 
     useEffect(() => {
         if (autoRefresh) {
@@ -105,52 +32,73 @@ const LogsTab = ({ serverId }) => {
             }, 3000);
             return () => clearInterval(interval);
         }
-    }, [autoRefresh, logLevel, keyword]);
+    }, [autoRefresh, serverId, logLevel, keyword, source, limit]);
 
-    const loadLogs = (isAutoRefresh = false) => {
+    const loadLogs = async (isAutoRefresh = false) => {
         if (!isAutoRefresh) {
             setLoading(true);
         }
 
-        setTimeout(() => {
-            let filteredLogs = [...mockLogs];
+        try {
+            const params = {
+                server: serverId,
+                source: source,
+                limit: limit,
+            };
 
-            // 按日誌等級篩選
-            if (logLevel !== 'ALL') {
-                filteredLogs = filteredLogs.filter((log) => log.level === logLevel);
+            if (logLevel && logLevel !== 'ALL') {
+                params.level = logLevel;
             }
 
-            // 按關鍵字篩選
             if (keyword) {
-                filteredLogs = filteredLogs.filter((log) =>
-                    log.message.toLowerCase().includes(keyword.toLowerCase())
-                );
+                params.keyword = keyword;
             }
 
-            setLogs(filteredLogs);
-            setLoading(false);
+            const response = await axios.get('/api/dhcp-analytics/logs/', { params });
+            setLogs(response.data || []);
 
             // 自動滾動到底部
-            if (logContainerRef.current) {
-                logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+            setTimeout(() => {
+                if (logContainerRef.current) {
+                    logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+                }
+            }, 100);
+        } catch (error) {
+            console.error('載入日誌失敗:', error);
+            if (!isAutoRefresh) {
+                message.error('載入日誌失敗：' + (error.response?.data?.error || error.message));
             }
-        }, 500);
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleClear = () => {
         setLogs([]);
+        message.success('日誌已清除');
     };
 
     const handleDownload = () => {
-        // TODO: 實作下載日誌功能
-        const logText = logs.map((log) => `[${log.timestamp}] ${log.level}: ${log.message}`).join('\n');
-        const blob = new Blob([logText], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `dhcp-server-${serverId}-logs-${new Date().getTime()}.log`;
-        a.click();
-        URL.revokeObjectURL(url);
+        if (logs.length === 0) {
+            message.warning('沒有日誌可下載');
+            return;
+        }
+
+        const content = logs
+            .map(log => `[${log.level}] ${log.timestamp} | ${log.message}`)
+            .join('\n');
+
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `dhcp_logs_${serverId}_${new Date().toISOString().slice(0, 10)}.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+
+        message.success('日誌已下載');
     };
 
     const getLogLevelTag = (level) => {
@@ -182,6 +130,13 @@ const LogsTab = ({ serverId }) => {
             {/* 控制列 */}
             <Card style={{ marginBottom: '16px' }}>
                 <Space wrap>
+                    <Radio.Group value={source} onChange={(e) => setSource(e.target.value)}>
+                        <Radio.Button value="local">本地日誌</Radio.Button>
+                        <Radio.Button value="remote" disabled={serverId === 'all'}>
+                            遠端 SSH
+                        </Radio.Button>
+                    </Radio.Group>
+
                     <Select
                         style={{ width: 120 }}
                         value={logLevel}
@@ -203,12 +158,25 @@ const LogsTab = ({ serverId }) => {
                         prefix={<SearchOutlined />}
                     />
 
+                    <Select
+                        style={{ width: 120 }}
+                        value={limit}
+                        onChange={setLimit}
+                        placeholder="顯示筆數"
+                    >
+                        <Option value={50}>50 筆</Option>
+                        <Option value={100}>100 筆</Option>
+                        <Option value={200}>200 筆</Option>
+                        <Option value={500}>500 筆</Option>
+                        <Option value={1000}>1000 筆</Option>
+                    </Select>
+
                     <Space>
                         <span style={{ color: '#666' }}>自動更新:</span>
                         <Switch checked={autoRefresh} onChange={setAutoRefresh} />
                     </Space>
 
-                    <Button icon={<ReloadOutlined />} onClick={() => loadLogs()}>
+                    <Button icon={<ReloadOutlined />} onClick={() => loadLogs()} loading={loading}>
                         重新載入
                     </Button>
 
@@ -226,7 +194,7 @@ const LogsTab = ({ serverId }) => {
             <Card size="small" style={{ marginBottom: '16px' }}>
                 <Space split="|" size="large">
                     <span>
-                        <strong>總計:</strong> {stats.total} 行
+                        <strong>顯示:</strong> {stats.total} 行 / 最多 {limit} 行
                     </span>
                     <span>
                         <Tag color="blue">INFO: {stats.info}</Tag>

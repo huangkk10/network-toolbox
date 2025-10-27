@@ -23,9 +23,28 @@ class DHCPServer(models.Model):
     total_leases = models.IntegerField(default=0, verbose_name='總租約數')
     active_leases = models.IntegerField(default=0, verbose_name='活動租約數')
     
+    # SSH 連接設定
+    ssh_port = models.IntegerField(default=22, verbose_name='SSH 連接埠')
+    ssh_username = models.CharField(max_length=100, default='root', verbose_name='SSH 使用者名稱')
+    ssh_password = models.CharField(max_length=255, blank=True, verbose_name='SSH 密碼')
+    ssh_key_file = models.CharField(max_length=500, blank=True, verbose_name='SSH 金鑰檔案路徑')
+    
+    # DHCP 設定檔路徑
+    dhcp_leases_path = models.CharField(
+        max_length=500, 
+        default='/var/lib/dhcp/dhcpd.leases',
+        verbose_name='DHCP Leases 檔案路徑'
+    )
+    dhcp_config_path = models.CharField(
+        max_length=500,
+        default='/etc/dhcp/dhcpd.conf',
+        verbose_name='DHCP 設定檔路徑'
+    )
+    
     # 元數據
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='上次同步時間')
     
     class Meta:
         verbose_name = 'DHCP 伺服器'

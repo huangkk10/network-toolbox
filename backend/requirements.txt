@@ -3,3 +3,4 @@ djangorestframework>=3.14.0
 django-cors-headers>=4.0.0
 psycopg2-binary>=2.9.6
 python-decouple>=3.8
+paramiko>=3.3.1
