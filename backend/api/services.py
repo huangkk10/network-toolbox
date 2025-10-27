@@ -471,6 +471,143 @@ class DHCPLogParser:
         return log_entries
 
 
+class WindowsDHCPLogParser:
+    """
+    Windows DHCP Server 日誌解析器
+    
+    Windows DHCP 日誌格式範例：
+    10,10/27/25,14:24:02,Assign,192.168.7.199,host-name,aa:bb:cc:dd:ee:ff,0
+    11,10/27/25,14:24:02,Renew,192.168.7.200,laptop-pc,11:22:33:44:55:66,0
+    """
+    
+    # Windows DHCP 事件代碼對應
+    EVENT_TYPES = {
+        '00': 'Start',          # 日誌開始
+        '01': 'Stop',           # 日誌停止
+        '02': 'Temporary',      # 臨時日誌停止
+        '10': 'Assign',         # 新租約分配
+        '11': 'Renew',          # 租約更新
+        '12': 'Release',        # 租約釋放
+        '13': 'Deny',           # 拒絕請求
+        '14': 'Conflict',       # IP 衝突
+        '15': 'Delete',         # 刪除租約
+        '20': 'DNS',            # DNS 記錄更新
+        '24': 'Cleanup',        # 清理過期租約
+        '25': 'DHCPREQUEST',    # DHCP Request
+        '30': 'NAP',            # 網路訪問保護
+    }
+    
+    @staticmethod
+    def parse_log_lines(lines, limit=100):
+        """
+        解析 Windows DHCP 日誌行
+        
+        Args:
+            lines: 日誌行列表
+            limit: 返回數量限制
+        
+        Returns:
+            list: 解析後的日誌條目
+        """
+        logs = []
+        
+        for line in lines:
+            line = line.strip()
+            
+            # 跳過空行和註釋行
+            if not line or line.startswith('#'):
+                continue
+            
+            try:
+                # 分割欄位（用逗號分隔）
+                fields = line.split(',')
+                
+                if len(fields) < 3:
+                    continue
+                
+                event_id = fields[0].strip()
+                date_str = fields[1].strip() if len(fields) > 1 else ''
+                time_str = fields[2].strip() if len(fields) > 2 else ''
+                
+                # 解析事件類型
+                event_type = WindowsDHCPLogParser.EVENT_TYPES.get(event_id, f'Unknown({event_id})')
+                
+                # 根據事件類型解析不同的欄位
+                if event_id in ['10', '11', '12', '13']:  # Assign, Renew, Release, Deny
+                    ip_address = fields[4].strip() if len(fields) > 4 else '-'
+                    hostname = fields[5].strip() if len(fields) > 5 else '-'
+                    mac_address = fields[6].strip() if len(fields) > 6 else '-'
+                    
+                    # 格式化 MAC 地址（轉換為標準格式）
+                    if mac_address and mac_address != '-':
+                        mac_address = mac_address.replace('-', ':').lower()
+                    
+                    # 優化訊息格式
+                    if event_id == '10':  # Assign
+                        message = f'DHCPOFFER of {ip_address} from ad:0d:10:73:dd:d5 via eth0'
+                    elif event_id == '11':  # Renew
+                        message = f'DHCPREQUEST for {ip_address} from {mac_address} via eth0'
+                    elif event_id == '12':  # Release
+                        message = f'DHCPRELEASE of {ip_address} from {mac_address} ({hostname})'
+                    elif event_id == '13':  # Deny
+                        message = f'DHCPDENY {ip_address} from {mac_address} ({hostname})'
+                    
+                    # 判斷日誌等級
+                    if event_id == '13':  # Deny
+                        level = 'WARN'
+                    else:
+                        level = 'INFO'
+                
+                elif event_id == '14':  # IP Conflict
+                    ip_address = fields[4].strip() if len(fields) > 4 else '-'
+                    message = f'IP conflict detected: {ip_address}'
+                    level = 'ERROR'
+                
+                elif event_id in ['20', '30', '31']:  # DNS operations
+                    ip_address = fields[4].strip() if len(fields) > 4 else '-'
+                    hostname = fields[5].strip() if len(fields) > 5 else '-'
+                    
+                    if event_id == '20':
+                        message = f'DNS record updated for {hostname} ({ip_address})'
+                        level = 'DEBUG'
+                    elif event_id == '30':
+                        message = f'DNS Update Request for {hostname} ({ip_address})'
+                        level = 'DEBUG'
+                    elif event_id == '31':
+                        message = f'DNS Update Failed for {hostname} ({ip_address})'
+                        level = 'WARN'
+                
+                else:
+                    # 其他事件類型，顯示原始內容
+                    message = ' '.join(fields[3:]) if len(fields) > 3 else event_type
+                    level = 'INFO'                # 解析時間戳（Windows 格式: MM/DD/YY HH:MM:SS）
+                try:
+                    timestamp = f'{date_str} {time_str}'
+                    # 轉換為標準格式
+                    dt = datetime.strptime(timestamp, '%m/%d/%y %H:%M:%S')
+                    timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
+                except:
+                    timestamp = f'{date_str} {time_str}'
+                
+                logs.append({
+                    'timestamp': timestamp,
+                    'level': level,
+                    'event': event_type,
+                    'message': message,
+                    'raw': line,
+                })
+            
+            except Exception as e:
+                logger.debug(f'解析日誌行失敗: {line} - {str(e)}')
+                continue
+        
+        # 限制返回數量
+        if len(logs) > limit:
+            logs = logs[-limit:]
+        
+        return logs
+
+
 class DHCPLogService:
     """DHCP 日誌服務"""
     
@@ -561,7 +698,7 @@ class DHCPLogService:
     
     def get_remote_logs(self, limit=100, level=None, keyword=None, start_time=None, end_time=None):
         """
-        透過 SSH 讀取遠端 DHCP Server 日誌
+        透過 SSH 讀取遠端 Windows DHCP Server 日誌
         
         Args:
             limit: 返回數量限制
@@ -574,94 +711,67 @@ class DHCPLogService:
             list: 日誌條目列表
         """
         from datetime import datetime
+        from .ssh_powershell_service import WindowsSSHPowerShellService
         
         if not self.server:
             logger.error('未指定 DHCP Server')
             return []
         
         try:
-            # 建立 SSH 連接
-            self.ssh = DHCPServerSSH(
-                host=self.server.ip_address,
-                port=self.server.ssh_port,
-                username=self.server.ssh_username,
-                password=self.server.ssh_password if self.server.ssh_password else None,
-                key_file=self.server.ssh_key_file if self.server.ssh_key_file else None
-            )
-            
-            if not self.ssh.connect():
-                return []
-            
-            # 嘗試讀取常見的 DHCP 日誌檔案
-            log_files = [
-                '/var/log/dhcpd.log',
-                '/var/log/dhcp.log',
-                '/var/log/syslog',
-                '/var/log/messages',
-            ]
-            
-            content = None
-            for log_file in log_files:
-                # 讀取最後 N 行
-                output, error = self.ssh.execute_command(f'tail -n {limit * 2} {log_file} 2>/dev/null')
-                if output and not error:
-                    content = output
-                    logger.info(f'成功讀取遠端日誌: {log_file}')
-                    break
-            
-            if not content:
-                logger.warning(f'無法讀取遠端日誌 ({self.server.ip_address})')
-                return []
-            
-            # 解析日誌
-            logs = DHCPLogParser.parse_log_file(content, limit=limit * 2)
-            
-            # 篩選日誌等級
-            if level and level != 'ALL':
-                logs = [log for log in logs if log['level'] == level]
-            
-            # 篩選關鍵字
-            if keyword:
-                keyword_lower = keyword.lower()
-                logs = [
-                    log for log in logs 
-                    if keyword_lower in log['message'].lower()
-                ]
-            
-            # 篩選時間範圍
-            if start_time or end_time:
-                filtered_logs = []
-                for log in logs:
-                    try:
-                        log_time = datetime.strptime(log['timestamp'], '%Y-%m-%d %H:%M:%S')
-                        
-                        if start_time:
-                            start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
-                            if log_time < start_dt:
-                                continue
-                        
-                        if end_time:
-                            end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
-                            if log_time > end_dt:
-                                continue
-                        
-                        filtered_logs.append(log)
-                    except ValueError:
-                        # 時間格式解析失敗，保留該日誌
-                        filtered_logs.append(log)
+            # 使用 SSH + PowerShell 讀取 Windows DHCP 日誌
+            with WindowsSSHPowerShellService(self.server) as service:
+                # 讀取今天的 DHCP 日誌
+                log_lines = service.get_dhcp_logs(limit=limit * 2)
                 
-                logs = filtered_logs
-            
-            # 限制返回數量
-            logs = logs[-limit:] if len(logs) > limit else logs
-            
-            logger.info(f'讀取遠端日誌: {len(logs)} 筆 (時間範圍: {start_time} ~ {end_time})')
-            return logs
+                if not log_lines:
+                    logger.warning(f'無法讀取 Windows DHCP 日誌 ({self.server.ip_address})')
+                    return []
+                
+                # 解析 Windows DHCP 日誌
+                logs = WindowsDHCPLogParser.parse_log_lines(log_lines, limit=limit * 2)
+                
+                # 篩選日誌等級
+                if level and level != 'ALL':
+                    logs = [log for log in logs if log['level'] == level]
+                
+                # 篩選關鍵字
+                if keyword:
+                    keyword_lower = keyword.lower()
+                    logs = [
+                        log for log in logs 
+                        if keyword_lower in log['message'].lower()
+                    ]
+                
+                # 篩選時間範圍
+                if start_time or end_time:
+                    filtered_logs = []
+                    for log in logs:
+                        try:
+                            log_time = datetime.strptime(log['timestamp'], '%Y-%m-%d %H:%M:%S')
+                            
+                            if start_time:
+                                start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+                                if log_time < start_dt:
+                                    continue
+                            
+                            if end_time:
+                                end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
+                                if log_time > end_dt:
+                                    continue
+                            
+                            filtered_logs.append(log)
+                        except ValueError:
+                            # 時間格式解析失敗，保留該日誌
+                            filtered_logs.append(log)
+                    
+                    logs = filtered_logs
+                
+                # 限制返回數量
+                logs = logs[-limit:] if len(logs) > limit else logs
+                
+                logger.info(f'讀取 Windows DHCP 遠端日誌: {len(logs)} 筆')
+                return logs
         
         except Exception as e:
             logger.error(f'讀取遠端日誌失敗: {str(e)}', exc_info=True)
             return []
-        
-        finally:
-            if self.ssh:
-                self.ssh.close()

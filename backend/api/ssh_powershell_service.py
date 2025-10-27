@@ -397,6 +397,85 @@ class WindowsSSHPowerShellService:
             stats['errors'] = stats['total']
             return stats
     
+    def get_dhcp_logs(self, limit=100, log_date=None):
+        """
+        從 Windows DHCP Server 讀取日誌檔案
+        
+        Windows DHCP Server 日誌位置：C:\Windows\System32\dhcp\DhcpSrvLog-*.log
+        
+        Args:
+            limit: 返回的日誌行數限制
+            log_date: 指定日期 (格式: 'Mon' 或 'DhcpSrvLog-Mon.log')，預設為今天
+        
+        Returns:
+            list: 日誌內容列表
+        """
+        try:
+            # 如果沒有指定日期，使用今天的日誌
+            if not log_date:
+                # 獲取今天是星期幾（Mon, Tue, Wed, Thu, Fri, Sat, Sun）
+                days_of_week = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                today = datetime.now().weekday()  # 0=Monday, 6=Sunday
+                log_date = days_of_week[today]
+            
+            # 確保格式正確
+            if not log_date.startswith('DhcpSrvLog-'):
+                log_file = f'DhcpSrvLog-{log_date}.log'
+            else:
+                log_file = log_date
+            
+            # Windows DHCP Server 日誌路徑
+            log_path = f'C:\\Windows\\System32\\dhcp\\{log_file}'
+            
+            # 使用 PowerShell 讀取日誌（取最後 N 行）
+            ps_command = f'Get-Content -Path "{log_path}" -Tail {limit} -ErrorAction SilentlyContinue'
+            
+            output, error = self.execute_powershell(ps_command)
+            
+            if not output:
+                logger.warning(f'未獲取到 DHCP 日誌內容 ({log_file})')
+                return []
+            
+            # 分割成行
+            lines = output.strip().split('\n')
+            
+            logger.info(f'成功讀取 DHCP 日誌: {len(lines)} 行 ({log_file})')
+            return lines
+        
+        except Exception as e:
+            logger.error(f'讀取 DHCP 日誌失敗: {str(e)}', exc_info=True)
+            return []
+    
+    def list_available_log_files(self):
+        """
+        列出所有可用的 DHCP 日誌檔案
+        
+        Returns:
+            list: 日誌檔案名稱列表
+        """
+        try:
+            log_dir = 'C:\\Windows\\System32\\dhcp'
+            ps_command = f'Get-ChildItem -Path "{log_dir}" -Filter "DhcpSrvLog-*.log" | Select-Object Name, LastWriteTime, Length'
+            
+            output, error = self.execute_powershell(ps_command)
+            
+            if not output:
+                logger.warning('未找到 DHCP 日誌檔案')
+                return []
+            
+            # 簡單解析輸出
+            files = []
+            for line in output.strip().split('\n'):
+                if 'DhcpSrvLog-' in line:
+                    files.append(line.strip())
+            
+            logger.info(f'發現 {len(files)} 個 DHCP 日誌檔案')
+            return files
+        
+        except Exception as e:
+            logger.error(f'列出日誌檔案失敗: {str(e)}', exc_info=True)
+            return []
+    
     def close(self):
         """關閉 SSH 連接"""
         if self.client:
