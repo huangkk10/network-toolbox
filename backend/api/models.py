@@ -81,3 +81,47 @@ class DHCPLease(models.Model):
     
     def __str__(self):
         return f"{self.ip_address} - {self.mac_address}"
+
+
+class DHCPLog(models.Model):
+    """DHCP 日誌模型 - 7天滾動視窗"""
+    
+    LEVEL_CHOICES = [
+        ('INFO', 'Information'),
+        ('WARN', 'Warning'),
+        ('ERROR', 'Error'),
+        ('DEBUG', 'Debug'),
+    ]
+    
+    server = models.ForeignKey(
+        DHCPServer,
+        on_delete=models.CASCADE,
+        related_name='logs',
+        verbose_name='所屬伺服器'
+    )
+    timestamp = models.DateTimeField(verbose_name='日誌時間', db_index=True)
+    level = models.CharField(
+        max_length=10,
+        choices=LEVEL_CHOICES,
+        default='INFO',
+        verbose_name='日誌等級',
+        db_index=True
+    )
+    event = models.CharField(max_length=30, blank=True, verbose_name='事件類型')
+    message = models.CharField(max_length=200, verbose_name='訊息')
+    raw = models.TextField(verbose_name='原始日誌')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    
+    class Meta:
+        verbose_name = 'DHCP 日誌'
+        verbose_name_plural = 'DHCP 日誌'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['server', '-timestamp'], name='idx_server_time'),
+            models.Index(fields=['-timestamp'], name='idx_timestamp'),
+            models.Index(fields=['level'], name='idx_level'),
+        ]
+    
+    def __str__(self):
+        return f"[{self.level}] {self.timestamp} - {self.message[:50]}"

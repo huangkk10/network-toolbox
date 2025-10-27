@@ -405,42 +405,92 @@ class WindowsSSHPowerShellService:
         
         Args:
             limit: 返回的日誌行數限制
-            log_date: 指定日期 (格式: 'Mon' 或 'DhcpSrvLog-Mon.log')，預設為今天
+            log_date: 指定日期 (格式: 'Mon' 或 'DhcpSrvLog-Mon.log')，預設為 None（自動從所有日誌中取最新的 N 筆）
         
         Returns:
             list: 日誌內容列表
         """
         try:
-            # 如果沒有指定日期，使用今天的日誌
-            if not log_date:
-                # 獲取今天是星期幾（Mon, Tue, Wed, Thu, Fri, Sat, Sun）
-                days_of_week = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-                today = datetime.now().weekday()  # 0=Monday, 6=Sunday
-                log_date = days_of_week[today]
+            # 如果指定了日期，只讀取該日期的日誌（舊邏輯）
+            if log_date:
+                # 確保格式正確
+                if not log_date.startswith('DhcpSrvLog-'):
+                    log_file = f'DhcpSrvLog-{log_date}.log'
+                else:
+                    log_file = log_date
+                
+                # Windows DHCP Server 日誌路徑
+                log_path = f'C:\\Windows\\System32\\dhcp\\{log_file}'
+                
+                # 使用 PowerShell 讀取日誌（取最後 N 行）
+                ps_command = f'Get-Content -Path "{log_path}" -Tail {limit} -ErrorAction SilentlyContinue'
+                
+                output, error = self.execute_powershell(ps_command)
+                
+                if not output:
+                    logger.warning(f'未獲取到 DHCP 日誌內容 ({log_file})')
+                    return []
+                
+                # 分割成行
+                lines = output.strip().split('\n')
+                
+                logger.info(f'成功讀取 DHCP 日誌: {len(lines)} 行 ({log_file})')
+                return lines
             
-            # 確保格式正確
-            if not log_date.startswith('DhcpSrvLog-'):
-                log_file = f'DhcpSrvLog-{log_date}.log'
+            # 如果沒有指定日期，從所有日誌檔案中取最新的 N 筆（新邏輯）
             else:
-                log_file = log_date
-            
-            # Windows DHCP Server 日誌路徑
-            log_path = f'C:\\Windows\\System32\\dhcp\\{log_file}'
-            
-            # 使用 PowerShell 讀取日誌（取最後 N 行）
-            ps_command = f'Get-Content -Path "{log_path}" -Tail {limit} -ErrorAction SilentlyContinue'
-            
-            output, error = self.execute_powershell(ps_command)
-            
-            if not output:
-                logger.warning(f'未獲取到 DHCP 日誌內容 ({log_file})')
-                return []
-            
-            # 分割成行
-            lines = output.strip().split('\n')
-            
-            logger.info(f'成功讀取 DHCP 日誌: {len(lines)} 行 ({log_file})')
-            return lines
+                log_dir = 'C:\\Windows\\System32\\dhcp'
+                
+                # 策略：
+                # 1. 讀取所有 7 個日誌檔案的內容（完整內容）
+                # 2. 在 Python 中合併、排序、取最新的 N 筆
+                
+                # 讀取所有日誌檔案
+                all_log_lines = []
+                days_of_week = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                
+                for day in days_of_week:
+                    log_file = f'DhcpSrvLog-{day}.log'
+                    log_path = f'{log_dir}\\{log_file}'
+                    
+                    # 讀取單個檔案（每個檔案最多讀取 limit 行，避免過多資料）
+                    ps_command = f'Get-Content -Path "{log_path}" -Tail {limit} -ErrorAction SilentlyContinue'
+                    output, error = self.execute_powershell(ps_command)
+                    
+                    if output and output.strip():
+                        lines = output.strip().split('\n')
+                        all_log_lines.extend(lines)
+                        logger.debug(f'從 {log_file} 讀取到 {len(lines)} 行')
+                
+                if not all_log_lines:
+                    logger.warning('未獲取到任何 DHCP 日誌內容（所有檔案）')
+                    return []
+                
+                # 過濾空行和註釋行
+                all_log_lines = [line for line in all_log_lines if line.strip() and not line.strip().startswith('#')]
+                
+                # 按時間戳排序（Windows DHCP 日誌格式: ID,MM/DD/YY,HH:MM:SS,...）
+                def parse_timestamp(line):
+                    try:
+                        parts = line.split(',')
+                        if len(parts) >= 3:
+                            date_str = parts[1].strip()  # MM/DD/YY
+                            time_str = parts[2].strip()  # HH:MM:SS
+                            # 轉換為可排序的格式
+                            dt = datetime.strptime(f'{date_str} {time_str}', '%m/%d/%y %H:%M:%S')
+                            return dt
+                    except:
+                        pass
+                    return datetime(1970, 1, 1)  # 無法解析的放最前面
+                
+                # 排序（時間由舊到新）
+                all_log_lines.sort(key=parse_timestamp)
+                
+                # 取最後 N 筆（最新的）
+                lines = all_log_lines[-limit:] if len(all_log_lines) > limit else all_log_lines
+                
+                logger.info(f'成功讀取 DHCP 日誌（跨檔案，共 {len(all_log_lines)} 行，返回最新 {len(lines)} 行）')
+                return lines
         
         except Exception as e:
             logger.error(f'讀取 DHCP 日誌失敗: {str(e)}', exc_info=True)

@@ -631,6 +631,102 @@ curl http://localhost/api/
 - **變數**：camelCase（JS）、snake_case（Python）
 - **API 端點**：kebab-case
 
+## 📚 文檔管理規範
+
+### 文檔目錄結構
+
+本專案的所有文檔統一存放在 `docs/` 目錄下，按照以下結構組織：
+
+```
+docs/
+├── features/              # 功能相關文檔
+│   ├── scheduled-tasks/   # 定時任務功能
+│   │   ├── README.md
+│   │   ├── CELERY_IMPLEMENTATION_GUIDE.md
+│   │   ├── CRON_SETUP_GUIDE.md
+│   │   ├── CRON_VS_CELERY_COMPARISON.md
+│   │   └── LOGS_SYNC_GUIDE.md
+│   └── [其他功能]/
+├── deployment/            # 部署相關文檔
+│   ├── DEPLOYMENT.md
+│   └── [其他部署文檔]
+├── development/           # 開發相關文檔
+│   ├── DEVELOPMENT.md
+│   ├── DOCS_REORGANIZATION_REPORT.md
+│   └── [其他開發文檔]
+├── api/                   # API 文檔
+│   └── [API 相關文檔]
+└── troubleshooting/       # 故障排查文檔
+    └── [故障排查文檔]
+```
+
+### 創建新文檔的指導原則
+
+當需要創建新的說明文檔時，請遵循以下規則：
+
+1. **功能文檔**（Feature Documentation）
+   - **位置**：`docs/features/[功能名稱]/`
+   - **適用於**：新功能說明、使用指南、配置教程
+   - **範例**：定時任務功能的文檔在 `docs/features/scheduled-tasks/`
+   - **建議**：每個功能目錄應包含 README.md 作為導航文件
+
+2. **部署文檔**（Deployment Documentation）
+   - **位置**：`docs/deployment/`
+   - **適用於**：Docker 部署、生產環境配置、CI/CD 流程
+   - **範例**：`DEPLOYMENT.md`、`DOCKER_SETUP.md`
+
+3. **開發文檔**（Development Documentation）
+   - **位置**：`docs/development/`
+   - **適用於**：開發環境設置、開發規範、架構設計、技術決策記錄
+   - **範例**：`DEVELOPMENT.md`、`DOCS_REORGANIZATION_REPORT.md`
+
+4. **API 文檔**（API Documentation）
+   - **位置**：`docs/api/`
+   - **適用於**：API 端點說明、請求/響應格式、認證授權
+   - **範例**：`API_REFERENCE.md`、`AUTHENTICATION.md`
+
+5. **故障排查文檔**（Troubleshooting Documentation）
+   - **位置**：`docs/troubleshooting/`
+   - **適用於**：常見問題、錯誤處理、調試技巧
+   - **範例**：`COMMON_ISSUES.md`、`DEBUG_GUIDE.md`
+
+### 文檔命名規範
+
+- **使用大寫字母和底線**：`FEATURE_NAME.md`（主要文檔）
+- **使用小寫字母和連字符**：`feature-name-details.md`（次要文檔）
+- **README 文件**：每個功能目錄應包含 `README.md` 作為導航入口
+
+### 文檔內容規範
+
+每個文檔應包含：
+
+1. **清晰的標題**：說明文檔的目的
+2. **目錄**：對於較長的文檔（使用 `[toc]` 或手動創建）
+3. **概述**：簡短說明文檔涵蓋的內容
+4. **詳細內容**：按邏輯順序組織
+5. **範例**：提供實際的代碼或命令範例
+6. **相關連結**：引用其他相關文檔
+7. **更新日期**：文檔最後更新時間
+
+### AI 協助創建文檔的說明
+
+**當您要求 AI 創建新的說明文檔時，請明確指定：**
+
+- **文檔類型**：功能說明、部署指南、故障排查等
+- **目標位置**：根據上述規範，AI 會自動將文檔放置在適當的 `docs/` 子目錄中
+- **文檔格式**：Markdown 格式（.md）
+
+**範例請求**：
+- ❌ "幫我寫一個 Celery 的說明文檔"（位置不明確）
+- ✅ "在 docs/features/scheduled-tasks/ 創建 Celery 實現指南"（位置明確）
+- ✅ "創建一個關於 Docker 部署的說明文檔"（AI 會自動放在 docs/deployment/）
+
+**AI 會自動：**
+1. 根據文檔性質選擇合適的 `docs/` 子目錄
+2. 創建必要的目錄結構
+3. 生成符合規範的文檔內容
+4. 在相關的 README.md 中添加連結（如果需要）
+
 ## 相關資源
 
 - Django：https://docs.djangoproject.com/

@@ -27,6 +27,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'django_celery_beat',      # Celery Beat 定時任務管理
+    'django_celery_results',   # Celery 任務結果儲存
     'api',  # Our API app
 ]
 
@@ -105,6 +107,48 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# ==================== Celery 配置 ====================
+# Redis 連接設置
+REDIS_HOST = config('REDIS_HOST', default='redis')
+REDIS_PORT = config('REDIS_PORT', default='6379')
+
+# Celery Broker（消息隊列）
+CELERY_BROKER_URL = f'redis://{REDIS_HOST}:{REDIS_PORT}/1'
+
+# Celery Result Backend（任務結果儲存）
+# 使用 PostgreSQL 存儲任務結果，便於查詢和追蹤
+CELERY_RESULT_BACKEND = 'django-db'
+CELERY_CACHE_BACKEND = 'django-cache'
+
+# Celery Beat 定時任務調度器
+# 使用資料庫存儲排程，可透過 Django Admin 動態修改
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# 時區設置
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = False
+
+# 任務序列化格式
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+
+# 任務結果過期時間（1 天）
+CELERY_RESULT_EXPIRES = 86400
+
+# Worker 配置
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # 一次只取一個任務
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 50  # 每個 Worker 處理 50 個任務後重啟
+
+# 任務追蹤
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_SEND_SENT_EVENT = True
+
+# 任務結果儲存設置
+CELERY_RESULT_EXTENDED = True  # 儲存完整的任務結果資訊
+
 
 # REST Framework settings
 REST_FRAMEWORK = {

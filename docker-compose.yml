@@ -96,10 +96,104 @@ services:
     networks:
       - nt_network
 
+  # ==================== Celery 相關服務 ====================
+  redis:
+    image: redis:7-alpine
+    container_name: nt-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - nt_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nt-celery-beat
+    restart: unless-stopped
+    command: celery -A network_toolbox beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      - TZ=Asia/Taipei
+      - DEBUG=1
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=network_toolbox
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres123
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./backend:/app
+      - ./library:/app/library
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+      - django
+    networks:
+      - nt_network
+
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nt-celery-worker
+    restart: unless-stopped
+    command: celery -A network_toolbox worker --loglevel=info --concurrency=2
+    environment:
+      - TZ=Asia/Taipei
+      - DEBUG=1
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=network_toolbox
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres123
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - ./backend:/app
+      - ./library:/app/library
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+      - django
+    networks:
+      - nt_network
+
+  celery_flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: nt-celery-flower
+    restart: unless-stopped
+    command: celery -A network_toolbox flower --port=5555
+    environment:
+      - TZ=Asia/Taipei
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - celery_worker
+    networks:
+      - nt_network
+
 volumes:
   postgres_data:
   static_files:
   media_files:
+  redis_data:  # Redis 資料持久化
 
 
 networks:

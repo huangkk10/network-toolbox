@@ -445,7 +445,7 @@ class DHCPLogParser:
             return 'INFO'
     
     @staticmethod
-    def parse_log_file(content, limit=100):
+    def parse_log_file(content, limit=1000):
         """
         解析日誌檔案內容
         
@@ -498,7 +498,7 @@ class WindowsDHCPLogParser:
     }
     
     @staticmethod
-    def parse_log_lines(lines, limit=100):
+    def parse_log_lines(lines, limit=1000):
         """
         解析 Windows DHCP 日誌行
         
@@ -580,7 +580,9 @@ class WindowsDHCPLogParser:
                 else:
                     # 其他事件類型，顯示原始內容
                     message = ' '.join(fields[3:]) if len(fields) > 3 else event_type
-                    level = 'INFO'                # 解析時間戳（Windows 格式: MM/DD/YY HH:MM:SS）
+                    level = 'INFO'
+                
+                # 解析時間戳（Windows 格式: MM/DD/YY HH:MM:SS）
                 try:
                     timestamp = f'{date_str} {time_str}'
                     # 轉換為標準格式
@@ -615,7 +617,168 @@ class DHCPLogService:
         self.server = dhcp_server
         self.ssh = None
     
-    def get_local_logs(self, log_file='logs/dhcp_operations.log', limit=100, level=None, keyword=None, start_time=None, end_time=None):
+    def sync_logs_to_db(self, limit=1000):
+        """
+        同步遠端日誌到資料庫
+        
+        Args:
+            limit: 每次同步的日誌數量
+        
+        Returns:
+            dict: 同步結果統計
+        """
+        from .models import DHCPLog
+        from datetime import datetime
+        from .ssh_powershell_service import WindowsSSHPowerShellService
+        
+        if not self.server:
+            logger.error('未指定 DHCP Server')
+            return {'total': 0, 'created': 0, 'skipped': 0, 'errors': 0}
+        
+        stats = {
+            'total': 0,
+            'created': 0,
+            'skipped': 0,
+            'errors': 0,
+        }
+        
+        try:
+            # 從 Windows DHCP Server 讀取日誌
+            with WindowsSSHPowerShellService(self.server) as service:
+                log_lines = service.get_dhcp_logs(limit=limit)
+                
+                if not log_lines:
+                    logger.warning(f'無法讀取 Windows DHCP 日誌 ({self.server.ip_address})')
+                    return stats
+                
+                # 解析日誌
+                logs = WindowsDHCPLogParser.parse_log_lines(log_lines, limit=limit)
+                stats['total'] = len(logs)
+                
+                # 批次插入資料庫（避免重複）
+                for log_data in logs:
+                    try:
+                        # 解析時間戳
+                        timestamp = datetime.strptime(log_data['timestamp'], '%Y-%m-%d %H:%M:%S')
+                        
+                        # 檢查是否已存在（使用 server + timestamp + raw 作為唯一識別）
+                        exists = DHCPLog.objects.filter(
+                            server=self.server,
+                            timestamp=timestamp,
+                            raw=log_data['raw']
+                        ).exists()
+                        
+                        if exists:
+                            stats['skipped'] += 1
+                            continue
+                        
+                        # 建立新日誌
+                        DHCPLog.objects.create(
+                            server=self.server,
+                            timestamp=timestamp,
+                            level=log_data['level'],
+                            event=log_data.get('event', ''),
+                            message=log_data['message'],
+                            raw=log_data['raw']
+                        )
+                        stats['created'] += 1
+                    
+                    except Exception as e:
+                        logger.error(f'插入日誌失敗: {str(e)}')
+                        stats['errors'] += 1
+                
+                logger.info(f'日誌同步完成: {stats}')
+                return stats
+        
+        except Exception as e:
+            logger.error(f'同步日誌失敗: {str(e)}', exc_info=True)
+            return stats
+    
+    def get_db_logs(self, limit=100, page=1, level=None, keyword=None, start_time=None, end_time=None):
+        """
+        從資料庫讀取日誌（支援分頁和篩選）
+        
+        Args:
+            limit: 每頁數量
+            page: 頁碼（從 1 開始）
+            level: 日誌等級篩選
+            keyword: 關鍵字篩選
+            start_time: 開始時間 (datetime 物件)
+            end_time: 結束時間 (datetime 物件)
+        
+        Returns:
+            dict: {
+                'logs': [...],
+                'total': 總數,
+                'page': 當前頁碼,
+                'page_size': 每頁數量,
+                'total_pages': 總頁數
+            }
+        """
+        from .models import DHCPLog
+        from django.db.models import Q
+        
+        if not self.server:
+            logger.error('未指定 DHCP Server')
+            return {'logs': [], 'total': 0, 'page': 1, 'page_size': limit, 'total_pages': 0}
+        
+        try:
+            # 建立查詢
+            queryset = DHCPLog.objects.filter(server=self.server)
+            
+            # 篩選日誌等級
+            if level and level != 'ALL':
+                queryset = queryset.filter(level=level)
+            
+            # 篩選關鍵字
+            if keyword:
+                queryset = queryset.filter(
+                    Q(message__icontains=keyword) | 
+                    Q(event__icontains=keyword)
+                )
+            
+            # 篩選時間範圍
+            if start_time:
+                queryset = queryset.filter(timestamp__gte=start_time)
+            if end_time:
+                queryset = queryset.filter(timestamp__lte=end_time)
+            
+            # 排序
+            queryset = queryset.order_by('-timestamp')
+            
+            # 計算總數
+            total = queryset.count()
+            total_pages = (total + limit - 1) // limit if total > 0 else 0
+            
+            # 分頁
+            offset = (page - 1) * limit
+            logs_qs = queryset[offset:offset + limit]
+            
+            # 轉換為字典格式
+            logs = []
+            for log in logs_qs:
+                logs.append({
+                    'id': log.id,
+                    'timestamp': log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+                    'level': log.level,
+                    'event': log.event,
+                    'message': log.message,
+                    'raw': log.raw,
+                })
+            
+            return {
+                'logs': logs,
+                'total': total,
+                'page': page,
+                'page_size': limit,
+                'total_pages': total_pages,
+            }
+        
+        except Exception as e:
+            logger.error(f'讀取資料庫日誌失敗: {str(e)}', exc_info=True)
+            return {'logs': [], 'total': 0, 'page': 1, 'page_size': limit, 'total_pages': 0}
+    
+    def get_local_logs(self, log_file='logs/dhcp_operations.log', limit=1000, level=None, keyword=None, start_time=None, end_time=None):
         """
         讀取本地日誌檔案
         
@@ -696,7 +859,7 @@ class DHCPLogService:
             logger.error(f'讀取本地日誌失敗: {str(e)}', exc_info=True)
             return []
     
-    def get_remote_logs(self, limit=100, level=None, keyword=None, start_time=None, end_time=None):
+    def get_remote_logs(self, limit=1000, level=None, keyword=None, start_time=None, end_time=None):
         """
         透過 SSH 讀取遠端 Windows DHCP Server 日誌
         
@@ -720,15 +883,15 @@ class DHCPLogService:
         try:
             # 使用 SSH + PowerShell 讀取 Windows DHCP 日誌
             with WindowsSSHPowerShellService(self.server) as service:
-                # 讀取今天的 DHCP 日誌
-                log_lines = service.get_dhcp_logs(limit=limit * 2)
+                # 讀取今天的 DHCP 日誌（讀取 limit * 3 以備篩選）
+                log_lines = service.get_dhcp_logs(limit=limit * 3)
                 
                 if not log_lines:
                     logger.warning(f'無法讀取 Windows DHCP 日誌 ({self.server.ip_address})')
                     return []
                 
-                # 解析 Windows DHCP 日誌
-                logs = WindowsDHCPLogParser.parse_log_lines(log_lines, limit=limit * 2)
+                # 解析 Windows DHCP 日誌（增加解析量以備篩選）
+                logs = WindowsDHCPLogParser.parse_log_lines(log_lines, limit=limit * 3)
                 
                 # 篩選日誌等級
                 if level and level != 'ALL':

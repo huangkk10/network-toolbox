@@ -18,6 +18,7 @@ urlpatterns = [
     path('dhcp-analytics/recent-leases/', views.dhcp_analytics_recent_leases, name='dhcp_analytics_recent_leases'),
     path('dhcp-analytics/logs/', views.dhcp_analytics_logs, name='dhcp_analytics_logs'),
     path('dhcp-servers/<int:server_id>/sync-leases/', views.dhcp_sync_leases, name='dhcp_sync_leases'),
+    path('dhcp-servers/<int:server_id>/sync-logs/', views.dhcp_sync_logs, name='dhcp_sync_logs'),
     
     # MAC 地址查詢 API
     path('dhcp-leases/lookup/', views.dhcp_lease_lookup, name='dhcp_lease_lookup'),

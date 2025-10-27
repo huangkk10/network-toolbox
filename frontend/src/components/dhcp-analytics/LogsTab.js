@@ -1,10 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Card, Select, Input, Switch, Button, Space, Tag, Empty, Spin, Radio, message, Pagination, DatePicker } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { 
+    Card, Select, Input, Button, Space, Tag, Empty, Spin, 
+    Radio, message, Pagination, DatePicker, Row, Col, Statistic 
+} from 'antd';
 import {
     DownloadOutlined,
     ReloadOutlined,
+    InfoCircleOutlined,
+    WarningOutlined,
+    CloseCircleOutlined,
     ClearOutlined,
-    SearchOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
@@ -16,41 +21,53 @@ const { RangePicker } = DatePicker;
 const LogsTab = ({ serverId }) => {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [logLevel, setLogLevel] = useState('ALL');
     const [keyword, setKeyword] = useState('');
-    const [autoRefresh, setAutoRefresh] = useState(false);
-    const [source, setSource] = useState('local');  // local 或 remote
-    const [limit, setLimit] = useState(500);  // 默認顯示 500 條
-    const [currentPage, setCurrentPage] = useState(1);  // 當前頁碼
-    const [pageSize, setPageSize] = useState(20);  // 每頁顯示數量
-    const [dateRange, setDateRange] = useState(null);  // 時間範圍 [startDate, endDate]
-    const [macToHostnameCache, setMacToHostnameCache] = useState({});  // MAC → Hostname 快取
-    const logContainerRef = useRef(null);
+    const [source, setSource] = useState('database');
+    const [timeRange, setTimeRange] = useState('today');
+    const [customDateRange, setCustomDateRange] = useState(null);
+    
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
+    const [total, setTotal] = useState(0);
+    const [totalPages, setTotalPages] = useState(0);
+    
+    const [statistics, setStatistics] = useState({
+        total: 0,
+        info: 0,
+        warn: 0,
+        error: 0,
+        debug: 0,
+    });
 
     useEffect(() => {
-        loadLogs();
-        setCurrentPage(1);  // 重置到第一頁
-    }, [serverId, logLevel, keyword, source, limit, dateRange]);
+        if (serverId && serverId !== 'all') {
+            loadLogs();
+            setCurrentPage(1);
+        }
+    }, [serverId, logLevel, keyword, source, timeRange, customDateRange]);
 
     useEffect(() => {
-        if (autoRefresh) {
-            const interval = setInterval(() => {
-                loadLogs(true);
-            }, 3000);
-            return () => clearInterval(interval);
+        if (serverId && serverId !== 'all' && currentPage > 0) {
+            loadLogs();
         }
-    }, [autoRefresh, serverId, logLevel, keyword, source, limit]);
+    }, [currentPage, pageSize]);
 
-    const loadLogs = async (isAutoRefresh = false) => {
-        if (!isAutoRefresh) {
-            setLoading(true);
+    const loadLogs = async () => {
+        if (!serverId || serverId === 'all') {
+            message.warning('請先選擇 DHCP Server');
+            return;
         }
+
+        setLoading(true);
 
         try {
             const params = {
                 server: serverId,
                 source: source,
-                limit: limit,
+                page: currentPage,
+                page_size: pageSize,
             };
 
             if (logLevel && logLevel !== 'ALL') {
@@ -61,457 +78,343 @@ const LogsTab = ({ serverId }) => {
                 params.keyword = keyword;
             }
 
-            // 時間範圍過濾
-            if (dateRange && dateRange[0] && dateRange[1]) {
-                params.start_time = dateRange[0].format('YYYY-MM-DD HH:mm:ss');
-                params.end_time = dateRange[1].format('YYYY-MM-DD HH:mm:ss');
+            if (customDateRange && customDateRange[0] && customDateRange[1]) {
+                params.start_time = customDateRange[0].format('YYYY-MM-DD HH:mm:ss');
+                params.end_time = customDateRange[1].format('YYYY-MM-DD HH:mm:ss');
+            } else if (timeRange) {
+                params.time_range = timeRange;
             }
 
             const response = await axios.get('/api/dhcp-analytics/logs/', { params });
-            const logData = response.data || [];
-            setLogs(logData);
-            setCurrentPage(1);  // 重置到第一頁
-
-            // 批量查詢 hostname（性能優化）
-            if (logData.length > 0) {
-                enrichLogsWithHostnames(logData);
+            
+            if (response.data) {
+                setLogs(response.data.logs || []);
+                setTotal(response.data.total || 0);
+                setTotalPages(response.data.total_pages || 0);
+                setStatistics(response.data.statistics || {
+                    total: 0,
+                    info: 0,
+                    warn: 0,
+                    error: 0,
+                    debug: 0,
+                });
             }
-
-            // 自動滾動到底部
-            setTimeout(() => {
-                if (logContainerRef.current) {
-                    logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
-                }
-            }, 100);
         } catch (error) {
             console.error('載入日誌失敗:', error);
-            if (!isAutoRefresh) {
-                message.error('載入日誌失敗：' + (error.response?.data?.error || error.message));
-            }
+            message.error('載入日誌失敗：' + (error.response?.data?.error || error.message));
         } finally {
             setLoading(false);
         }
     };
 
-    const handleClear = () => {
-        setLogs([]);
-        message.success('日誌已清除');
-    };
-
-    const handleDownload = () => {
-        if (logs.length === 0) {
-            message.warning('沒有日誌可下載');
+    const handleSyncLogs = async () => {
+        if (!serverId || serverId === 'all') {
+            message.warning('請先選擇 DHCP Server');
             return;
         }
 
-        const content = logs
-            .map(log => `[${log.level}] ${log.timestamp} | ${log.message}`)
-            .join('\n');
-
-        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-        const url = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `dhcp_logs_${serverId}_${new Date().toISOString().slice(0, 10)}.txt`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-
-        message.success('日誌已下載');
-    };
-
-    const getLogLevelTag = (level) => {
-        const levelConfig = {
-            INFO: { color: 'blue', text: 'INFO' },
-            WARN: { color: 'orange', text: 'WARN' },
-            ERROR: { color: 'red', text: 'ERROR' },
-            DEBUG: { color: 'default', text: 'DEBUG' },
-        };
-        const config = levelConfig[level] || { color: 'default', text: level };
-        return <Tag color={config.color}>{config.text}</Tag>;
-    };
-
-    // 從日誌訊息中提取 MAC 地址
-    const extractMacFromMessage = (message) => {
-        if (!message) return null;
-        // 匹配格式: xx:xx:xx:xx:xx:xx 或 xx-xx-xx-xx-xx-xx
-        const macRegex = /([0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2})/i;
-        const match = message.match(macRegex);
-        return match ? match[1].toLowerCase().replace(/-/g, ':') : null;
-    };
-
-    // 根據 MAC 地址查詢 hostname
-    const fetchHostnameByMac = async (mac) => {
-        if (!mac) return null;
-        
-        // 檢查快取
-        if (macToHostnameCache[mac]) {
-            return macToHostnameCache[mac];
-        }
-        
+        setSyncing(true);
         try {
-            const response = await axios.get('/api/dhcp-leases/lookup/', {
-                params: { mac }
-            });
+            const response = await axios.post('/api/dhcp-servers/' + serverId + '/sync-logs/');
+            message.success('日誌同步成功！新增 ' + response.data.stats.created + ' 筆');
             
-            const hostname = response.data.hostname || null;
-            
-            // 更新快取
-            setMacToHostnameCache(prev => ({
-                ...prev,
-                [mac]: hostname
-            }));
-            
-            return hostname;
+            loadLogs();
         } catch (error) {
-            console.error(`查詢 MAC ${mac} 失敗:`, error);
-            return null;
+            console.error('同步日誌失敗:', error);
+            message.error('同步日誌失敗：' + (error.response?.data?.error || error.message));
+        } finally {
+            setSyncing(false);
         }
     };
 
-    // 批量查詢並豐富日誌資料（性能優化）
-    const enrichLogsWithHostnames = async (logList) => {
-        // 提取所有唯一的 MAC 地址
-        const macs = new Set();
-        logList.forEach(log => {
-            const mac = extractMacFromMessage(log.message);
-            if (mac && !macToHostnameCache[mac]) {
-                macs.add(mac);
-            }
-        });
-        
-        // 批量查詢所有未快取的 MAC
-        const macArray = Array.from(macs);
-        if (macArray.length > 0) {
-            const promises = macArray.map(mac => fetchHostnameByMac(mac));
-            await Promise.all(promises);
+    const handleExport = () => {
+        if (logs.length === 0) {
+            message.warning('沒有日誌可以匯出');
+            return;
         }
+
+        const csvHeader = 'Timestamp,Level,Event,Message\n';
+        const csvRows = logs.map(log => {
+            const timestamp = log.timestamp || '-';
+            const level = log.level || '-';
+            const event = log.event || '-';
+            const msg = (log.message || '').replace(/,/g, ';').replace(/"/g, '""');
+            return '"' + timestamp + '","' + level + '","' + event + '","' + msg + '"';
+        }).join('\n');
+
+        const csvContent = csvHeader + csvRows;
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'dhcp_logs_' + dayjs().format('YYYYMMDDHHmmss') + '.csv';
+        link.click();
+
+        message.success('日誌已匯出');
     };
 
-    // 客戶端類型檢測函數（優先使用 hostname）
-    const detectClientType = (message) => {
-        if (!message) return null;  // 返回 null 表示不顯示
-        
-        const msgLower = message.toLowerCase();
-        
-        // 優先級 1: 從快取中查找 hostname
-        const mac = extractMacFromMessage(message);
-        if (mac && macToHostnameCache[mac]) {
-            const hostname = macToHostnameCache[mac];
-            if (hostname) {
-                return detectClientTypeFromHostname(hostname);
-            }
-        }
-        
-        // 優先級 2: 檢查訊息關鍵字（iPXE/PXE/WinPE/UEFI）
-        if (msgLower.includes('ipxe')) return 'iPXE';
-        if (msgLower.includes('pxeboot') || 
-            msgLower.includes('pxe boot') ||
-            msgLower.includes('pxeclient')) return 'PXE';
-        if (msgLower.includes('winpe') || 
-            msgLower.includes('minint-')) return 'WinPE';
-        if (msgLower.includes('uefi')) return 'UEFI';
-        
-        // 優先級 3: 檢查 MAC 地址特徵（虛擬機）
-        const vmMacPatterns = [
-            /00:0c:29/i,  // VMware
-            /00:50:56/i,  // VMware ESXi
-            /08:00:27/i,  // VirtualBox
-            /52:54:00/i,  // QEMU/KVM
-            /00:15:5d/i,  // Hyper-V
-        ];
-        if (vmMacPatterns.some(pattern => pattern.test(message))) {
-            return 'VM';
-        }
-        
-        // 優先級 4: 檢查 IoT 設備 MAC（Raspberry Pi）
-        const iotMacPatterns = [
-            /b8:27:eb/i,  // Raspberry Pi
-            /dc:a6:32/i,  // Raspberry Pi
-            /e4:5f:01/i,  // Raspberry Pi
-        ];
-        if (iotMacPatterns.some(pattern => pattern.test(message))) {
-            return 'IoT';
-        }
-        
-        // 優先級 5: 訊息中的 hostname 模式（不太可靠）
-        if (/desktop-[a-z0-9]+/i.test(message)) return 'Windows';
-        if (/win-[a-z0-9]+/i.test(message)) return 'Windows';
-        if (/laptop-[a-z0-9]+/i.test(message)) return 'Windows';
-        if (/ubuntu|debian|centos|fedora/i.test(message)) return 'Linux';
-        if (/server-/i.test(message)) return 'Server';
-        if (/printer-/i.test(message)) return 'Printer';
-        
-        // 無法識別：返回 null（不顯示標籤）
-        return null;
+    const handleClear = () => {
+        setLogLevel('ALL');
+        setKeyword('');
+        setTimeRange('today');
+        setCustomDateRange(null);
+        setCurrentPage(1);
     };
 
-    // 根據 hostname 判斷客戶端類型
-    const detectClientTypeFromHostname = (hostname) => {
-        if (!hostname) return null;
-        
-        const hostLower = hostname.toLowerCase();
-        
-        // Windows 主機名模式
-        if (/^(desktop|win|laptop|pc)-/i.test(hostname)) return 'Windows';
-        if (hostLower.includes('windows')) return 'Windows';
-        if (hostLower.includes('win10') || hostLower.includes('win11')) return 'Windows';
-        
-        // Linux 主機名模式
-        if (/ubuntu|debian|centos|fedora|redhat|rhel|mint|arch/i.test(hostname)) return 'Linux';
-        if (/^linux-/i.test(hostname)) return 'Linux';
-        
-        // 伺服器
-        if (/^(server|srv|host)-/i.test(hostname)) return 'Server';
-        if (hostLower.includes('server')) return 'Server';
-        
-        // 印表機
-        if (/^(printer|print|hp|canon|epson)-/i.test(hostname)) return 'Printer';
-        
-        // IoT 設備
-        if (/^(iot|sensor|camera|raspberry|rpi)-/i.test(hostname)) return 'IoT';
-        
-        // 行動裝置
-        if (/^(mobile|phone|iphone|android)-/i.test(hostname)) return 'Mobile';
-        if (/iphone|ipad|android/i.test(hostname)) return 'Mobile';
-        
-        // Apple 設備
-        if (/^(mac|macbook|imac)-/i.test(hostname)) return 'Apple';
-        if (hostLower.includes('macos')) return 'Apple';
-        
-        return null;  // 無法從 hostname 判斷
-    };
-
-    // 客戶端類型標籤生成函數
-    const getClientTypeTag = (message) => {
-        const clientType = detectClientType(message);
-        
-        // 如果無法識別，不顯示標籤
-        if (!clientType) return null;
-        
-        const typeConfig = {
-            'Windows': { color: 'blue', icon: '🪟', text: 'Windows' },
-            'Linux': { color: 'green', icon: '🐧', text: 'Linux' },
-            'iPXE': { color: 'purple', icon: '🚀', text: 'iPXE' },
-            'PXE': { color: 'cyan', icon: '⚙️', text: 'PXE' },
-            'WinPE': { color: 'geekblue', icon: '🔧', text: 'WinPE' },
-            'UEFI': { color: 'magenta', icon: '⚡', text: 'UEFI' },
-            'VM': { color: 'orange', icon: '📦', text: 'VM' },
-            'Apple': { color: 'default', icon: '🍎', text: 'Apple' },
-            'IoT': { color: 'lime', icon: '📡', text: 'IoT' },
-            'Server': { color: 'gold', icon: '🖥️', text: 'Server' },
-            'Printer': { color: 'volcano', icon: '🖨️', text: 'Printer' },
-            'Mobile': { color: 'pink', icon: '📱', text: 'Mobile' },
+    const getLevelTag = (level) => {
+        const levelConfig = {
+            'INFO': { color: 'blue', icon: <InfoCircleOutlined /> },
+            'WARN': { color: 'orange', icon: <WarningOutlined /> },
+            'ERROR': { color: 'red', icon: <CloseCircleOutlined /> },
+            'DEBUG': { color: 'default', icon: <InfoCircleOutlined /> },
         };
-        
-        const config = typeConfig[clientType];
-        if (!config) return null;
-        
-        return <Tag color={config.color} style={{ minWidth: '90px', textAlign: 'center' }}>{config.icon} {config.text}</Tag>;
+
+        const config = levelConfig[level] || levelConfig['INFO'];
+        return (
+            <Tag color={config.color} icon={config.icon}>
+                {level}
+            </Tag>
+        );
     };
 
-    const getLogStats = () => {
-        const stats = {
-            total: logs.length,
-            info: logs.filter((log) => log.level === 'INFO').length,
-            warn: logs.filter((log) => log.level === 'WARN').length,
-            error: logs.filter((log) => log.level === 'ERROR').length,
-            debug: logs.filter((log) => log.level === 'DEBUG').length,
-        };
-        return stats;
+    const formatTimestamp = (timestamp) => {
+        if (!timestamp) return '-';
+        return dayjs(timestamp).format('YYYY-MM-DD HH:mm:ss');
     };
-
-    // 客戶端類型統計（過濾掉 null）
-    const getClientTypeStats = () => {
-        const typeStats = {};
-        logs.forEach(log => {
-            const type = detectClientType(log.message);
-            if (type) {  // 只統計可識別的類型
-                typeStats[type] = (typeStats[type] || 0) + 1;
-            }
-        });
-        return typeStats;
-    };
-
-    // 分頁處理
-    const handlePageChange = (page, newPageSize) => {
-        setCurrentPage(page);
-        if (newPageSize !== pageSize) {
-            setPageSize(newPageSize);
-            setCurrentPage(1);  // 改變每頁數量時重置到第一頁
-        }
-    };
-
-    // 獲取當前頁的日誌
-    const getCurrentPageLogs = () => {
-        const startIndex = (currentPage - 1) * pageSize;
-        const endIndex = startIndex + pageSize;
-        return logs.slice(startIndex, endIndex);
-    };
-
-    const stats = getLogStats();
-    const clientTypeStats = getClientTypeStats();
-    const currentPageLogs = getCurrentPageLogs();
 
     return (
         <div>
-            {/* 控制列 */}
-            <Card style={{ marginBottom: '16px' }}>
-                <Space wrap>
-                    <Radio.Group value={source} onChange={(e) => setSource(e.target.value)}>
-                        <Radio.Button value="local">本地日誌</Radio.Button>
-                        <Radio.Button value="remote" disabled={serverId === 'all'}>
-                            遠端 SSH
-                        </Radio.Button>
-                    </Radio.Group>
+            <Row gutter={16} style={{ marginBottom: '16px' }}>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false}>
+                        <Statistic
+                            title="總日誌數"
+                            value={statistics.total}
+                            valueStyle={{ color: '#1890ff' }}
+                        />
+                    </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false}>
+                        <Statistic
+                            title="錯誤 (ERROR)"
+                            value={statistics.error}
+                            valueStyle={{ color: '#ff4d4f' }}
+                            prefix={<CloseCircleOutlined />}
+                        />
+                    </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false}>
+                        <Statistic
+                            title="警告 (WARN)"
+                            value={statistics.warn}
+                            valueStyle={{ color: '#faad14' }}
+                            prefix={<WarningOutlined />}
+                        />
+                    </Card>
+                </Col>
+                <Col xs={24} sm={12} md={6}>
+                    <Card bordered={false}>
+                        <Statistic
+                            title="資訊 (INFO)"
+                            value={statistics.info}
+                            valueStyle={{ color: '#52c41a' }}
+                            prefix={<InfoCircleOutlined />}
+                        />
+                    </Card>
+                </Col>
+            </Row>
 
-                    <Select
-                        style={{ width: 120 }}
-                        value={logLevel}
-                        onChange={setLogLevel}
-                        placeholder="日誌等級"
-                    >
-                        <Option value="ALL">所有等級</Option>
-                        <Option value="INFO">INFO</Option>
-                        <Option value="WARN">WARN</Option>
-                        <Option value="ERROR">ERROR</Option>
-                        <Option value="DEBUG">DEBUG</Option>
-                    </Select>
-
-                    <Input.Search
-                        placeholder="搜尋關鍵字..."
-                        allowClear
-                        style={{ width: 250 }}
-                        onSearch={setKeyword}
-                        prefix={<SearchOutlined />}
-                    />
-
-                    <RangePicker
-                        showTime
-                        format="YYYY-MM-DD HH:mm:ss"
-                        placeholder={['開始時間', '結束時間']}
-                        value={dateRange}
-                        onChange={setDateRange}
-                        style={{ width: 380 }}
-                    />
-
-                    <Select
-                        style={{ width: 120 }}
-                        value={limit}
-                        onChange={setLimit}
-                        placeholder="顯示筆數"
-                    >
-                        <Option value={100}>100 筆</Option>
-                        <Option value={200}>200 筆</Option>
-                        <Option value={300}>300 筆</Option>
-                        <Option value={500}>500 筆</Option>
-                    </Select>
-
-                    <Space>
-                        <span style={{ color: '#666' }}>自動更新:</span>
-                        <Switch checked={autoRefresh} onChange={setAutoRefresh} />
-                    </Space>
-
-                    <Button icon={<ReloadOutlined />} onClick={() => loadLogs()} loading={loading}>
-                        重新載入
-                    </Button>
-
-                    <Button icon={<ClearOutlined />} onClick={handleClear}>
-                        清除螢幕
-                    </Button>
-
-                    <Button icon={<DownloadOutlined />} onClick={handleDownload}>
-                        下載日誌
-                    </Button>
-                </Space>
-            </Card>
-
-            {/* 日誌統計 */}
-                <div style={{ marginBottom: '12px', fontSize: '13px' }}>
-                    <Space split="|" wrap>
-                        <span>總計: <strong>{stats.total}</strong> 行</span>
-                        <span>當前頁: <strong>{currentPageLogs.length}</strong> 行</span>
-                        <span>
-                            <Tag color="blue">INFO: {stats.info}</Tag>
-                            <Tag color="orange">WARN: {stats.warn}</Tag>
-                            <Tag color="red">ERROR: {stats.error}</Tag>
-                            <Tag color="default">DEBUG: {stats.debug}</Tag>
-                        </span>
-                    </Space>
-                    {Object.keys(clientTypeStats).length > 0 && (
-                        <div style={{ marginTop: '8px' }}>
-                            <Space wrap>
-                                <span style={{ color: '#858585' }}>客戶端類型:</span>
-                                {Object.entries(clientTypeStats)
-                                    .sort((a, b) => b[1] - a[1])  // 按數量排序
-                                    .slice(0, 6)  // 只顯示前6個
-                                    .map(([type, count]) => {
-                                        const typeConfig = {
-                                            'Windows': { color: 'blue', icon: '🪟' },
-                                            'Linux': { color: 'green', icon: '🐧' },
-                                            'iPXE': { color: 'purple', icon: '🚀' },
-                                            'PXE': { color: 'cyan', icon: '⚙️' },
-                                            'WinPE': { color: 'geekblue', icon: '🔧' },
-                                            'UEFI': { color: 'magenta', icon: '⚡' },
-                                            'VM': { color: 'orange', icon: '📦' },
-                                            'Apple': { color: 'default', icon: '🍎' },
-                                            'IoT': { color: 'lime', icon: '📡' },
-                                            'Server': { color: 'gold', icon: '🖥️' },
-                                            'Printer': { color: 'volcano', icon: '🖨️' },
-                                            'Mobile': { color: 'pink', icon: '📱' },
-                                        };
-                                        const config = typeConfig[type];
-                                        if (!config) return null;
-                                        return (
-                                            <Tag key={type} color={config.color}>
-                                                {config.icon} {type}: {count}
-                                            </Tag>
-                                        );
-                                    })
-                                }
-                            </Space>
-                        </div>
-                    )}
-                </div>            {/* 日誌內容區 */}
             <Card
-                title={
+                title="DHCP Server 日誌"
+                extra={
                     <Space>
-                        <span>日誌內容</span>
-                        {autoRefresh && <Tag color="success">自動更新中...</Tag>}
+                        <Button
+                            type="primary"
+                            icon={<ReloadOutlined />}
+                            onClick={handleSyncLogs}
+                            loading={syncing}
+                        >
+                            同步日誌
+                        </Button>
+                        <Button
+                            icon={<ReloadOutlined />}
+                            onClick={loadLogs}
+                            loading={loading}
+                        >
+                            重新載入
+                        </Button>
+                        <Button
+                            icon={<DownloadOutlined />}
+                            onClick={handleExport}
+                            disabled={logs.length === 0}
+                        >
+                            匯出 CSV
+                        </Button>
                     </Space>
                 }
             >
-                <Spin spinning={loading}>
-                    <div className="log-container" ref={logContainerRef}>
-                        {logs.length === 0 ? (
-                            <Empty description="無日誌記錄" />
-                        ) : (
-                            currentPageLogs.map((log, index) => (
-                                <div key={log.id || index} className={`log-line log-${log.level.toLowerCase()}`}>
-                                    <span className="log-time">{log.timestamp}</span>
-                                    {getLogLevelTag(log.level)}
-                                    {getClientTypeTag(log.message)}
-                                    <span className="log-message">{log.message}</span>
-                                </div>
-                            ))
-                        )}
-                    </div>
+                <Space direction="vertical" style={{ width: '100%', marginBottom: '16px' }}>
+                    <Row gutter={[16, 16]}>
+                        <Col xs={24} sm={12} md={6}>
+                            <div style={{ marginBottom: '8px' }}>資料來源：</div>
+                            <Select
+                                style={{ width: '100%' }}
+                                value={source}
+                                onChange={(value) => {
+                                    setSource(value);
+                                    setCurrentPage(1);
+                                }}
+                            >
+                                <Option value="database">資料庫（快速）</Option>
+                                <Option value="remote">SSH 即時查詢</Option>
+                            </Select>
+                        </Col>
 
-                    {/* 分頁器 */}
-                    {logs.length > 0 && (
-                        <div style={{ marginTop: '16px', textAlign: 'center' }}>
-                            <Pagination
-                                current={currentPage}
-                                pageSize={pageSize}
-                                total={logs.length}
-                                onChange={handlePageChange}
-                                onShowSizeChange={handlePageChange}
-                                showSizeChanger
-                                showQuickJumper
-                                showTotal={(total) => `共 ${total} 條日誌`}
-                                pageSizeOptions={['10', '20', '50', '100']}
+                        <Col xs={24} sm={12} md={6}>
+                            <div style={{ marginBottom: '8px' }}>時間範圍：</div>
+                            <Radio.Group
+                                value={timeRange}
+                                onChange={(e) => {
+                                    setTimeRange(e.target.value);
+                                    setCustomDateRange(null);
+                                    setCurrentPage(1);
+                                }}
+                                buttonStyle="solid"
+                                style={{ width: '100%' }}
+                            >
+                                <Radio.Button value="1h" style={{ width: '16.66%', textAlign: 'center' }}>1小時</Radio.Button>
+                                <Radio.Button value="6h" style={{ width: '16.66%', textAlign: 'center' }}>6小時</Radio.Button>
+                                <Radio.Button value="today" style={{ width: '16.66%', textAlign: 'center' }}>今天</Radio.Button>
+                                <Radio.Button value="1d" style={{ width: '16.66%', textAlign: 'center' }}>1天</Radio.Button>
+                                <Radio.Button value="3d" style={{ width: '16.66%', textAlign: 'center' }}>3天</Radio.Button>
+                                <Radio.Button value="7d" style={{ width: '16.66%', textAlign: 'center' }}>7天</Radio.Button>
+                            </Radio.Group>
+                        </Col>
+
+                        <Col xs={24} sm={12} md={6}>
+                            <div style={{ marginBottom: '8px' }}>自訂時間範圍：</div>
+                            <RangePicker
+                                style={{ width: '100%' }}
+                                showTime
+                                format="YYYY-MM-DD HH:mm"
+                                value={customDateRange}
+                                onChange={(dates) => {
+                                    setCustomDateRange(dates);
+                                    if (dates) {
+                                        setTimeRange(null);
+                                    }
+                                    setCurrentPage(1);
+                                }}
+                                placeholder={['開始時間', '結束時間']}
                             />
+                        </Col>
+
+                        <Col xs={24} sm={12} md={6}>
+                            <div style={{ marginBottom: '8px' }}>日誌等級：</div>
+                            <Select
+                                style={{ width: '100%' }}
+                                value={logLevel}
+                                onChange={(value) => {
+                                    setLogLevel(value);
+                                    setCurrentPage(1);
+                                }}
+                            >
+                                <Option value="ALL">全部</Option>
+                                <Option value="INFO">INFO</Option>
+                                <Option value="WARN">WARN</Option>
+                                <Option value="ERROR">ERROR</Option>
+                                <Option value="DEBUG">DEBUG</Option>
+                            </Select>
+                        </Col>
+                    </Row>
+
+                    <Row gutter={[16, 16]}>
+                        <Col xs={24} sm={18}>
+                            <Input
+                                placeholder="搜尋關鍵字（訊息、事件）..."
+                                value={keyword}
+                                onChange={(e) => setKeyword(e.target.value)}
+                                onPressEnter={() => {
+                                    setCurrentPage(1);
+                                    loadLogs();
+                                }}
+                                allowClear
+                            />
+                        </Col>
+                        <Col xs={24} sm={6}>
+                            <Button
+                                icon={<ClearOutlined />}
+                                onClick={handleClear}
+                                block
+                            >
+                                清除篩選
+                            </Button>
+                        </Col>
+                    </Row>
+                </Space>
+
+                <Spin spinning={loading}>
+                    {logs.length === 0 ? (
+                        <Empty description="沒有日誌資料" />
+                    ) : (
+                        <div>
+                            <div className="log-container" style={{ 
+                                maxHeight: '500px', 
+                                overflow: 'auto',
+                                background: '#fafafa',
+                                padding: '16px',
+                                borderRadius: '4px',
+                                fontFamily: 'monospace',
+                                fontSize: '13px',
+                            }}>
+                                {logs.map((log, index) => (
+                                    <div
+                                        key={index}
+                                        style={{
+                                            marginBottom: '8px',
+                                            padding: '8px',
+                                            background: '#fff',
+                                            borderRadius: '4px',
+                                            borderLeft: '4px solid ' + (
+                                                log.level === 'ERROR' ? '#ff4d4f' :
+                                                log.level === 'WARN' ? '#faad14' :
+                                                log.level === 'DEBUG' ? '#d9d9d9' :
+                                                '#52c41a'
+                                            ),
+                                        }}
+                                    >
+                                        <Space>
+                                            <span style={{ color: '#8c8c8c' }}>
+                                                {formatTimestamp(log.timestamp)}
+                                            </span>
+                                            {getLevelTag(log.level)}
+                                            {log.event && (
+                                                <Tag color="purple">{log.event}</Tag>
+                                            )}
+                                        </Space>
+                                        <div style={{ marginTop: '4px', wordBreak: 'break-all' }}>
+                                            {log.message}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div style={{ marginTop: '16px', textAlign: 'right' }}>
+                                <Pagination
+                                    current={currentPage}
+                                    pageSize={pageSize}
+                                    total={total}
+                                    onChange={(page, size) => {
+                                        setCurrentPage(page);
+                                        setPageSize(size);
+                                    }}
+                                    showSizeChanger
+                                    showQuickJumper
+                                    showTotal={(total) => '共 ' + total + ' 筆日誌'}
+                                    pageSizeOptions={[10, 20, 50, 100]}
+                                />
+                            </div>
                         </div>
                     )}
                 </Spin>
