@@ -152,41 +152,10 @@ class WindowsSSHPowerShellService:
             Scope 資料列表
         """
         try:
-            # 簡化版 PowerShell 命令（直接使用屬性，不用 @{} 語法）
-            ps_command = "Get-DhcpServerv4Scope -ComputerName localhost | ConvertTo-Json -Compress"
+            # PowerShell 命令：強制轉換 IP 地址為字串（使用單行格式避免傳輸問題）
+            ps_command = 'Get-DhcpServerv4Scope -ComputerName localhost | ForEach-Object { @{ ScopeId = $_.ScopeId.IPAddressToString; Name = $_.Name; SubnetMask = $_.SubnetMask.IPAddressToString; StartRange = $_.StartRange.IPAddressToString; EndRange = $_.EndRange.IPAddressToString; State = $_.State.ToString(); LeaseDuration = $_.LeaseDuration.ToString() } } | ConvertTo-Json -Compress'
             
-            output, error = self.execute_powershell(ps_command.strip())
-            
-            if not output:
-                logger.error(f'未獲取到 Scope 資料，錯誤: {error}')
-                return []
-            
-            try:
-                data = json.loads(output)
-                if isinstance(data, dict):
-                    data = [data]
-                
-                # 轉換屬性格式
-                scopes = []
-                for scope in data:
-                    scopes.append({
-                        'ScopeId': str(scope.get('ScopeId', '')),
-                        'Name': scope.get('Name', ''),
-                        'SubnetMask': str(scope.get('SubnetMask', '')),
-                        'StartRange': str(scope.get('StartRange', '')),
-                        'EndRange': str(scope.get('EndRange', '')),
-                        'State': str(scope.get('State', '')),
-                        'LeaseDuration': str(scope.get('LeaseDuration', '')),
-                    })
-                
-                logger.info(f'成功獲取 {len(scopes)} 個 Scope')
-                return scopes
-            
-            except json.JSONDecodeError as e:
-                logger.error(f'JSON 解析失敗: {str(e)}', exc_info=True)
-                return []
-            
-            output, error = self.execute_powershell(ps_command.strip())
+            output, error = self.execute_powershell(ps_command)
             
             if not output:
                 logger.error(f'未獲取到 Scope 資料，錯誤: {error}')
@@ -394,6 +363,148 @@ class WindowsSSHPowerShellService:
         
         except Exception as e:
             logger.error(f'同步租約失敗: {str(e)}', exc_info=True)
+            stats['errors'] = stats['total']
+            return stats
+    
+    def get_dhcp_scope_statistics(self, scope_id):
+        """
+        獲取單一 Scope 的統計資訊
+        
+        Args:
+            scope_id: Scope ID (例如: 10.250.53.0)
+        
+        Returns:
+            dict: {
+                'total_addresses': int,
+                'in_use': int,
+                'available': int,
+                'percentage': float
+            }
+        """
+        try:
+            # 直接獲取統計資訊（PowerShell JSON 包含 Free, InUse, PercentageInUse 欄位）
+            ps_command = f'Get-DhcpServerv4ScopeStatistics -ComputerName localhost -ScopeId {scope_id} | ConvertTo-Json -Compress'
+            
+            output, error = self.execute_powershell(ps_command)
+            
+            if not output:
+                logger.warning(f'未獲取到 Scope {scope_id} 的統計資訊')
+                return {
+                    'total_addresses': 0,
+                    'in_use': 0,
+                    'available': 0,
+                    'percentage': 0.0
+                }
+            
+            data = json.loads(output)
+            # PowerShell JSON 格式中，欄位在最外層
+            free = int(data.get('Free', 0) or data.get('AddressesFree', 0) or 0)
+            in_use = int(data.get('InUse', 0) or data.get('AddressesInUse', 0) or 0)
+            percentage = float(data.get('PercentageInUse', 0) or 0)
+            total = free + in_use
+            
+            return {
+                'total_addresses': total,
+                'in_use': in_use,
+                'available': free,
+                'percentage': percentage
+            }
+        
+        except Exception as e:
+            logger.error(f'獲取 Scope 統計失敗 ({scope_id}): {str(e)}', exc_info=True)
+            return {
+                'total_addresses': 0,
+                'in_use': 0,
+                'available': 0,
+                'percentage': 0.0
+            }
+    
+    def sync_scopes_to_db(self):
+        """
+        同步 DHCP Scope 資訊到資料庫，包含使用率統計
+        
+        Returns:
+            dict: 同步統計資訊
+        """
+        from .models import DHCPScope
+        
+        stats = {
+            'total': 0,
+            'created': 0,
+            'updated': 0,
+            'errors': 0,
+        }
+        
+        try:
+            # 獲取所有 Scope
+            scope_data_list = self.get_dhcp_scopes()
+            stats['total'] = len(scope_data_list)
+            
+            if not scope_data_list:
+                logger.warning('未獲取到任何 Scope 資料')
+                return stats
+            
+            total_pool_usage = 0.0
+            active_scopes_count = 0
+            
+            # 處理每個 Scope
+            for scope_data in scope_data_list:
+                try:
+                    scope_id = scope_data.get('ScopeId', '')
+                    if not scope_id:
+                        logger.warning(f'跳過無效的 Scope ID: {scope_data}')
+                        stats['errors'] += 1
+                        continue
+                    
+                    # 獲取 Scope 統計資訊
+                    scope_stats = self.get_dhcp_scope_statistics(scope_id)
+                    
+                    # 更新或創建 Scope
+                    scope, created = DHCPScope.objects.update_or_create(
+                        server=self.dhcp_server,
+                        scope_id=scope_id,
+                        defaults={
+                            'name': scope_data.get('Name', ''),
+                            'subnet_mask': scope_data.get('SubnetMask', '255.255.255.0'),
+                            'start_range': scope_data.get('StartRange', scope_id),
+                            'end_range': scope_data.get('EndRange', scope_id),
+                            'state': scope_data.get('State', 'Active'),
+                            'lease_duration': scope_data.get('LeaseDuration', ''),
+                            'total_addresses': scope_stats['total_addresses'],
+                            'in_use_addresses': scope_stats['in_use'],
+                            'available_addresses': scope_stats['available'],
+                            'usage_percentage': scope_stats['percentage'],
+                        }
+                    )
+                    
+                    if created:
+                        stats['created'] += 1
+                        logger.info(f'新增 Scope: {scope_id} - {scope_data.get("Name")} ({scope_stats["percentage"]:.1f}%)')
+                    else:
+                        stats['updated'] += 1
+                        logger.info(f'更新 Scope: {scope_id} - {scope_data.get("Name")} ({scope_stats["percentage"]:.1f}%)')
+                    
+                    # 累加使用率（僅計算啟用的 Scope）
+                    if scope_data.get('State', '').lower() == 'active':
+                        total_pool_usage += scope_stats['percentage']
+                        active_scopes_count += 1
+                
+                except Exception as e:
+                    stats['errors'] += 1
+                    logger.error(f'處理 Scope 失敗: {str(e)}', exc_info=True)
+            
+            # 更新 Server 的平均使用率
+            if active_scopes_count > 0:
+                avg_pool_usage = total_pool_usage / active_scopes_count
+                self.dhcp_server.pool_usage = round(avg_pool_usage, 2)
+                self.dhcp_server.save(update_fields=['pool_usage'])
+                logger.info(f'更新 Server 平均使用率: {avg_pool_usage:.2f}%')
+            
+            logger.info(f'Scope 同步完成: {stats}')
+            return stats
+        
+        except Exception as e:
+            logger.error(f'同步 Scope 失敗: {str(e)}', exc_info=True)
             stats['errors'] = stats['total']
             return stats
     

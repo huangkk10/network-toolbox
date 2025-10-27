@@ -83,6 +83,56 @@ class DHCPLease(models.Model):
         return f"{self.ip_address} - {self.mac_address}"
 
 
+class DHCPScope(models.Model):
+    """DHCP Scope 模型 - 儲存 IP 範圍和使用率資訊"""
+    
+    STATE_CHOICES = [
+        ('Active', '啟用'),
+        ('Inactive', '停用'),
+    ]
+    
+    server = models.ForeignKey(
+        DHCPServer,
+        on_delete=models.CASCADE,
+        related_name='scopes',
+        verbose_name='所屬伺服器'
+    )
+    scope_id = models.CharField(max_length=45, verbose_name='Scope ID')  # IPv4/IPv6 地址字串
+    name = models.CharField(max_length=255, verbose_name='Scope 名稱')
+    subnet_mask = models.CharField(max_length=45, verbose_name='子網路遮罩')
+    start_range = models.CharField(max_length=45, verbose_name='起始 IP')
+    end_range = models.CharField(max_length=45, verbose_name='結束 IP')
+    state = models.CharField(
+        max_length=20,
+        choices=STATE_CHOICES,
+        default='Active',
+        verbose_name='狀態'
+    )
+    lease_duration = models.CharField(max_length=50, blank=True, verbose_name='租約期限')
+    
+    # 使用率統計
+    total_addresses = models.IntegerField(default=0, verbose_name='總 IP 數')
+    in_use_addresses = models.IntegerField(default=0, verbose_name='已使用 IP 數')
+    available_addresses = models.IntegerField(default=0, verbose_name='可用 IP 數')
+    usage_percentage = models.FloatField(default=0.0, verbose_name='使用率 (%)')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    
+    class Meta:
+        verbose_name = 'DHCP Scope'
+        verbose_name_plural = 'DHCP Scopes'
+        unique_together = ['server', 'scope_id']  # 同一 Server 下 Scope ID 唯一
+        ordering = ['server', 'scope_id']
+        indexes = [
+            models.Index(fields=['server', 'scope_id'], name='idx_server_scope'),
+            models.Index(fields=['state'], name='idx_scope_state'),
+        ]
+    
+    def __str__(self):
+        return f"{self.scope_id} - {self.name} ({self.usage_percentage:.1f}%)"
+
+
 class DHCPLog(models.Model):
     """DHCP 日誌模型 - 7天滾動視窗"""
     

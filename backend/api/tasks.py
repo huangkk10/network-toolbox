@@ -10,7 +10,7 @@ from django.db.models import Count
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import DHCPServer, DHCPLog, DHCPLease
+from .models import DHCPServer, DHCPLog, DHCPLease, DHCPScope
 from .services import DHCPLogService
 
 logger = logging.getLogger(__name__)
@@ -240,6 +240,99 @@ def sync_dhcp_leases_task(self, server_id):
                 'created': 0,
                 'updated': 0,
                 'errors': 1,
+                'error_message': str(exc)
+            }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_dhcp_scopes_task',
+    max_retries=3,
+    default_retry_delay=120,  # 失敗後 2 分鐘重試
+    time_limit=300,  # 硬限制 5 分鐘
+    soft_time_limit=270  # 軟限制 4.5 分鐘
+)
+def sync_dhcp_scopes_task(self, server_id):
+    """
+    同步 DHCP Scope 資訊到資料庫（包含使用率統計）
+    
+    Args:
+        server_id: DHCP Server ID
+        
+    Returns:
+        dict: {
+            'server_id': int,
+            'server_name': str,
+            'total': int,      # 讀取的總 Scope 數
+            'created': int,    # 新增的 Scope 數
+            'updated': int,    # 更新的 Scope 數
+            'errors': int,     # 錯誤數
+            'pool_usage': float  # 更新後的平均使用率
+        }
+    """
+    try:
+        logger.info(f'[Celery] 開始同步 DHCP Scope - Server ID: {server_id}')
+        
+        # 獲取伺服器
+        try:
+            server = DHCPServer.objects.get(id=server_id)
+        except DHCPServer.DoesNotExist:
+            error_msg = f'DHCP Server ID {server_id} 不存在'
+            logger.error(f'[Celery] {error_msg}')
+            return {
+                'server_id': server_id,
+                'server_name': None,
+                'total': 0,
+                'created': 0,
+                'updated': 0,
+                'errors': 1,
+                'pool_usage': 0.0,
+                'error_message': error_msg
+            }
+        
+        # 使用 SSH + PowerShell 同步（適用於 Windows DHCP Server）
+        from .ssh_powershell_service import WindowsSSHPowerShellService
+        
+        with WindowsSSHPowerShellService(server) as service:
+            # 執行同步
+            result = service.sync_scopes_to_db()
+        
+        # 添加伺服器資訊
+        result['server_id'] = server_id
+        result['server_name'] = server.name
+        
+        # 重新載入 Server 以獲取更新後的 pool_usage
+        server.refresh_from_db()
+        result['pool_usage'] = server.pool_usage
+        
+        # 記錄結果
+        logger.info(
+            f'[Celery] DHCP Scope 同步完成 - Server: {server.name} | '
+            f'總計: {result["total"]} 個 | '
+            f'新增: {result["created"]} 個 | '
+            f'更新: {result["updated"]} 個 | '
+            f'錯誤: {result["errors"]} 個 | '
+            f'平均使用率: {result["pool_usage"]:.2f}%'
+        )
+        
+        return result
+        
+    except Exception as exc:
+        logger.error(f'[Celery] 同步 DHCP Scope 失敗 - Server ID: {server_id}', exc_info=True)
+        
+        # 自動重試（最多 3 次）
+        try:
+            raise self.retry(exc=exc, countdown=120)
+        except self.MaxRetriesExceededError:
+            logger.error(f'[Celery] Scope 同步重試次數已達上限 - Server ID: {server_id}')
+            return {
+                'server_id': server_id,
+                'server_name': None,
+                'total': 0,
+                'created': 0,
+                'updated': 0,
+                'errors': 1,
+                'pool_usage': 0.0,
                 'error_message': str(exc)
             }
 
