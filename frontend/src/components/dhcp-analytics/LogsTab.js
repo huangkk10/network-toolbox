@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Select, Input, Switch, Button, Space, Tag, Empty, Spin, Radio, message } from 'antd';
+import { Card, Select, Input, Switch, Button, Space, Tag, Empty, Spin, Radio, message, Pagination } from 'antd';
 import {
     DownloadOutlined,
     ReloadOutlined,
@@ -18,11 +18,14 @@ const LogsTab = ({ serverId }) => {
     const [keyword, setKeyword] = useState('');
     const [autoRefresh, setAutoRefresh] = useState(false);
     const [source, setSource] = useState('local');  // local 或 remote
-    const [limit, setLimit] = useState(200);  // 默認顯示 200 條
+    const [limit, setLimit] = useState(500);  // 默認顯示 500 條
+    const [currentPage, setCurrentPage] = useState(1);  // 當前頁碼
+    const [pageSize, setPageSize] = useState(20);  // 每頁顯示數量
     const logContainerRef = useRef(null);
 
     useEffect(() => {
         loadLogs();
+        setCurrentPage(1);  // 重置到第一頁
     }, [serverId, logLevel, keyword, source, limit]);
 
     useEffect(() => {
@@ -56,6 +59,7 @@ const LogsTab = ({ serverId }) => {
 
             const response = await axios.get('/api/dhcp-analytics/logs/', { params });
             setLogs(response.data || []);
+            setCurrentPage(1);  // 重置到第一頁
 
             // 自動滾動到底部
             setTimeout(() => {
@@ -123,7 +127,24 @@ const LogsTab = ({ serverId }) => {
         return stats;
     };
 
+    // 分頁處理
+    const handlePageChange = (page, newPageSize) => {
+        setCurrentPage(page);
+        if (newPageSize !== pageSize) {
+            setPageSize(newPageSize);
+            setCurrentPage(1);  // 改變每頁數量時重置到第一頁
+        }
+    };
+
+    // 獲取當前頁的日誌
+    const getCurrentPageLogs = () => {
+        const startIndex = (currentPage - 1) * pageSize;
+        const endIndex = startIndex + pageSize;
+        return logs.slice(startIndex, endIndex);
+    };
+
     const stats = getLogStats();
+    const currentPageLogs = getCurrentPageLogs();
 
     return (
         <div>
@@ -164,11 +185,10 @@ const LogsTab = ({ serverId }) => {
                         onChange={setLimit}
                         placeholder="顯示筆數"
                     >
-                        <Option value={50}>50 筆</Option>
                         <Option value={100}>100 筆</Option>
                         <Option value={200}>200 筆</Option>
+                        <Option value={300}>300 筆</Option>
                         <Option value={500}>500 筆</Option>
-                        <Option value={1000}>1000 筆</Option>
                     </Select>
 
                     <Space>
@@ -192,9 +212,12 @@ const LogsTab = ({ serverId }) => {
 
             {/* 日誌統計 */}
             <Card size="small" style={{ marginBottom: '16px' }}>
-                <Space split="|" size="large">
+                <Space split="|" size="large" style={{ flexWrap: 'wrap' }}>
                     <span>
-                        <strong>顯示:</strong> {stats.total} 行 / 最多 {limit} 行
+                        <strong>總計:</strong> {stats.total} 行
+                    </span>
+                    <span>
+                        <strong>當前頁:</strong> {currentPageLogs.length} 行
                     </span>
                     <span>
                         <Tag color="blue">INFO: {stats.info}</Tag>
@@ -225,8 +248,8 @@ const LogsTab = ({ serverId }) => {
                         {logs.length === 0 ? (
                             <Empty description="無日誌記錄" />
                         ) : (
-                            logs.map((log) => (
-                                <div key={log.id} className={`log-line log-${log.level.toLowerCase()}`}>
+                            currentPageLogs.map((log, index) => (
+                                <div key={log.id || index} className={`log-line log-${log.level.toLowerCase()}`}>
                                     <span className="log-time">{log.timestamp}</span>
                                     {getLogLevelTag(log.level)}
                                     <span className="log-message">{log.message}</span>
@@ -234,6 +257,23 @@ const LogsTab = ({ serverId }) => {
                             ))
                         )}
                     </div>
+
+                    {/* 分頁器 */}
+                    {logs.length > 0 && (
+                        <div style={{ marginTop: '16px', textAlign: 'center' }}>
+                            <Pagination
+                                current={currentPage}
+                                pageSize={pageSize}
+                                total={logs.length}
+                                onChange={handlePageChange}
+                                onShowSizeChange={handlePageChange}
+                                showSizeChanger
+                                showQuickJumper
+                                showTotal={(total) => `共 ${total} 條日誌`}
+                                pageSizeOptions={['10', '20', '50', '100']}
+                            />
+                        </div>
+                    )}
                 </Spin>
             </Card>
         </div>
