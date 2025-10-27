@@ -283,12 +283,10 @@ const LogsTab = ({ serverId }) => {
                                 buttonStyle="solid"
                                 style={{ width: '100%' }}
                             >
-                                <Radio.Button value="1h" style={{ width: '16.66%', textAlign: 'center' }}>1小時</Radio.Button>
-                                <Radio.Button value="6h" style={{ width: '16.66%', textAlign: 'center' }}>6小時</Radio.Button>
-                                <Radio.Button value="today" style={{ width: '16.66%', textAlign: 'center' }}>今天</Radio.Button>
-                                <Radio.Button value="1d" style={{ width: '16.66%', textAlign: 'center' }}>1天</Radio.Button>
-                                <Radio.Button value="3d" style={{ width: '16.66%', textAlign: 'center' }}>3天</Radio.Button>
-                                <Radio.Button value="7d" style={{ width: '16.66%', textAlign: 'center' }}>7天</Radio.Button>
+                                <Radio.Button value="today" style={{ width: '25%', textAlign: 'center' }}>今天</Radio.Button>
+                                <Radio.Button value="1d" style={{ width: '25%', textAlign: 'center' }}>1天</Radio.Button>
+                                <Radio.Button value="3d" style={{ width: '25%', textAlign: 'center' }}>3天</Radio.Button>
+                                <Radio.Button value="7d" style={{ width: '25%', textAlign: 'center' }}>7天</Radio.Button>
                             </Radio.Group>
                         </Col>
 
@@ -360,7 +358,7 @@ const LogsTab = ({ serverId }) => {
                     ) : (
                         <div>
                             <div className="log-container" style={{ 
-                                maxHeight: '500px', 
+                                maxHeight: '800px', 
                                 overflow: 'auto',
                                 background: '#fafafa',
                                 padding: '16px',
@@ -372,8 +370,8 @@ const LogsTab = ({ serverId }) => {
                                     <div
                                         key={index}
                                         style={{
-                                            marginBottom: '8px',
-                                            padding: '8px',
+                                            marginBottom: '6px',
+                                            padding: '6px 10px',
                                             background: '#fff',
                                             borderRadius: '4px',
                                             borderLeft: '4px solid ' + (
@@ -382,20 +380,21 @@ const LogsTab = ({ serverId }) => {
                                                 log.level === 'DEBUG' ? '#d9d9d9' :
                                                 '#52c41a'
                                             ),
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '12px',
                                         }}
                                     >
-                                        <Space>
-                                            <span style={{ color: '#8c8c8c' }}>
-                                                {formatTimestamp(log.timestamp)}
-                                            </span>
-                                            {getLevelTag(log.level)}
-                                            {log.event && (
-                                                <Tag color="purple">{log.event}</Tag>
-                                            )}
-                                        </Space>
-                                        <div style={{ marginTop: '4px', wordBreak: 'break-all' }}>
+                                        <span style={{ color: '#595959', fontWeight: '500', whiteSpace: 'nowrap' }}>
+                                            {formatTimestamp(log.timestamp)}
+                                        </span>
+                                        {getLevelTag(log.level)}
+                                        {log.event && (
+                                            <Tag color="purple">{log.event}</Tag>
+                                        )}
+                                        <span style={{ color: '#262626', fontWeight: '500', flex: 1, wordBreak: 'break-all' }}>
                                             {log.message}
-                                        </div>
+                                        </span>
                                     </div>
                                 ))}
                             </div>
