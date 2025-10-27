@@ -21,16 +21,17 @@ services:
       retries: 3
     networks:
       - nt_network
-    profiles:
-      - with-postgres # 只在指定 profile 時啟動
 
   adminer:
     image: adminer:latest
     container_name: nt-adminer
     restart: unless-stopped
     ports:
-      - "9090:8080"
-    network_mode: "host" # 使用 host 網路模式以訪問本機 PostgreSQL
+      - "9090:8080"  # 改用 9092 避免與 Prometheus 衝突
+    depends_on:
+      - postgres
+    networks:
+      - nt_network
 
   django:
     build:
@@ -42,7 +43,7 @@ services:
     environment:
       - TZ=Asia/Taipei
       - DEBUG=1
-      - DB_HOST=host.docker.internal # 使用 Docker 的特殊 DNS 名稱連接本機
+      - DB_HOST=postgres # 使用 Docker 內的 PostgreSQL 服務
       - DB_PORT=5432
       - DB_NAME=network_toolbox
       - DB_USER=postgres
@@ -55,8 +56,8 @@ services:
       - media_files:/app/media
     ports:
       - "8000:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway" # 讓容器能訪問宿主機
+    depends_on:
+      - postgres
     networks:
       - nt_network
 
@@ -88,32 +89,17 @@ services:
       - static_files:/app/static:ro
       - media_files:/app/media:ro
     ports:
-      - "80:80"
+      - "80:80"  # 改回 80 端口
     depends_on:
       - django
       - react
     networks:
       - nt_network
 
-  portainer:
-    image: portainer/portainer-ce:latest
-    container_name: nt-portainer
-    restart: unless-stopped
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - /etc/localtime:/etc/localtime:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - portainer_data:/data
-    ports:
-      - "9000:9000"
-      - "9443:9443"
-
 volumes:
   postgres_data:
   static_files:
   media_files:
-  portainer_data:
 
 
 networks:
