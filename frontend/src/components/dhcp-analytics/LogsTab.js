@@ -24,6 +24,7 @@ const LogsTab = ({ serverId }) => {
     const [currentPage, setCurrentPage] = useState(1);  // 當前頁碼
     const [pageSize, setPageSize] = useState(20);  // 每頁顯示數量
     const [dateRange, setDateRange] = useState(null);  // 時間範圍 [startDate, endDate]
+    const [macToHostnameCache, setMacToHostnameCache] = useState({});  // MAC → Hostname 快取
     const logContainerRef = useRef(null);
 
     useEffect(() => {
@@ -67,8 +68,14 @@ const LogsTab = ({ serverId }) => {
             }
 
             const response = await axios.get('/api/dhcp-analytics/logs/', { params });
-            setLogs(response.data || []);
+            const logData = response.data || [];
+            setLogs(logData);
             setCurrentPage(1);  // 重置到第一頁
+
+            // 批量查詢 hostname（性能優化）
+            if (logData.length > 0) {
+                enrichLogsWithHostnames(logData);
+            }
 
             // 自動滾動到底部
             setTimeout(() => {
@@ -125,6 +132,185 @@ const LogsTab = ({ serverId }) => {
         return <Tag color={config.color}>{config.text}</Tag>;
     };
 
+    // 從日誌訊息中提取 MAC 地址
+    const extractMacFromMessage = (message) => {
+        if (!message) return null;
+        // 匹配格式: xx:xx:xx:xx:xx:xx 或 xx-xx-xx-xx-xx-xx
+        const macRegex = /([0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2}[:-][0-9a-f]{2})/i;
+        const match = message.match(macRegex);
+        return match ? match[1].toLowerCase().replace(/-/g, ':') : null;
+    };
+
+    // 根據 MAC 地址查詢 hostname
+    const fetchHostnameByMac = async (mac) => {
+        if (!mac) return null;
+        
+        // 檢查快取
+        if (macToHostnameCache[mac]) {
+            return macToHostnameCache[mac];
+        }
+        
+        try {
+            const response = await axios.get('/api/dhcp-leases/lookup/', {
+                params: { mac }
+            });
+            
+            const hostname = response.data.hostname || null;
+            
+            // 更新快取
+            setMacToHostnameCache(prev => ({
+                ...prev,
+                [mac]: hostname
+            }));
+            
+            return hostname;
+        } catch (error) {
+            console.error(`查詢 MAC ${mac} 失敗:`, error);
+            return null;
+        }
+    };
+
+    // 批量查詢並豐富日誌資料（性能優化）
+    const enrichLogsWithHostnames = async (logList) => {
+        // 提取所有唯一的 MAC 地址
+        const macs = new Set();
+        logList.forEach(log => {
+            const mac = extractMacFromMessage(log.message);
+            if (mac && !macToHostnameCache[mac]) {
+                macs.add(mac);
+            }
+        });
+        
+        // 批量查詢所有未快取的 MAC
+        const macArray = Array.from(macs);
+        if (macArray.length > 0) {
+            const promises = macArray.map(mac => fetchHostnameByMac(mac));
+            await Promise.all(promises);
+        }
+    };
+
+    // 客戶端類型檢測函數（優先使用 hostname）
+    const detectClientType = (message) => {
+        if (!message) return null;  // 返回 null 表示不顯示
+        
+        const msgLower = message.toLowerCase();
+        
+        // 優先級 1: 從快取中查找 hostname
+        const mac = extractMacFromMessage(message);
+        if (mac && macToHostnameCache[mac]) {
+            const hostname = macToHostnameCache[mac];
+            if (hostname) {
+                return detectClientTypeFromHostname(hostname);
+            }
+        }
+        
+        // 優先級 2: 檢查訊息關鍵字（iPXE/PXE/WinPE/UEFI）
+        if (msgLower.includes('ipxe')) return 'iPXE';
+        if (msgLower.includes('pxeboot') || 
+            msgLower.includes('pxe boot') ||
+            msgLower.includes('pxeclient')) return 'PXE';
+        if (msgLower.includes('winpe') || 
+            msgLower.includes('minint-')) return 'WinPE';
+        if (msgLower.includes('uefi')) return 'UEFI';
+        
+        // 優先級 3: 檢查 MAC 地址特徵（虛擬機）
+        const vmMacPatterns = [
+            /00:0c:29/i,  // VMware
+            /00:50:56/i,  // VMware ESXi
+            /08:00:27/i,  // VirtualBox
+            /52:54:00/i,  // QEMU/KVM
+            /00:15:5d/i,  // Hyper-V
+        ];
+        if (vmMacPatterns.some(pattern => pattern.test(message))) {
+            return 'VM';
+        }
+        
+        // 優先級 4: 檢查 IoT 設備 MAC（Raspberry Pi）
+        const iotMacPatterns = [
+            /b8:27:eb/i,  // Raspberry Pi
+            /dc:a6:32/i,  // Raspberry Pi
+            /e4:5f:01/i,  // Raspberry Pi
+        ];
+        if (iotMacPatterns.some(pattern => pattern.test(message))) {
+            return 'IoT';
+        }
+        
+        // 優先級 5: 訊息中的 hostname 模式（不太可靠）
+        if (/desktop-[a-z0-9]+/i.test(message)) return 'Windows';
+        if (/win-[a-z0-9]+/i.test(message)) return 'Windows';
+        if (/laptop-[a-z0-9]+/i.test(message)) return 'Windows';
+        if (/ubuntu|debian|centos|fedora/i.test(message)) return 'Linux';
+        if (/server-/i.test(message)) return 'Server';
+        if (/printer-/i.test(message)) return 'Printer';
+        
+        // 無法識別：返回 null（不顯示標籤）
+        return null;
+    };
+
+    // 根據 hostname 判斷客戶端類型
+    const detectClientTypeFromHostname = (hostname) => {
+        if (!hostname) return null;
+        
+        const hostLower = hostname.toLowerCase();
+        
+        // Windows 主機名模式
+        if (/^(desktop|win|laptop|pc)-/i.test(hostname)) return 'Windows';
+        if (hostLower.includes('windows')) return 'Windows';
+        if (hostLower.includes('win10') || hostLower.includes('win11')) return 'Windows';
+        
+        // Linux 主機名模式
+        if (/ubuntu|debian|centos|fedora|redhat|rhel|mint|arch/i.test(hostname)) return 'Linux';
+        if (/^linux-/i.test(hostname)) return 'Linux';
+        
+        // 伺服器
+        if (/^(server|srv|host)-/i.test(hostname)) return 'Server';
+        if (hostLower.includes('server')) return 'Server';
+        
+        // 印表機
+        if (/^(printer|print|hp|canon|epson)-/i.test(hostname)) return 'Printer';
+        
+        // IoT 設備
+        if (/^(iot|sensor|camera|raspberry|rpi)-/i.test(hostname)) return 'IoT';
+        
+        // 行動裝置
+        if (/^(mobile|phone|iphone|android)-/i.test(hostname)) return 'Mobile';
+        if (/iphone|ipad|android/i.test(hostname)) return 'Mobile';
+        
+        // Apple 設備
+        if (/^(mac|macbook|imac)-/i.test(hostname)) return 'Apple';
+        if (hostLower.includes('macos')) return 'Apple';
+        
+        return null;  // 無法從 hostname 判斷
+    };
+
+    // 客戶端類型標籤生成函數
+    const getClientTypeTag = (message) => {
+        const clientType = detectClientType(message);
+        
+        // 如果無法識別，不顯示標籤
+        if (!clientType) return null;
+        
+        const typeConfig = {
+            'Windows': { color: 'blue', icon: '🪟', text: 'Windows' },
+            'Linux': { color: 'green', icon: '🐧', text: 'Linux' },
+            'iPXE': { color: 'purple', icon: '🚀', text: 'iPXE' },
+            'PXE': { color: 'cyan', icon: '⚙️', text: 'PXE' },
+            'WinPE': { color: 'geekblue', icon: '🔧', text: 'WinPE' },
+            'UEFI': { color: 'magenta', icon: '⚡', text: 'UEFI' },
+            'VM': { color: 'orange', icon: '📦', text: 'VM' },
+            'Apple': { color: 'default', icon: '🍎', text: 'Apple' },
+            'IoT': { color: 'lime', icon: '📡', text: 'IoT' },
+            'Server': { color: 'gold', icon: '🖥️', text: 'Server' },
+            'Printer': { color: 'volcano', icon: '🖨️', text: 'Printer' },
+            'Mobile': { color: 'pink', icon: '📱', text: 'Mobile' },
+        };
+        
+        const config = typeConfig[clientType];
+        if (!config) return null;
+        
+        return <Tag color={config.color} style={{ minWidth: '90px', textAlign: 'center' }}>{config.icon} {config.text}</Tag>;
+    };
+
     const getLogStats = () => {
         const stats = {
             total: logs.length,
@@ -134,6 +320,18 @@ const LogsTab = ({ serverId }) => {
             debug: logs.filter((log) => log.level === 'DEBUG').length,
         };
         return stats;
+    };
+
+    // 客戶端類型統計（過濾掉 null）
+    const getClientTypeStats = () => {
+        const typeStats = {};
+        logs.forEach(log => {
+            const type = detectClientType(log.message);
+            if (type) {  // 只統計可識別的類型
+                typeStats[type] = (typeStats[type] || 0) + 1;
+            }
+        });
+        return typeStats;
     };
 
     // 分頁處理
@@ -153,6 +351,7 @@ const LogsTab = ({ serverId }) => {
     };
 
     const stats = getLogStats();
+    const clientTypeStats = getClientTypeStats();
     const currentPageLogs = getCurrentPageLogs();
 
     return (
@@ -229,30 +428,52 @@ const LogsTab = ({ serverId }) => {
             </Card>
 
             {/* 日誌統計 */}
-            <Card size="small" style={{ marginBottom: '16px' }}>
-                <Space split="|" size="large" style={{ flexWrap: 'wrap' }}>
-                    <span>
-                        <strong>總計:</strong> {stats.total} 行
-                    </span>
-                    <span>
-                        <strong>當前頁:</strong> {currentPageLogs.length} 行
-                    </span>
-                    <span>
-                        <Tag color="blue">INFO: {stats.info}</Tag>
-                    </span>
-                    <span>
-                        <Tag color="orange">WARN: {stats.warn}</Tag>
-                    </span>
-                    <span>
-                        <Tag color="red">ERROR: {stats.error}</Tag>
-                    </span>
-                    <span>
-                        <Tag color="default">DEBUG: {stats.debug}</Tag>
-                    </span>
-                </Space>
-            </Card>
-
-            {/* 日誌內容區 */}
+                <div style={{ marginBottom: '12px', fontSize: '13px' }}>
+                    <Space split="|" wrap>
+                        <span>總計: <strong>{stats.total}</strong> 行</span>
+                        <span>當前頁: <strong>{currentPageLogs.length}</strong> 行</span>
+                        <span>
+                            <Tag color="blue">INFO: {stats.info}</Tag>
+                            <Tag color="orange">WARN: {stats.warn}</Tag>
+                            <Tag color="red">ERROR: {stats.error}</Tag>
+                            <Tag color="default">DEBUG: {stats.debug}</Tag>
+                        </span>
+                    </Space>
+                    {Object.keys(clientTypeStats).length > 0 && (
+                        <div style={{ marginTop: '8px' }}>
+                            <Space wrap>
+                                <span style={{ color: '#858585' }}>客戶端類型:</span>
+                                {Object.entries(clientTypeStats)
+                                    .sort((a, b) => b[1] - a[1])  // 按數量排序
+                                    .slice(0, 6)  // 只顯示前6個
+                                    .map(([type, count]) => {
+                                        const typeConfig = {
+                                            'Windows': { color: 'blue', icon: '🪟' },
+                                            'Linux': { color: 'green', icon: '🐧' },
+                                            'iPXE': { color: 'purple', icon: '🚀' },
+                                            'PXE': { color: 'cyan', icon: '⚙️' },
+                                            'WinPE': { color: 'geekblue', icon: '🔧' },
+                                            'UEFI': { color: 'magenta', icon: '⚡' },
+                                            'VM': { color: 'orange', icon: '📦' },
+                                            'Apple': { color: 'default', icon: '🍎' },
+                                            'IoT': { color: 'lime', icon: '📡' },
+                                            'Server': { color: 'gold', icon: '🖥️' },
+                                            'Printer': { color: 'volcano', icon: '🖨️' },
+                                            'Mobile': { color: 'pink', icon: '📱' },
+                                        };
+                                        const config = typeConfig[type];
+                                        if (!config) return null;
+                                        return (
+                                            <Tag key={type} color={config.color}>
+                                                {config.icon} {type}: {count}
+                                            </Tag>
+                                        );
+                                    })
+                                }
+                            </Space>
+                        </div>
+                    )}
+                </div>            {/* 日誌內容區 */}
             <Card
                 title={
                     <Space>
@@ -270,6 +491,7 @@ const LogsTab = ({ serverId }) => {
                                 <div key={log.id || index} className={`log-line log-${log.level.toLowerCase()}`}>
                                     <span className="log-time">{log.timestamp}</span>
                                     {getLogLevelTag(log.level)}
+                                    {getClientTypeTag(log.message)}
                                     <span className="log-message">{log.message}</span>
                                 </div>
                             ))

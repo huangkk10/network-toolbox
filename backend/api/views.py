@@ -293,27 +293,32 @@ def dhcp_analytics_recent_leases(request):
 def dhcp_sync_leases(request, server_id):
     """
     同步指定 DHCP Server 的租約資料
+    支援 SSH + PowerShell 方式（Windows Server）
     """
     try:
-        from .services import DHCPDataService
+        from .ssh_powershell_service import WindowsSSHPowerShellService
         
         server = DHCPServer.objects.get(id=server_id)
-        service = DHCPDataService(server)
         
-        # 執行同步
-        result = service.sync_leases_to_db()
+        # 使用 SSH + PowerShell 同步（適用於 Windows DHCP Server）
+        logger.info(f'開始透過 SSH + PowerShell 同步 Server {server.name} ({server.ip_address})')
         
-        # 更新 Server 統計資訊
-        server.total_leases = DHCPLease.objects.filter(server=server).count()
-        server.active_leases = DHCPLease.objects.filter(server=server, is_active=True).count()
-        server.last_sync_at = timezone.now()
-        server.save()
+        with WindowsSSHPowerShellService(server) as service:
+            # 執行同步
+            result = service.sync_leases_to_db()
         
         logger.info(f'成功同步 Server {server.name} 的租約資料: {result}')
         
         return Response({
             'message': '同步成功',
             'stats': result,
+            'server': {
+                'name': server.name,
+                'ip': server.ip_address,
+                'total_leases': server.total_leases,
+                'active_leases': server.active_leases,
+                'last_sync': server.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if server.last_sync_at else None,
+            }
         })
     
     except DHCPServer.DoesNotExist:
@@ -324,7 +329,7 @@ def dhcp_sync_leases(request, server_id):
     except Exception as e:
         logger.error(f'同步租約失敗: {str(e)}', exc_info=True)
         return Response(
-            {'error': str(e)},
+            {'error': f'同步失敗: {str(e)}'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -379,6 +384,66 @@ def dhcp_analytics_logs(request):
         )
     except Exception as e:
         logger.error(f'獲取日誌失敗: {str(e)}', exc_info=True)
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def dhcp_lease_lookup(request):
+    """
+    根據 MAC 地址查詢租約資訊（用於日誌客戶端類型識別）
+    
+    參數:
+        mac: MAC 地址 (格式: xx:xx:xx:xx:xx:xx 或 xx-xx-xx-xx-xx-xx)
+    
+    返回:
+        {
+            "mac": "b0:25:2b:0f:a9:45",
+            "ip": "192.168.7.89",
+            "hostname": "desktop-win11",
+            "is_active": true
+        }
+    """
+    mac = request.query_params.get('mac', None)
+    
+    if not mac:
+        return Response(
+            {'error': '請提供 MAC 地址'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    try:
+        # 標準化 MAC 地址格式（統一使用冒號分隔）
+        mac = mac.strip().lower().replace('-', ':')
+        
+        # 查詢租約（優先查詢活躍租約）
+        lease = DHCPLease.objects.filter(mac_address__iexact=mac).first()
+        
+        if not lease:
+            return Response(
+                {
+                    'mac': mac,
+                    'hostname': None,
+                    'ip': None,
+                    'is_active': False,
+                    'found': False
+                }
+            )
+        
+        return Response({
+            'mac': lease.mac_address,
+            'ip': lease.ip_address,
+            'hostname': lease.hostname,
+            'is_active': lease.is_active,
+            'lease_end': lease.lease_end.strftime('%Y-%m-%d %H:%M:%S') if lease.lease_end else None,
+            'found': True
+        })
+    
+    except Exception as e:
+        logger.error(f'MAC 地址查詢失敗 ({mac}): {str(e)}', exc_info=True)
         return Response(
             {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
