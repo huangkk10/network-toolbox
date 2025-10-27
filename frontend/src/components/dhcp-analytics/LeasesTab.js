@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Input, Select, Button, Space, Tag, DatePicker, Modal, Descriptions } from 'antd';
+import { Card, Table, Input, Select, Button, Space, Tag, DatePicker, Modal, Descriptions, message } from 'antd';
 import {
     SearchOutlined,
     ReloadOutlined,
@@ -8,6 +8,7 @@ import {
     ClockCircleOutlined,
     InfoCircleOutlined,
 } from '@ant-design/icons';
+import axios from 'axios';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
@@ -15,85 +16,84 @@ const { RangePicker } = DatePicker;
 const LeasesTab = ({ serverId }) => {
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState([]);
+    const [totalCount, setTotalCount] = useState(0);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
     const [searchText, setSearchText] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [detailModalVisible, setDetailModalVisible] = useState(false);
     const [selectedLease, setSelectedLease] = useState(null);
 
-    // 模擬租約數據
-    const mockLeases = [
-        {
-            key: '1',
-            ip: '192.168.1.100',
-            mac: '00:1A:2B:3C:4D:5E',
-            hostname: 'desktop-001',
-            status: 'active',
-            startTime: '2025-10-26 14:30:22',
-            endTime: '2025-10-27 14:30:22',
-            server: '192.168.1.1',
-            vendor: 'Dell Inc.',
-        },
-        {
-            key: '2',
-            ip: '192.168.1.101',
-            mac: '00:1A:2B:3C:4D:5F',
-            hostname: 'laptop-005',
-            status: 'active',
-            startTime: '2025-10-26 13:15:10',
-            endTime: '2025-10-27 13:15:10',
-            server: '192.168.1.1',
-            vendor: 'Apple, Inc.',
-        },
-        {
-            key: '3',
-            ip: '192.168.2.50',
-            mac: '00:1A:2B:3C:4D:60',
-            hostname: 'server-db-01',
-            status: 'expired',
-            startTime: '2025-10-25 10:00:00',
-            endTime: '2025-10-26 10:00:00',
-            server: '192.168.2.1',
-            vendor: 'HP Inc.',
-        },
-        {
-            key: '4',
-            ip: '10.0.1.200',
-            mac: '00:1A:2B:3C:4D:61',
-            hostname: 'printer-002',
-            status: 'active',
-            startTime: '2025-10-26 09:45:33',
-            endTime: '2025-10-27 09:45:33',
-            server: '10.0.1.1',
-            vendor: 'Canon Inc.',
-        },
-        {
-            key: '5',
-            ip: '192.168.1.150',
-            mac: '00:1A:2B:3C:4D:62',
-            hostname: 'mobile-device-123',
-            status: 'active',
-            startTime: '2025-10-26 16:20:45',
-            endTime: '2025-10-27 16:20:45',
-            server: '192.168.1.1',
-            vendor: 'Samsung Electronics',
-        },
-        {
-            key: '6',
-            ip: '192.168.3.88',
-            mac: '00:1A:2B:3C:4D:63',
-            hostname: 'iot-sensor-01',
-            status: 'released',
-            startTime: '2025-10-24 08:00:00',
-            endTime: '2025-10-25 08:00:00',
-            server: '192.168.3.1',
-            vendor: 'Raspberry Pi Foundation',
-        },
-    ];
+    // 獲取租約數據
+    const fetchLeases = async (page = 1, size = 20) => {
+        setLoading(true);
+        try {
+            const params = {
+                page: page,
+                page_size: size,
+            };
+            
+            // 如果選擇了特定 Server
+            if (serverId && serverId !== 'all') {
+                params.server = serverId;
+            }
+            
+            const response = await axios.get('/api/dhcp-leases/', { params });
+            
+            // 轉換 API 數據格式為前端格式
+            const formattedData = response.data.results.map(lease => ({
+                key: lease.id,
+                id: lease.id,
+                ip: lease.ip_address,
+                mac: lease.mac_address,
+                hostname: lease.hostname,
+                status: lease.is_active ? 'active' : 'expired',
+                startTime: dayjs(lease.lease_start).format('YYYY-MM-DD HH:mm:ss'),
+                endTime: dayjs(lease.lease_end).format('YYYY-MM-DD HH:mm:ss'),
+                server: lease.server_name || `Server ${lease.server}`,
+                leaseStart: lease.lease_start,
+                leaseEnd: lease.lease_end,
+                isActive: lease.is_active,
+            }));
+            
+            setData(formattedData);
+            setTotalCount(response.data.count);
+            setCurrentPage(page);
+            setPageSize(size);
+            
+        } catch (error) {
+            console.error('獲取租約數據失敗:', error);
+            message.error('載入租約數據失敗：' + (error.response?.data?.error || error.message));
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
-        // 模擬載入數據
-        setData(mockLeases);
+        fetchLeases(1, pageSize);
     }, [serverId]);
+
+    // 應用前端過濾
+    const getFilteredData = () => {
+        let filteredData = [...data];
+        
+        // 狀態過濾
+        if (statusFilter !== 'all') {
+            filteredData = filteredData.filter(item => item.status === statusFilter);
+        }
+        
+        // 搜尋過濾（IP、MAC、主機名稱）
+        if (searchText) {
+            const searchLower = searchText.toLowerCase();
+            filteredData = filteredData.filter(item => 
+                item.ip.toLowerCase().includes(searchLower) ||
+                item.mac.toLowerCase().includes(searchLower) ||
+                item.hostname.toLowerCase().includes(searchLower)
+            );
+        }
+        
+        return filteredData;
+    };
 
     const columns = [
         {
@@ -201,16 +201,47 @@ const LeasesTab = ({ serverId }) => {
     ];
 
     const handleRefresh = () => {
-        setLoading(true);
-        setTimeout(() => {
-            setData(mockLeases);
-            setLoading(false);
-        }, 500);
+        fetchLeases(currentPage, pageSize);
     };
 
     const handleExport = () => {
-        // TODO: 實作匯出 CSV 功能
-        console.log('Export to CSV');
+        try {
+            // 準備 CSV 數據
+            const csvHeaders = ['IP位址', 'MAC位址', '主機名稱', '狀態', '開始時間', '到期時間', 'DHCP Server'];
+            const csvRows = getFilteredData().map(lease => [
+                lease.ip,
+                lease.mac,
+                lease.hostname,
+                lease.status === 'active' ? '活躍中' : lease.status === 'expired' ? '已過期' : '已釋放',
+                lease.startTime,
+                lease.endTime,
+                lease.server,
+            ]);
+            
+            // 組合 CSV 內容
+            const csvContent = [
+                csvHeaders.join(','),
+                ...csvRows.map(row => row.map(cell => `"${cell}"`).join(','))
+            ].join('\n');
+            
+            // 添加 BOM 以支持中文
+            const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `dhcp_leases_${dayjs().format('YYYY-MM-DD_HHmmss')}.csv`;
+            link.click();
+            URL.revokeObjectURL(url);
+            
+            message.success(`成功匯出 ${csvRows.length} 筆租約數據`);
+        } catch (error) {
+            console.error('匯出 CSV 失敗:', error);
+            message.error('匯出失敗：' + error.message);
+        }
+    };
+
+    const handleTableChange = (pagination) => {
+        fetchLeases(pagination.current, pagination.pageSize);
     };
 
     return (
@@ -246,16 +277,31 @@ const LeasesTab = ({ serverId }) => {
             </Card>
 
             {/* 租約列表 */}
-            <Card>
+            <Card 
+                title={
+                    <Space>
+                        <span>租約列表</span>
+                        <Tag color="blue">總計: {totalCount} 筆</Tag>
+                        {statusFilter !== 'all' && (
+                            <Tag color="green">已過濾: {getFilteredData().length} 筆</Tag>
+                        )}
+                    </Space>
+                }
+            >
                 <Table
                     columns={columns}
-                    dataSource={data}
+                    dataSource={getFilteredData()}
                     loading={loading}
                     pagination={{
-                        pageSize: 20,
+                        current: currentPage,
+                        pageSize: pageSize,
+                        total: totalCount,
                         showSizeChanger: true,
+                        showQuickJumper: true,
                         showTotal: (total) => `共 ${total} 筆`,
+                        pageSizeOptions: ['10', '20', '50', '100'],
                     }}
+                    onChange={handleTableChange}
                     size="middle"
                 />
             </Card>
