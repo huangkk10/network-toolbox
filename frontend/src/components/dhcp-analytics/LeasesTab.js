@@ -7,6 +7,7 @@ import {
     CheckCircleOutlined,
     ClockCircleOutlined,
     InfoCircleOutlined,
+    SyncOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
@@ -15,6 +16,7 @@ const { RangePicker } = DatePicker;
 
 const LeasesTab = ({ serverId }) => {
     const [loading, setLoading] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [data, setData] = useState([]);
     const [totalCount, setTotalCount] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
@@ -72,6 +74,19 @@ const LeasesTab = ({ serverId }) => {
     useEffect(() => {
         fetchLeases(1, pageSize);
     }, [serverId]);
+
+    // 自動刷新功能：每 5 分鐘重新載入一次資料
+    useEffect(() => {
+        if (!serverId || serverId === 'all') return;
+
+        const interval = setInterval(() => {
+            console.log('[自動刷新] 重新載入租約資料...');
+            fetchLeases(currentPage, pageSize);
+        }, 5 * 60 * 1000); // 5 分鐘 = 300,000 毫秒
+
+        // 清除定時器
+        return () => clearInterval(interval);
+    }, [serverId, currentPage, pageSize]);
 
     // 應用前端過濾
     const getFilteredData = () => {
@@ -204,6 +219,27 @@ const LeasesTab = ({ serverId }) => {
         fetchLeases(currentPage, pageSize);
     };
 
+    const handleSyncLeases = async () => {
+        if (!serverId || serverId === 'all') {
+            message.warning('請先選擇 DHCP Server');
+            return;
+        }
+
+        setSyncing(true);
+        try {
+            const response = await axios.post(`/api/dhcp-servers/${serverId}/sync-leases/`);
+            message.success(`租約同步成功！新增 ${response.data.stats.created} 筆，更新 ${response.data.stats.updated} 筆`);
+            
+            // 同步完成後重新載入資料
+            fetchLeases(1, pageSize);
+        } catch (error) {
+            console.error('同步租約失敗:', error);
+            message.error('同步租約失敗：' + (error.response?.data?.error || error.message));
+        } finally {
+            setSyncing(false);
+        }
+    };
+
     const handleExport = () => {
         try {
             // 準備 CSV 數據
@@ -267,6 +303,15 @@ const LeasesTab = ({ serverId }) => {
                         ]}
                     />
                     <RangePicker />
+                    <Button 
+                        type="primary"
+                        icon={<SyncOutlined />} 
+                        onClick={handleSyncLeases}
+                        loading={syncing}
+                        disabled={!serverId || serverId === 'all'}
+                    >
+                        同步租約
+                    </Button>
                     <Button icon={<DownloadOutlined />} onClick={handleExport}>
                         匯出 CSV
                     </Button>
