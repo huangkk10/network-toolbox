@@ -343,6 +343,8 @@ def dhcp_analytics_logs(request):
     limit = int(request.query_params.get('limit', 100))
     level = request.query_params.get('level', None)
     keyword = request.query_params.get('keyword', None)
+    start_time = request.query_params.get('start_time', None)  # 開始時間
+    end_time = request.query_params.get('end_time', None)  # 結束時間
     
     try:
         if source == 'remote' and server_id and server_id != 'all':
@@ -352,7 +354,9 @@ def dhcp_analytics_logs(request):
             logs = log_service.get_remote_logs(
                 limit=limit,
                 level=level,
-                keyword=keyword
+                keyword=keyword,
+                start_time=start_time,
+                end_time=end_time
             )
         else:
             # 從本地日誌檔案讀取
@@ -361,7 +365,9 @@ def dhcp_analytics_logs(request):
                 log_file='logs/dhcp_operations.log',
                 limit=limit,
                 level=level,
-                keyword=keyword
+                keyword=keyword,
+                start_time=start_time,
+                end_time=end_time
             )
         
         return Response(logs)

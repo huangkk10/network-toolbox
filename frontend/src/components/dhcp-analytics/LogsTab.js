@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Select, Input, Switch, Button, Space, Tag, Empty, Spin, Radio, message, Pagination } from 'antd';
+import { Card, Select, Input, Switch, Button, Space, Tag, Empty, Spin, Radio, message, Pagination, DatePicker } from 'antd';
 import {
     DownloadOutlined,
     ReloadOutlined,
@@ -7,9 +7,11 @@ import {
     SearchOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import dayjs from 'dayjs';
 import './LogsTab.css';
 
 const { Option } = Select;
+const { RangePicker } = DatePicker;
 
 const LogsTab = ({ serverId }) => {
     const [logs, setLogs] = useState([]);
@@ -21,12 +23,13 @@ const LogsTab = ({ serverId }) => {
     const [limit, setLimit] = useState(500);  // 默認顯示 500 條
     const [currentPage, setCurrentPage] = useState(1);  // 當前頁碼
     const [pageSize, setPageSize] = useState(20);  // 每頁顯示數量
+    const [dateRange, setDateRange] = useState(null);  // 時間範圍 [startDate, endDate]
     const logContainerRef = useRef(null);
 
     useEffect(() => {
         loadLogs();
         setCurrentPage(1);  // 重置到第一頁
-    }, [serverId, logLevel, keyword, source, limit]);
+    }, [serverId, logLevel, keyword, source, limit, dateRange]);
 
     useEffect(() => {
         if (autoRefresh) {
@@ -55,6 +58,12 @@ const LogsTab = ({ serverId }) => {
 
             if (keyword) {
                 params.keyword = keyword;
+            }
+
+            // 時間範圍過濾
+            if (dateRange && dateRange[0] && dateRange[1]) {
+                params.start_time = dateRange[0].format('YYYY-MM-DD HH:mm:ss');
+                params.end_time = dateRange[1].format('YYYY-MM-DD HH:mm:ss');
             }
 
             const response = await axios.get('/api/dhcp-analytics/logs/', { params });
@@ -177,6 +186,15 @@ const LogsTab = ({ serverId }) => {
                         style={{ width: 250 }}
                         onSearch={setKeyword}
                         prefix={<SearchOutlined />}
+                    />
+
+                    <RangePicker
+                        showTime
+                        format="YYYY-MM-DD HH:mm:ss"
+                        placeholder={['開始時間', '結束時間']}
+                        value={dateRange}
+                        onChange={setDateRange}
+                        style={{ width: 380 }}
                     />
 
                     <Select

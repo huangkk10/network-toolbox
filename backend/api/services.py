@@ -478,7 +478,7 @@ class DHCPLogService:
         self.server = dhcp_server
         self.ssh = None
     
-    def get_local_logs(self, log_file='logs/dhcp_operations.log', limit=100, level=None, keyword=None):
+    def get_local_logs(self, log_file='logs/dhcp_operations.log', limit=100, level=None, keyword=None, start_time=None, end_time=None):
         """
         讀取本地日誌檔案
         
@@ -487,11 +487,14 @@ class DHCPLogService:
             limit: 最多返回幾行
             level: 篩選日誌等級
             keyword: 篩選關鍵字
+            start_time: 開始時間 (YYYY-MM-DD HH:mm:ss)
+            end_time: 結束時間 (YYYY-MM-DD HH:mm:ss)
         
         Returns:
             list: 日誌條目列表
         """
         import os
+        from datetime import datetime
         
         try:
             # 確保路徑是相對於專案根目錄
@@ -519,23 +522,59 @@ class DHCPLogService:
                     if keyword_lower in log['message'].lower()
                 ]
             
+            # 篩選時間範圍
+            if start_time or end_time:
+                filtered_logs = []
+                for log in logs:
+                    try:
+                        # 解析日誌時間戳 (2025-10-27 12:44:02)
+                        log_time = datetime.strptime(log['timestamp'], '%Y-%m-%d %H:%M:%S')
+                        
+                        # 檢查開始時間
+                        if start_time:
+                            start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+                            if log_time < start_dt:
+                                continue
+                        
+                        # 檢查結束時間
+                        if end_time:
+                            end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
+                            if log_time > end_dt:
+                                continue
+                        
+                        filtered_logs.append(log)
+                    except ValueError:
+                        # 時間格式解析失敗，保留該日誌
+                        filtered_logs.append(log)
+                
+                logs = filtered_logs
+            
             # 限制返回數量
             logs = logs[-limit:] if len(logs) > limit else logs
             
-            logger.info(f'讀取本地日誌: {len(logs)} 筆')
+            logger.info(f'讀取本地日誌: {len(logs)} 筆 (時間範圍: {start_time} ~ {end_time})')
             return logs
         
         except Exception as e:
             logger.error(f'讀取本地日誌失敗: {str(e)}', exc_info=True)
             return []
     
-    def get_remote_logs(self, limit=100, level=None, keyword=None):
+    def get_remote_logs(self, limit=100, level=None, keyword=None, start_time=None, end_time=None):
         """
         透過 SSH 讀取遠端 DHCP Server 日誌
+        
+        Args:
+            limit: 返回數量限制
+            level: 日誌等級篩選
+            keyword: 關鍵字篩選
+            start_time: 開始時間 (YYYY-MM-DD HH:mm:ss)
+            end_time: 結束時間 (YYYY-MM-DD HH:mm:ss)
         
         Returns:
             list: 日誌條目列表
         """
+        from datetime import datetime
+        
         if not self.server:
             logger.error('未指定 DHCP Server')
             return []
@@ -589,10 +628,34 @@ class DHCPLogService:
                     if keyword_lower in log['message'].lower()
                 ]
             
+            # 篩選時間範圍
+            if start_time or end_time:
+                filtered_logs = []
+                for log in logs:
+                    try:
+                        log_time = datetime.strptime(log['timestamp'], '%Y-%m-%d %H:%M:%S')
+                        
+                        if start_time:
+                            start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+                            if log_time < start_dt:
+                                continue
+                        
+                        if end_time:
+                            end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
+                            if log_time > end_dt:
+                                continue
+                        
+                        filtered_logs.append(log)
+                    except ValueError:
+                        # 時間格式解析失敗，保留該日誌
+                        filtered_logs.append(log)
+                
+                logs = filtered_logs
+            
             # 限制返回數量
             logs = logs[-limit:] if len(logs) > limit else logs
             
-            logger.info(f'讀取遠端日誌: {len(logs)} 筆')
+            logger.info(f'讀取遠端日誌: {len(logs)} 筆 (時間範圍: {start_time} ~ {end_time})')
             return logs
         
         except Exception as e:
