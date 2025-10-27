@@ -1,27 +1,245 @@
-import React from 'react';
-import { Card, Typography, Button } from 'antd';
-import { DatabaseOutlined, PlusOutlined } from '@ant-design/icons';
+import React, { useState, useEffect } from 'react';
+import { Card, Table, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
+import axios from 'axios';
 
-const { Title, Paragraph } = Typography;
+const { TextArea } = Input;
+const { Option } = Select;
 
 const DHCPServerManagementPage = () => {
+    const [servers, setServers] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [modalVisible, setModalVisible] = useState(false);
+    const [editingServer, setEditingServer] = useState(null);
+    const [form] = Form.useForm();
+
+    // 載入 DHCP 伺服器列表
+    const fetchServers = async () => {
+        setLoading(true);
+        try {
+            const response = await axios.get('/api/dhcp-servers/');
+            // 處理分頁格式：{count, next, previous, results}
+            const data = response.data.results || response.data;
+            setServers(Array.isArray(data) ? data : []);
+        } catch (error) {
+            console.error('Error fetching servers:', error);
+            message.error('載入伺服器列表失敗：' + (error.response?.data?.message || error.message));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchServers();
+    }, []);
+
+    // 開啟新增/編輯對話框
+    const handleAdd = () => {
+        setEditingServer(null);
+        form.resetFields();
+        setModalVisible(true);
+    };
+
+    const handleEdit = (record) => {
+        setEditingServer(record);
+        form.setFieldsValue(record);
+        setModalVisible(true);
+    };
+
+    // 儲存（新增或更新）
+    const handleSubmit = async (values) => {
+        try {
+            if (editingServer) {
+                // 更新
+                await axios.put(`/api/dhcp-servers/${editingServer.id}/`, values);
+                message.success('更新成功！');
+            } else {
+                // 新增
+                await axios.post('/api/dhcp-servers/', values);
+                message.success('新增成功！');
+            }
+            setModalVisible(false);
+            fetchServers();
+        } catch (error) {
+            console.error('Error saving server:', error);
+            message.error('儲存失敗：' + error.message);
+        }
+    };
+
+    // 刪除
+    const handleDelete = async (id) => {
+        try {
+            await axios.delete(`/api/dhcp-servers/${id}/`);
+            message.success('刪除成功！');
+            fetchServers();
+        } catch (error) {
+            console.error('Error deleting server:', error);
+            message.error('刪除失敗：' + error.message);
+        }
+    };
+
+    // 表格欄位定義
+    const columns = [
+        {
+            title: 'ID',
+            dataIndex: 'id',
+            key: 'id',
+            width: 80,
+        },
+        {
+            title: '伺服器名稱',
+            dataIndex: 'name',
+            key: 'name',
+        },
+        {
+            title: 'IP 位址',
+            dataIndex: 'ip_address',
+            key: 'ip_address',
+        },
+        {
+            title: '狀態',
+            dataIndex: 'status',
+            key: 'status',
+            render: (status) => {
+                const colors = {
+                    online: 'success',
+                    offline: 'default',
+                    warning: 'warning',
+                };
+                const labels = {
+                    online: 'Online',
+                    offline: 'Offline',
+                    warning: 'Warning',
+                };
+                return <Tag color={colors[status]}>{labels[status]}</Tag>;
+            },
+        },
+        {
+            title: '池使用率',
+            dataIndex: 'pool_usage',
+            key: 'pool_usage',
+            render: (usage) => `${usage.toFixed(1)}%`,
+        },
+        {
+            title: '總租約數',
+            dataIndex: 'total_leases',
+            key: 'total_leases',
+        },
+        {
+            title: '活動租約數',
+            dataIndex: 'active_leases',
+            key: 'active_leases',
+        },
+        {
+            title: '操作',
+            key: 'action',
+            width: 150,
+            render: (_, record) => (
+                <Space>
+                    <Button
+                        type="link"
+                        icon={<EditOutlined />}
+                        onClick={() => handleEdit(record)}
+                    >
+                        編輯
+                    </Button>
+                    <Popconfirm
+                        title="確定要刪除這個伺服器嗎？"
+                        onConfirm={() => handleDelete(record.id)}
+                        okText="確定"
+                        cancelText="取消"
+                    >
+                        <Button type="link" danger icon={<DeleteOutlined />}>
+                            刪除
+                        </Button>
+                    </Popconfirm>
+                </Space>
+            ),
+        },
+    ];
+
     return (
         <div style={{ padding: '24px' }}>
-            <Card>
-                <div style={{ textAlign: 'center', padding: '60px 20px' }}>
-                    <DatabaseOutlined style={{ fontSize: '64px', color: '#2196f3', marginBottom: '24px' }} />
-                    <Title level={3}>DHCP Server 管理</Title>
-                    <Paragraph type="secondary">
-                        此頁面將提供 DHCP Server 的管理功能
-                    </Paragraph>
-                    <Paragraph type="secondary">
-                        包含：新增/編輯/刪除服務器、連接測試、同步設定等
-                    </Paragraph>
-                    <Button type="primary" icon={<PlusOutlined />} size="large" style={{ marginTop: '24px' }}>
-                        新增 DHCP Server
-                    </Button>
-                </div>
+            <Card
+                title="DHCP Server 管理"
+                extra={
+                    <Space>
+                        <Button icon={<ReloadOutlined />} onClick={fetchServers}>
+                            重新整理
+                        </Button>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+                            新增 DHCP Server
+                        </Button>
+                    </Space>
+                }
+            >
+                <Table
+                    columns={columns}
+                    dataSource={servers}
+                    rowKey="id"
+                    loading={loading}
+                    pagination={{
+                        pageSize: 10,
+                        showSizeChanger: true,
+                        showTotal: (total) => `共 ${total} 筆`,
+                    }}
+                />
             </Card>
+
+            {/* 新增/編輯對話框 */}
+            <Modal
+                title={editingServer ? '編輯 DHCP Server' : '新增 DHCP Server'}
+                open={modalVisible}
+                onCancel={() => setModalVisible(false)}
+                onOk={() => form.submit()}
+                okText="儲存"
+                cancelText="取消"
+                width={600}
+            >
+                <Form
+                    form={form}
+                    layout="vertical"
+                    onFinish={handleSubmit}
+                >
+                    <Form.Item
+                        label="伺服器名稱"
+                        name="name"
+                        rules={[{ required: true, message: '請輸入伺服器名稱' }]}
+                    >
+                        <Input placeholder="例如：主要 DHCP 伺服器" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="IP 位址"
+                        name="ip_address"
+                        rules={[
+                            { required: true, message: '請輸入 IP 位址' },
+                            { pattern: /^(\d{1,3}\.){3}\d{1,3}$/, message: '請輸入有效的 IP 位址' },
+                        ]}
+                    >
+                        <Input placeholder="例如：192.168.1.1" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="狀態"
+                        name="status"
+                        initialValue="offline"
+                    >
+                        <Select>
+                            <Option value="online">Online</Option>
+                            <Option value="offline">Offline</Option>
+                            <Option value="warning">Warning</Option>
+                        </Select>
+                    </Form.Item>
+
+                    <Form.Item
+                        label="描述"
+                        name="description"
+                    >
+                        <TextArea rows={4} placeholder="伺服器的詳細說明..." />
+                    </Form.Item>
+                </Form>
+            </Modal>
         </div>
     );
 };
