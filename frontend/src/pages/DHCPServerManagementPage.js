@@ -236,7 +236,54 @@ const DHCPServerManagementPage = () => {
                         label="描述"
                         name="description"
                     >
-                        <TextArea rows={4} placeholder="伺服器的詳細說明..." />
+                        <TextArea rows={3} placeholder="伺服器的詳細說明..." />
+                    </Form.Item>
+
+                    {/* SSH 連線設定 */}
+                    <h4 style={{ marginTop: '16px', marginBottom: '16px' }}>SSH 連線設定</h4>
+
+                    <Form.Item
+                        label="SSH 連接埠"
+                        name="ssh_port"
+                        initialValue={22}
+                        rules={[{ required: true, message: '請輸入 SSH 連接埠' }]}
+                    >
+                        <Input type="number" placeholder="預設：22" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="SSH 使用者名稱"
+                        name="ssh_username"
+                        initialValue="Administrator"
+                        rules={[{ required: true, message: '請輸入 SSH 使用者名稱' }]}
+                    >
+                        <Input placeholder="Windows Server 通常使用 Administrator" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="SSH 密碼"
+                        name="ssh_password"
+                        rules={[{ required: true, message: '請輸入 SSH 密碼' }]}
+                    >
+                        <Input.Password placeholder="SSH 登入密碼" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="DHCP Leases 檔案路徑"
+                        name="dhcp_leases_path"
+                        initialValue="C:\\Windows\\System32\\dhcp\\dhcp.mdb"
+                        tooltip="Windows DHCP Server 的租約資料庫路徑"
+                    >
+                        <Input placeholder="Windows: C:\Windows\System32\dhcp\dhcp.mdb" />
+                    </Form.Item>
+
+                    <Form.Item
+                        label="DHCP Config 檔案路徑"
+                        name="dhcp_config_path"
+                        initialValue="C:\\Windows\\System32\\dhcp\\dhcpd.conf"
+                        tooltip="DHCP 設定檔路徑（選填）"
+                    >
+                        <Input placeholder="Windows: C:\Windows\System32\dhcp\dhcpd.conf" />
                     </Form.Item>
                 </Form>
             </Modal>
