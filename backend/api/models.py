@@ -219,3 +219,182 @@ class NASConnectionLog(models.Model):
     
     def __str__(self):
         return f"[{self.status}] {self.timestamp} - {self.nas_ip}/{self.nas_share}"
+
+
+class IPXEServer(models.Model):
+    """IPXE 伺服器模型"""
+    
+    STATUS_CHOICES = [
+        ('online', 'Online'),
+        ('offline', 'Offline'),
+        ('warning', 'Warning'),
+    ]
+    
+    # 基本資訊
+    name = models.CharField(max_length=200, verbose_name='伺服器名稱')
+    ip_address = models.GenericIPAddressField(verbose_name='IP 位址', unique=True)
+    description = models.TextField(blank=True, verbose_name='描述')
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='offline',
+        verbose_name='狀態'
+    )
+    
+    # 統計資訊
+    total_requests_today = models.IntegerField(default=0, verbose_name='今日請求總數')
+    mac_registrations = models.IntegerField(default=0, verbose_name='MAC 註冊數')
+    boot_requests = models.IntegerField(default=0, verbose_name='開機請求數')
+    
+    # SSH 連接設定
+    ssh_port = models.IntegerField(default=22, verbose_name='SSH 連接埠')
+    ssh_username = models.CharField(max_length=100, default='rvt', verbose_name='SSH 使用者名稱')
+    ssh_password = models.CharField(max_length=255, verbose_name='SSH 密碼')
+    
+    # Docker 容器設定
+    docker_container_mac = models.CharField(
+        max_length=100,
+        default='ipxe_mac-flask',
+        verbose_name='MAC 管理容器名稱'
+    )
+    docker_container_ipxe = models.CharField(
+        max_length=100,
+        default='ipxe',
+        verbose_name='IPXE HTTP 容器名稱'
+    )
+    
+    # 元數據
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='上次同步時間')
+    
+    class Meta:
+        verbose_name = 'IPXE 伺服器'
+        verbose_name_plural = 'IPXE 伺服器'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['ip_address'], name='idx_ipxe_server_ip'),
+            models.Index(fields=['status'], name='idx_ipxe_server_status'),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} ({self.ip_address})"
+
+
+class IPXELog(models.Model):
+    """IPXE 日誌模型 - 7天滾動視窗"""
+    
+    LOG_TYPE_CHOICES = [
+        ('mac', 'MAC 管理'),
+        ('boot', 'IPXE 開機'),
+    ]
+    
+    ACTION_CHOICES = [
+        ('Set', 'Set'),
+        ('Get', 'Get'),
+        ('boot.ipxe', 'boot.ipxe'),
+        ('wimboot', 'wimboot'),
+        ('BCD', 'BCD'),
+        ('boot.sdi', 'boot.sdi'),
+        ('wim_file', 'WIM File'),
+        ('other', 'Other'),
+    ]
+    
+    server = models.ForeignKey(
+        IPXEServer,
+        on_delete=models.CASCADE,
+        related_name='logs',
+        verbose_name='所屬伺服器'
+    )
+    
+    # 日誌基本資訊
+    timestamp = models.DateTimeField(verbose_name='日誌時間', db_index=True)
+    log_type = models.CharField(
+        max_length=10,
+        choices=LOG_TYPE_CHOICES,
+        verbose_name='日誌類型',
+        db_index=True
+    )
+    client_ip = models.GenericIPAddressField(verbose_name='客戶端 IP')
+    
+    # HTTP 請求資訊
+    method = models.CharField(max_length=10, default='GET', verbose_name='HTTP 方法')
+    url = models.CharField(max_length=500, verbose_name='請求 URL')
+    action = models.CharField(
+        max_length=20,
+        choices=ACTION_CHOICES,
+        verbose_name='操作類型',
+        db_index=True
+    )
+    status_code = models.IntegerField(verbose_name='HTTP 狀態碼')
+    bytes_sent = models.BigIntegerField(verbose_name='傳輸位元組數')
+    user_agent = models.CharField(max_length=200, verbose_name='User Agent')
+    
+    # MAC 管理專屬欄位
+    mac_address = models.CharField(max_length=17, blank=True, verbose_name='MAC 位址')
+    boot_flag = models.IntegerField(null=True, blank=True, verbose_name='BOOT 旗標')
+    
+    # IPXE 開機專屬欄位
+    file_requested = models.CharField(max_length=200, blank=True, verbose_name='請求的檔案')
+    
+    # 原始日誌
+    raw = models.TextField(verbose_name='原始日誌')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    
+    class Meta:
+        verbose_name = 'IPXE 日誌'
+        verbose_name_plural = 'IPXE 日誌'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['server', '-timestamp'], name='idx_ipxe_log_server_time'),
+            models.Index(fields=['-timestamp'], name='idx_ipxe_log_timestamp'),
+            models.Index(fields=['log_type'], name='idx_ipxe_log_type'),
+            models.Index(fields=['client_ip'], name='idx_ipxe_log_client_ip'),
+            models.Index(fields=['mac_address'], name='idx_ipxe_log_mac'),
+        ]
+    
+    def __str__(self):
+        return f"[{self.log_type}] {self.timestamp} - {self.client_ip} - {self.action}"
+
+
+class IPXEStatistics(models.Model):
+    """IPXE 統計資訊（每小時更新）"""
+    
+    server = models.ForeignKey(
+        IPXEServer,
+        on_delete=models.CASCADE,
+        related_name='statistics',
+        verbose_name='所屬伺服器'
+    )
+    
+    timestamp = models.DateTimeField(verbose_name='統計時間', db_index=True)
+    
+    # 請求統計
+    total_requests = models.IntegerField(default=0, verbose_name='總請求數')
+    mac_set_count = models.IntegerField(default=0, verbose_name='MAC Set 數量')
+    mac_get_count = models.IntegerField(default=0, verbose_name='MAC Get 數量')
+    boot_ipxe_count = models.IntegerField(default=0, verbose_name='boot.ipxe 請求數')
+    wim_download_count = models.IntegerField(default=0, verbose_name='WIM 下載數')
+    
+    # 傳輸統計
+    total_bytes_sent = models.BigIntegerField(default=0, verbose_name='總傳輸位元組')
+    avg_bytes_per_request = models.FloatField(default=0, verbose_name='平均每請求位元組')
+    
+    # 客戶端統計
+    unique_clients = models.IntegerField(default=0, verbose_name='唯一客戶端數')
+    unique_macs = models.IntegerField(default=0, verbose_name='唯一 MAC 數')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    
+    class Meta:
+        verbose_name = 'IPXE 統計'
+        verbose_name_plural = 'IPXE 統計'
+        ordering = ['-timestamp']
+        unique_together = ['server', 'timestamp']
+        indexes = [
+            models.Index(fields=['server', '-timestamp'], name='idx_ipxe_stats_server_time'),
+        ]
+    
+    def __str__(self):
+        return f"{self.server.name} - {self.timestamp} ({self.total_requests} requests)"

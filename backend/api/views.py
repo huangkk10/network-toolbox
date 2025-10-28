@@ -6,8 +6,9 @@ from django.contrib.auth.models import User
 from django.db.models import Count, Q, Sum, Avg
 from django.utils import timezone
 from datetime import timedelta
-from .models import DHCPServer, DHCPLease, NASConnectionLog
-from .serializers import DHCPServerSerializer, DHCPLeaseSerializer, UserSerializer, NASConnectionLogSerializer
+from .models import DHCPServer, DHCPLease, NASConnectionLog, IPXEServer, IPXELog, IPXEStatistics
+from .serializers import DHCPServerSerializer, DHCPLeaseSerializer, UserSerializer, NASConnectionLogSerializer, IPXEServerSerializer, IPXELogSerializer, IPXEStatisticsSerializer
+from .ipxe_service import IPXEService
 import logging
 
 logger = logging.getLogger(__name__)
@@ -907,3 +908,295 @@ class NASConnectionLogViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# ========== IPXE Management ViewSets ==========
+
+class IPXEServerViewSet(viewsets.ModelViewSet):
+    """IPXE 伺服器管理 API ViewSet"""
+    queryset = IPXEServer.objects.all()
+    serializer_class = IPXEServerSerializer
+    permission_classes = [AllowAny]  # 開發階段允許所有請求，生產環境應改為 IsAuthenticated
+    pagination_class = None  # 禁用分頁
+
+    def list(self, request, *args, **kwargs):
+        """列出所有 IPXE 伺服器"""
+        try:
+            queryset = self.get_queryset()
+            serializer = self.get_serializer(queryset, many=True)
+            logger.info(f'成功獲取 {len(serializer.data)} 個 IPXE 伺服器')
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f'獲取 IPXE 伺服器列表失敗: {str(e)}', exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def create(self, request, *args, **kwargs):
+        """創建新的 IPXE 伺服器"""
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            logger.info(f"成功創建 IPXE 伺服器: {serializer.data['name']}")
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error(f'創建 IPXE 伺服器失敗: {str(e)}', exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def update(self, request, *args, **kwargs):
+        """更新 IPXE 伺服器資訊"""
+        try:
+            instance = self.get_object()
+            serializer = self.get_serializer(instance, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+            logger.info(f"成功更新 IPXE 伺服器: {serializer.data['name']}")
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f'更新 IPXE 伺服器失敗: {str(e)}', exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def destroy(self, request, *args, **kwargs):
+        """刪除 IPXE 伺服器"""
+        try:
+            instance = self.get_object()
+            server_name = instance.name
+            self.perform_destroy(instance)
+            logger.info(f'成功刪除 IPXE 伺服器: {server_name}')
+            return Response(
+                {'message': f'成功刪除 IPXE 伺服器: {server_name}'},
+                status=status.HTTP_204_NO_CONTENT
+            )
+        except Exception as e:
+            logger.error(f'刪除 IPXE 伺服器失敗: {str(e)}', exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class IPXELogViewSet(viewsets.ReadOnlyModelViewSet):
+    """IPXE 日誌查詢 API ViewSet（只讀）"""
+    queryset = IPXELog.objects.all().order_by('-timestamp')
+    serializer_class = IPXELogSerializer
+    permission_classes = [AllowAny]
+    pagination_class = None  # 禁用分頁
+
+    def get_queryset(self):
+        """支援篩選參數"""
+        queryset = super().get_queryset()
+        
+        # 依 server_id 篩選
+        server_id = self.request.query_params.get('server_id', None)
+        if server_id:
+            queryset = queryset.filter(server_id=server_id)
+        
+        # 依 log_type 篩選
+        log_type = self.request.query_params.get('log_type', None)
+        if log_type:
+            queryset = queryset.filter(log_type=log_type)
+        
+        # 依時間範圍篩選（預設 7 天）
+        days = self.request.query_params.get('days', 7)
+        try:
+            days = int(days)
+            cutoff_time = timezone.now() - timedelta(days=days)
+            queryset = queryset.filter(timestamp__gte=cutoff_time)
+        except ValueError:
+            pass
+        
+        # 限制返回數量（防止一次返回過多資料）
+        limit = self.request.query_params.get('limit', None)
+        if limit:
+            try:
+                limit = int(limit)
+                queryset = queryset[:limit]
+            except ValueError:
+                pass
+        
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        """列出 IPXE 日誌"""
+        try:
+            queryset = self.get_queryset()
+            serializer = self.get_serializer(queryset, many=True)
+            logger.info(f'成功獲取 {len(serializer.data)} 條 IPXE 日誌')
+            return Response(serializer.data)
+        except Exception as e:
+            logger.error(f'獲取 IPXE 日誌失敗: {str(e)}', exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def ipxe_sync_logs(request, server_id):
+    """
+    手動同步指定 IPXE 伺服器的日誌
+    POST /api/ipxe-servers/<server_id>/sync-logs/
+    Body (可選): { "limit": 1000 }
+    """
+    try:
+        # 獲取 IPXE 伺服器
+        try:
+            server = IPXEServer.objects.get(pk=server_id)
+        except IPXEServer.DoesNotExist:
+            logger.error(f'IPXE 伺服器不存在: ID={server_id}')
+            return Response(
+                {'error': 'IPXE 伺服器不存在'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # 獲取限制數量（預設 1000）
+        limit = request.data.get('limit', 1000)
+        
+        logger.info(f'開始同步 IPXE 伺服器日誌: {server.name} ({server.ip_address}), limit={limit}')
+        
+        # 執行同步
+        ipxe_service = IPXEService(server)
+        result = ipxe_service.sync_logs_to_db(limit=limit)
+        
+        # 更新伺服器的 last_sync_at
+        server.last_sync_at = timezone.now()
+        server.save(update_fields=['last_sync_at'])
+        
+        logger.info(f'IPXE 日誌同步完成: {result}')
+        
+        return Response({
+            'message': '日誌同步成功',
+            'server': server.name,
+            'mac_logs_collected': result['mac_logs'],
+            'boot_logs_collected': result['boot_logs'],
+            'total_logs': result['mac_logs'] + result['boot_logs'],
+            'sync_time': server.last_sync_at
+        })
+        
+    except Exception as e:
+        logger.error(f'同步 IPXE 日誌失敗: {str(e)}', exc_info=True)
+        return Response(
+            {'error': f'同步失敗: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def ipxe_analytics_overview(request):
+    """
+    獲取 IPXE 分析總覽資料
+    GET /api/ipxe-analytics/overview/
+    Query Parameters (可選):
+    - days: 統計天數（預設 7）
+    - server_id: 指定伺服器 ID（預設全部）
+    """
+    try:
+        # 獲取參數
+        days = int(request.query_params.get('days', 7))
+        server_id = request.query_params.get('server_id', None)
+        
+        cutoff_time = timezone.now() - timedelta(days=days)
+        
+        # 基礎查詢
+        logs_query = IPXELog.objects.filter(timestamp__gte=cutoff_time)
+        stats_query = IPXEStatistics.objects.filter(timestamp__gte=cutoff_time)
+        
+        if server_id:
+            logs_query = logs_query.filter(server_id=server_id)
+            stats_query = stats_query.filter(server_id=server_id)
+        
+        # 1. 總體統計
+        total_logs = logs_query.count()
+        mac_logs_count = logs_query.filter(log_type='MAC').count()
+        boot_logs_count = logs_query.filter(log_type='BOOT').count()
+        
+        # 2. MAC 操作統計
+        mac_set_count = logs_query.filter(log_type='MAC', action='set_mac').count()
+        mac_get_count = logs_query.filter(log_type='MAC', action='get_mac').count()
+        
+        # 3. IPXE 啟動檔案統計
+        boot_logs = logs_query.filter(log_type='BOOT').values('file_requested').annotate(
+            count=Count('id')
+        ).order_by('-count')[:10]  # Top 10 最常請求的檔案
+        
+        # 4. 每日統計（過去 N 天）
+        daily_stats = []
+        for i in range(days):
+            day_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=i)
+            day_end = day_start + timedelta(days=1)
+            
+            day_logs = logs_query.filter(timestamp__gte=day_start, timestamp__lt=day_end)
+            
+            daily_stats.append({
+                'date': day_start.date().isoformat(),
+                'total_logs': day_logs.count(),
+                'mac_logs': day_logs.filter(log_type='MAC').count(),
+                'boot_logs': day_logs.filter(log_type='BOOT').count(),
+            })
+        
+        daily_stats.reverse()  # 從早到晚排序
+        
+        # 5. 每小時統計（過去 24 小時）
+        hourly_stats = []
+        for i in range(24):
+            hour_start = timezone.now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=i)
+            hour_end = hour_start + timedelta(hours=1)
+            
+            hour_logs = logs_query.filter(timestamp__gte=hour_start, timestamp__lt=hour_end)
+            
+            hourly_stats.append({
+                'hour': hour_start.strftime('%Y-%m-%d %H:00'),
+                'total_logs': hour_logs.count(),
+                'mac_logs': hour_logs.filter(log_type='MAC').count(),
+                'boot_logs': hour_logs.filter(log_type='BOOT').count(),
+            })
+        
+        hourly_stats.reverse()  # 從早到晚排序
+        
+        # 6. 伺服器統計
+        server_stats = []
+        for server in IPXEServer.objects.all():
+            server_logs = logs_query.filter(server=server)
+            server_stats.append({
+                'server_id': server.id,
+                'server_name': server.name,
+                'server_ip': server.ip_address,
+                'total_logs': server_logs.count(),
+                'mac_logs': server_logs.filter(log_type='MAC').count(),
+                'boot_logs': server_logs.filter(log_type='BOOT').count(),
+                'last_sync': server.last_sync_at.isoformat() if server.last_sync_at else None,
+            })
+        
+        logger.info(f'成功獲取 IPXE 分析資料: days={days}, total_logs={total_logs}')
+        
+        return Response({
+            'summary': {
+                'total_logs': total_logs,
+                'mac_logs': mac_logs_count,
+                'boot_logs': boot_logs_count,
+                'mac_set_operations': mac_set_count,
+                'mac_get_operations': mac_get_count,
+                'time_range_days': days,
+            },
+            'boot_files': list(boot_logs),
+            'daily_stats': daily_stats,
+            'hourly_stats': hourly_stats,
+            'server_stats': server_stats,
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取 IPXE 分析資料失敗: {str(e)}', exc_info=True)
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

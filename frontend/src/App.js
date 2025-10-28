@@ -11,7 +11,9 @@ import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import DHCPAnalyticsPage from './pages/DHCPAnalyticsPage';
 import NASAnalyticsPage from './pages/NASAnalyticsPage';
+import IPXEAnalyticsPage from './pages/IPXEAnalyticsPage';
 import DHCPServerManagementPage from './pages/DHCPServerManagementPage';
+import IPXEManagementPage from './pages/IPXEManagementPage';
 import UserManagementPage from './pages/UserManagementPage';
 import SettingsPage from './pages/SettingsPage';
 
@@ -46,8 +48,12 @@ function AppLayout() {
                 return 'DHCP Server 分析';
             case '/nas-analytics':
                 return 'NAS 分析';
+            case '/ipxe-analytics':
+                return 'IPXE 分析';
             case '/admin/dhcp-server-management':
                 return 'DHCP Server 管理';
+            case '/admin/ipxe-server-management':
+                return 'IPXE Server 管理';
             case '/admin/user-management':
                 return '用戶管理';
             case '/settings':
@@ -99,7 +105,9 @@ function AppLayout() {
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/dhcp-analytics" element={<DHCPAnalyticsPage />} />
                         <Route path="/nas-analytics" element={<NASAnalyticsPage />} />
+                        <Route path="/ipxe-analytics" element={<IPXEAnalyticsPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />
+                        <Route path="/admin/ipxe-server-management" element={<IPXEManagementPage />} />
                         <Route path="/admin/user-management" element={<UserManagementPage />} />
                         <Route path="/settings" element={<SettingsPage />} />
                     </Routes>

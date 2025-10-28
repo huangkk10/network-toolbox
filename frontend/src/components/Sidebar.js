@@ -35,8 +35,14 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             case 'nas-analytics':
                 navigate('/nas-analytics');
                 break;
+            case 'ipxe-analytics':
+                navigate('/ipxe-analytics');
+                break;
             case 'dhcp-server-management':
                 navigate('/admin/dhcp-server-management');
+                break;
+            case 'ipxe-server-management':
+                navigate('/admin/ipxe-server-management');
                 break;
             case 'user-management':
                 navigate('/admin/user-management');
@@ -62,6 +68,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             icon: <CloudServerOutlined />,
             label: 'NAS 分析',
         },
+        {
+            key: 'ipxe-analytics',
+            icon: <ExperimentOutlined />,
+            label: 'IPXE 分析',
+        },
     ];
 
     // 管理功能選單
@@ -75,6 +86,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                     key: 'dhcp-server-management',
                     icon: <DatabaseOutlined />,
                     label: 'DHCP Server 管理',
+                },
+                {
+                    key: 'ipxe-server-management',
+                    icon: <ExperimentOutlined />,
+                    label: 'IPXE Server 管理',
                 },
                 {
                     key: 'user-management',

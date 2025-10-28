@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import DHCPServer, DHCPLease, NASConnectionLog
+from .models import DHCPServer, DHCPLease, NASConnectionLog, IPXEServer, IPXELog, IPXEStatistics
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -58,6 +58,41 @@ class NASConnectionLogSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = NASConnectionLog
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+
+class IPXEServerSerializer(serializers.ModelSerializer):
+    """IPXE 伺服器序列化器"""
+    
+    class Meta:
+        model = IPXEServer
+        fields = '__all__'
+        read_only_fields = ('created_at', 'updated_at', 'last_sync_at')
+        extra_kwargs = {
+            'ssh_password': {'write_only': True}  # 密碼只寫不讀
+        }
+
+
+class IPXELogSerializer(serializers.ModelSerializer):
+    """IPXE 日誌序列化器"""
+    
+    server_name = serializers.CharField(source='server.name', read_only=True)
+    server_ip = serializers.CharField(source='server.ip_address', read_only=True)
+    
+    class Meta:
+        model = IPXELog
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+
+class IPXEStatisticsSerializer(serializers.ModelSerializer):
+    """IPXE 統計序列化器"""
+    
+    server_name = serializers.CharField(source='server.name', read_only=True)
+    
+    class Meta:
+        model = IPXEStatistics
         fields = '__all__'
         read_only_fields = ('created_at',)
 

@@ -7,6 +7,8 @@ router.register(r'users', views.UserViewSet)
 router.register(r'dhcp-servers', views.DHCPServerViewSet)
 router.register(r'dhcp-leases', views.DHCPLeaseViewSet)
 router.register(r'nas-logs', views.NASConnectionLogViewSet)
+router.register(r'ipxe-servers', views.IPXEServerViewSet)
+router.register(r'ipxe-logs', views.IPXELogViewSet)
 
 urlpatterns = [
     path('', views.api_root, name='api_root'),
@@ -21,6 +23,10 @@ urlpatterns = [
     path('dhcp-analytics/statistics/', views.dhcp_analytics_statistics, name='dhcp_analytics_statistics'),
     path('dhcp-servers/<int:server_id>/sync-leases/', views.dhcp_sync_leases, name='dhcp_sync_leases'),
     path('dhcp-servers/<int:server_id>/sync-logs/', views.dhcp_sync_logs, name='dhcp_sync_logs'),
+    
+    # IPXE Analytics API
+    path('ipxe-servers/<int:server_id>/sync-logs/', views.ipxe_sync_logs, name='ipxe_sync_logs'),
+    path('ipxe-analytics/overview/', views.ipxe_analytics_overview, name='ipxe_analytics_overview'),
     
     # MAC 地址查詢 API
     path('dhcp-leases/lookup/', views.dhcp_lease_lookup, name='dhcp_lease_lookup'),
