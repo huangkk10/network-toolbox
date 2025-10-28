@@ -40,8 +40,15 @@ class DHCPServerSerializer(serializers.ModelSerializer):
 
 class DHCPLeaseSerializer(serializers.ModelSerializer):
     server_name = serializers.CharField(source='server.name', read_only=True)
+    vendor = serializers.SerializerMethodField()
+    
+    def get_vendor(self, obj):
+        """獲取 MAC 地址對應的製造商"""
+        from .utils.mac_vendor import get_vendor_from_mac
+        return get_vendor_from_mac(obj.mac_address)
     
     class Meta:
         model = DHCPLease
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
+

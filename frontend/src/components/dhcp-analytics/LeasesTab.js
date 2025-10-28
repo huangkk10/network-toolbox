@@ -26,6 +26,37 @@ const LeasesTab = ({ serverId }) => {
     const [detailModalVisible, setDetailModalVisible] = useState(false);
     const [selectedLease, setSelectedLease] = useState(null);
 
+    // Switch 製造商白名單（方法一：高信賴度廠商）
+    const SWITCH_VENDORS = [
+        'Cisco Systems, Inc',
+        'Cisco Systems',
+        'Juniper Networks',
+        'Extreme Networks',
+        'Brocade',
+        'Allied Telesis',
+        'Zyxel Communications Corporation',
+        'Zyxel',
+        'Aruba',
+        'HP',
+        'Hewlett Packard Enterprise',
+        'H3C',
+        'Huawei Technologies',
+        'D-Link Corporation',
+        'TP-Link',
+        'Netgear',
+        'Ubiquiti',
+    ];
+
+    // 判斷是否為 Switch
+    const isSwitchVendor = (vendor) => {
+        if (!vendor || vendor === 'Unknown') return false;
+        
+        // 檢查製造商是否在白名單中（部分匹配）
+        return SWITCH_VENDORS.some(switchVendor => 
+            vendor.includes(switchVendor) || switchVendor.includes(vendor)
+        );
+    };
+
     // 獲取租約數據
     const fetchLeases = async (page = 1, size = 20) => {
         setLoading(true);
@@ -49,6 +80,7 @@ const LeasesTab = ({ serverId }) => {
                 ip: lease.ip_address,
                 mac: lease.mac_address,
                 hostname: lease.hostname,
+                vendor: lease.vendor || 'Unknown',  // 製造商資訊
                 status: lease.is_active ? 'active' : 'expired',
                 startTime: dayjs(lease.lease_start).format('YYYY-MM-DD HH:mm:ss'),
                 endTime: dayjs(lease.lease_end).format('YYYY-MM-DD HH:mm:ss'),
@@ -151,6 +183,32 @@ const LeasesTab = ({ serverId }) => {
             render: (mac) => <code>{mac}</code>,
         },
         {
+            title: '製造商',
+            dataIndex: 'vendor',
+            key: 'vendor',
+            sorter: (a, b) => a.vendor.localeCompare(b.vendor),
+            render: (vendor) => {
+                // 判斷是否為 Switch
+                const isSwitch = isSwitchVendor(vendor);
+                
+                // 根據類型設置顏色
+                let color = 'default';  // Unknown 預設灰色
+                if (vendor !== 'Unknown') {
+                    color = isSwitch ? 'red' : 'blue';  // Switch 紅色，其他藍色
+                }
+                
+                return (
+                    <Tag color={color}>
+                        {vendor}
+                    </Tag>
+                );
+            },
+            filters: [
+                { text: 'Unknown', value: 'Unknown' },
+            ],
+            onFilter: (value, record) => record.vendor === value,
+        },
+        {
             title: '主機名稱',
             dataIndex: 'hostname',
             key: 'hostname',
@@ -243,10 +301,11 @@ const LeasesTab = ({ serverId }) => {
     const handleExport = () => {
         try {
             // 準備 CSV 數據
-            const csvHeaders = ['IP位址', 'MAC位址', '主機名稱', '狀態', '開始時間', '到期時間', 'DHCP Server'];
+            const csvHeaders = ['IP位址', 'MAC位址', '製造商', '主機名稱', '狀態', '開始時間', '到期時間', 'DHCP Server'];
             const csvRows = getFilteredData().map(lease => [
                 lease.ip,
                 lease.mac,
+                lease.vendor,
                 lease.hostname,
                 lease.status === 'active' ? '活躍中' : lease.status === 'expired' ? '已過期' : '已釋放',
                 lease.startTime,

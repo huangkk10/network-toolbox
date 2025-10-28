@@ -366,3 +366,94 @@ def get_logs_statistics_task():
     except Exception as exc:
         logger.error('[Celery] 日誌統計失敗', exc_info=True)
         return {'error': str(exc)}
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.update_oui_database_task',
+    max_retries=3,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=600,  # 硬限制 10 分鐘
+    soft_time_limit=540  # 軟限制 9 分鐘
+)
+def update_oui_database_task(self, source=0, backup=True):
+    """
+    更新 IEEE OUI 資料庫（定時任務）
+    
+    Args:
+        source: 資料來源索引 (0: IEEE Official HTTPS, 1: IEEE Official HTTP, 2: Gist Mirror)
+        backup: 是否備份現有資料庫
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'source': str,
+            'total_oui_entries': int,
+            'unique_vendors': int,
+            'backup_created': bool,
+            'timestamp': str
+        }
+    """
+    try:
+        logger.info(f'[Celery] 開始更新 OUI 資料庫 - 來源索引: {source}, 備份: {backup}')
+        
+        # 使用 Django 管理命令更新
+        from django.core.management import call_command
+        from io import StringIO
+        import sys
+        
+        # 捕獲命令輸出
+        out = StringIO()
+        
+        # 執行更新命令
+        call_command(
+            'update_oui',
+            source=source,
+            backup=backup,
+            stdout=out,
+            stderr=out
+        )
+        
+        # 獲取輸出
+        command_output = out.getvalue()
+        
+        # 獲取更新後的統計資訊
+        from api.utils.mac_vendor import get_vendor_stats
+        stats = get_vendor_stats()
+        
+        result = {
+            'success': True,
+            'source': source,
+            'total_oui_entries': stats.get('total_oui_entries', 0),
+            'unique_vendors': stats.get('unique_vendors', 0),
+            'backup_created': backup,
+            'timestamp': timezone.now().isoformat(),
+            'command_output': command_output
+        }
+        
+        logger.info(
+            f'[Celery] OUI 資料庫更新完成 - '
+            f'總 OUI: {result["total_oui_entries"]:,} | '
+            f'製造商: {result["unique_vendors"]:,}'
+        )
+        
+        return result
+        
+    except Exception as exc:
+        logger.error('[Celery] OUI 資料庫更新失敗', exc_info=True)
+        
+        # 自動重試（最多 3 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] OUI 更新重試次數已達上限')
+            return {
+                'success': False,
+                'source': source,
+                'total_oui_entries': 0,
+                'unique_vendors': 0,
+                'backup_created': backup,
+                'timestamp': timezone.now().isoformat(),
+                'error_message': str(exc)
+            }
+

@@ -47,6 +47,19 @@ app.conf.beat_schedule = {
             'expires': 3600,   # 任務超時 1 小時
         }
     },
+    
+    # 任務 3：OUI 資料庫自動更新（每月 1 號凌晨 2 點）
+    'update-oui-database-monthly': {
+        'task': 'api.tasks.update_oui_database_task',
+        'schedule': crontab(day_of_month='1', hour=2, minute=0),  # 每月 1 號 02:00 執行
+        'kwargs': {
+            'source': 0,       # 使用 IEEE Official HTTPS 來源
+            'backup': True     # 自動備份現有資料庫
+        },
+        'options': {
+            'expires': 540,    # 任務超時 9 分鐘
+        }
+    },
 }
 
 

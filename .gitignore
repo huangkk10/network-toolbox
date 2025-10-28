@@ -136,3 +136,7 @@ Thumbs.db
 /logs/*.log
 /logs/*.log.*
 /logs/analysis_report_*.txt
+
+# OUI Database (自動更新，不需版本控制)
+/backend/api/utils/ieee-oui.txt
+/backend/api/utils/ieee-oui.txt.backup
