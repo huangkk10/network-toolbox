@@ -1,0 +1,325 @@
+"""
+MAC 地址製造商識別工具
+根據 MAC 地址前綴（OUI）識別設備製造商
+"""
+
+# MAC OUI 前綴對照表（前 6 位）
+# 格式: 'OUI': '製造商名稱'
+MAC_VENDOR_MAP = {
+    # Dell
+    '00:14:22': 'Dell Inc.',
+    '00:1e:c9': 'Dell Inc.',
+    '84:2b:2b': 'Dell Inc.',
+    'f8:bc:12': 'Dell Inc.',
+    '18:03:73': 'Dell Inc.',
+    'd0:67:e5': 'Dell Inc.',
+    
+    # Apple
+    '00:03:93': 'Apple, Inc.',
+    '00:0a:95': 'Apple, Inc.',
+    '00:0d:93': 'Apple, Inc.',
+    '00:14:51': 'Apple, Inc.',
+    '00:16:cb': 'Apple, Inc.',
+    '00:17:f2': 'Apple, Inc.',
+    '00:19:e3': 'Apple, Inc.',
+    '00:1b:63': 'Apple, Inc.',
+    '00:1c:b3': 'Apple, Inc.',
+    '00:1d:4f': 'Apple, Inc.',
+    '00:1e:52': 'Apple, Inc.',
+    '00:1f:5b': 'Apple, Inc.',
+    '00:1f:f3': 'Apple, Inc.',
+    '00:21:e9': 'Apple, Inc.',
+    '00:22:41': 'Apple, Inc.',
+    '00:23:12': 'Apple, Inc.',
+    '00:23:32': 'Apple, Inc.',
+    '00:23:6c': 'Apple, Inc.',
+    '00:23:df': 'Apple, Inc.',
+    '00:24:36': 'Apple, Inc.',
+    '00:25:00': 'Apple, Inc.',
+    '00:25:4b': 'Apple, Inc.',
+    '00:25:bc': 'Apple, Inc.',
+    '00:26:08': 'Apple, Inc.',
+    '00:26:4a': 'Apple, Inc.',
+    '00:26:b0': 'Apple, Inc.',
+    '00:26:bb': 'Apple, Inc.',
+    '04:0c:ce': 'Apple, Inc.',
+    '04:15:52': 'Apple, Inc.',
+    '04:26:65': 'Apple, Inc.',
+    '04:48:9a': 'Apple, Inc.',
+    '04:4b:ed': 'Apple, Inc.',
+    '04:54:53': 'Apple, Inc.',
+    '04:69:f8': 'Apple, Inc.',
+    '04:d3:cf': 'Apple, Inc.',
+    '04:e5:36': 'Apple, Inc.',
+    '04:f1:3e': 'Apple, Inc.',
+    '04:f7:e4': 'Apple, Inc.',
+    '08:00:07': 'Apple, Inc.',
+    '08:66:98': 'Apple, Inc.',
+    '08:6d:41': 'Apple, Inc.',
+    '08:70:45': 'Apple, Inc.',
+    '08:74:02': 'Apple, Inc.',
+    '0c:3e:9f': 'Apple, Inc.',
+    '0c:4d:e9': 'Apple, Inc.',
+    '0c:74:c2': 'Apple, Inc.',
+    '10:40:f3': 'Apple, Inc.',
+    '10:41:7f': 'Apple, Inc.',
+    '10:9a:dd': 'Apple, Inc.',
+    '10:dd:b1': 'Apple, Inc.',
+    '14:10:9f': 'Apple, Inc.',
+    '14:5a:05': 'Apple, Inc.',
+    '14:8f:c6': 'Apple, Inc.',
+    '14:99:e2': 'Apple, Inc.',
+    '14:bd:61': 'Apple, Inc.',
+    '18:20:32': 'Apple, Inc.',
+    '18:34:51': 'Apple, Inc.',
+    '18:3d:a2': 'Apple, Inc.',
+    '18:af:61': 'Apple, Inc.',
+    '18:e7:f4': 'Apple, Inc.',
+    '1c:1a:c0': 'Apple, Inc.',
+    '1c:36:bb': 'Apple, Inc.',
+    '1c:ab:a7': 'Apple, Inc.',
+    '1c:e6:2b': 'Apple, Inc.',
+    '20:3c:ae': 'Apple, Inc.',
+    '20:a2:e4': 'Apple, Inc.',
+    '20:ab:37': 'Apple, Inc.',
+    '20:c9:d0': 'Apple, Inc.',
+    
+    # HP
+    '00:01:e6': 'HP Inc.',
+    '00:04:ea': 'HP Inc.',
+    '00:08:83': 'HP Inc.',
+    '00:0b:cd': 'HP Inc.',
+    '00:0e:7f': 'HP Inc.',
+    '00:10:83': 'HP Inc.',
+    '00:11:85': 'HP Inc.',
+    '00:12:79': 'HP Inc.',
+    '00:13:21': 'HP Inc.',
+    '00:14:38': 'HP Inc.',
+    '00:14:c2': 'HP Inc.',
+    '00:15:60': 'HP Inc.',
+    '00:16:35': 'HP Inc.',
+    '00:17:08': 'HP Inc.',
+    '00:17:a4': 'HP Inc.',
+    '00:18:71': 'HP Inc.',
+    '00:18:fe': 'HP Inc.',
+    '00:19:bb': 'HP Inc.',
+    '00:1a:4b': 'HP Inc.',
+    '00:1b:78': 'HP Inc.',
+    '00:1c:c4': 'HP Inc.',
+    '00:1d:09': 'HP Inc.',
+    '00:1e:0b': 'HP Inc.',
+    '00:1f:29': 'HP Inc.',
+    '00:21:5a': 'HP Inc.',
+    '00:22:64': 'HP Inc.',
+    '00:23:7d': 'HP Inc.',
+    '00:24:81': 'HP Inc.',
+    '00:25:b3': 'HP Inc.',
+    '00:26:55': 'HP Inc.',
+    
+    # Samsung
+    '00:00:f0': 'Samsung Electronics',
+    '00:02:78': 'Samsung Electronics',
+    '00:07:ab': 'Samsung Electronics',
+    '00:09:18': 'Samsung Electronics',
+    '00:0d:ae': 'Samsung Electronics',
+    '00:12:47': 'Samsung Electronics',
+    '00:12:fb': 'Samsung Electronics',
+    '00:13:77': 'Samsung Electronics',
+    '00:15:99': 'Samsung Electronics',
+    '00:15:b9': 'Samsung Electronics',
+    '00:16:32': 'Samsung Electronics',
+    '00:16:6b': 'Samsung Electronics',
+    '00:16:6c': 'Samsung Electronics',
+    '00:17:c9': 'Samsung Electronics',
+    '00:17:d5': 'Samsung Electronics',
+    '00:18:af': 'Samsung Electronics',
+    '00:1a:8a': 'Samsung Electronics',
+    '00:1b:98': 'Samsung Electronics',
+    '00:1c:43': 'Samsung Electronics',
+    '00:1d:25': 'Samsung Electronics',
+    '00:1e:7d': 'Samsung Electronics',
+    '00:1e:e1': 'Samsung Electronics',
+    '00:1e:e2': 'Samsung Electronics',
+    '00:21:19': 'Samsung Electronics',
+    '00:21:4c': 'Samsung Electronics',
+    '00:21:d1': 'Samsung Electronics',
+    '00:21:d2': 'Samsung Electronics',
+    '00:23:39': 'Samsung Electronics',
+    '00:23:3a': 'Samsung Electronics',
+    '00:23:99': 'Samsung Electronics',
+    '00:23:d6': 'Samsung Electronics',
+    '00:23:d7': 'Samsung Electronics',
+    '00:24:54': 'Samsung Electronics',
+    '00:24:90': 'Samsung Electronics',
+    '00:24:91': 'Samsung Electronics',
+    '00:24:e9': 'Samsung Electronics',
+    '00:25:38': 'Samsung Electronics',
+    '00:25:66': 'Samsung Electronics',
+    '00:25:67': 'Samsung Electronics',
+    '00:26:37': 'Samsung Electronics',
+    '00:26:5d': 'Samsung Electronics',
+    '00:26:5f': 'Samsung Electronics',
+    
+    # Lenovo
+    '00:1f:16': 'Lenovo',
+    '28:d2:44': 'Lenovo',
+    '50:65:f3': 'Lenovo',
+    '54:ee:75': 'Lenovo',
+    '68:f7:28': 'Lenovo',
+    '70:4d:7b': 'Lenovo',
+    '94:c6:91': 'Lenovo',
+    'a4:4e:31': 'Lenovo',
+    'b0:83:fe': 'Lenovo',
+    'c8:5b:76': 'Lenovo',
+    'dc:4a:3e': 'Lenovo',
+    'e4:a7:a0': 'Lenovo',
+    'e8:6a:64': 'Lenovo',
+    
+    # ASUS
+    '00:0c:6e': 'ASUSTeK',
+    '00:11:d8': 'ASUSTeK',
+    '00:13:d4': 'ASUSTeK',
+    '00:15:f2': 'ASUSTeK',
+    '00:17:31': 'ASUSTeK',
+    '00:18:f3': 'ASUSTeK',
+    '00:1a:92': 'ASUSTeK',
+    '00:1b:fc': 'ASUSTeK',
+    '00:1d:60': 'ASUSTeK',
+    '00:1e:8c': 'ASUSTeK',
+    '00:22:15': 'ASUSTeK',
+    '00:23:54': 'ASUSTeK',
+    '00:24:8c': 'ASUSTeK',
+    '00:25:d3': 'ASUSTeK',
+    '00:26:18': 'ASUSTeK',
+    '04:42:1a': 'ASUSTeK',
+    '08:60:6e': 'ASUSTeK',
+    '10:bf:48': 'ASUSTeK',
+    '14:da:e9': 'ASUSTeK',
+    '1c:87:2c': 'ASUSTeK',
+    '2c:56:dc': 'ASUSTeK',
+    '30:5a:3a': 'ASUSTeK',
+    '38:d5:47': 'ASUSTeK',
+    '50:46:5d': 'ASUSTeK',
+    '54:04:a6': 'ASUSTeK',
+    '60:45:cb': 'ASUSTeK',
+    '70:8b:cd': 'ASUSTeK',
+    '74:d0:2b': 'ASUSTeK',
+    '9c:5c:8e': 'ASUSTeK',
+    'b0:6e:bf': 'ASUSTeK',
+    'bc:ee:7b': 'ASUSTeK',
+    'd0:17:c2': 'ASUSTeK',
+    'd8:50:e6': 'ASUSTeK',
+    'e0:3f:49': 'ASUSTeK',
+    'f8:32:e4': 'ASUSTeK',
+    
+    # Intel
+    '00:02:b3': 'Intel',
+    '00:03:47': 'Intel',
+    '00:04:23': 'Intel',
+    '00:07:e9': 'Intel',
+    '00:0c:f1': 'Intel',
+    '00:0e:0c': 'Intel',
+    '00:11:11': 'Intel',
+    '00:12:f0': 'Intel',
+    '00:13:02': 'Intel',
+    '00:13:20': 'Intel',
+    '00:13:ce': 'Intel',
+    '00:13:e8': 'Intel',
+    '00:15:00': 'Intel',
+    '00:16:6f': 'Intel',
+    '00:16:76': 'Intel',
+    '00:16:ea': 'Intel',
+    '00:16:eb': 'Intel',
+    '00:18:de': 'Intel',
+    '00:19:d1': 'Intel',
+    '00:19:d2': 'Intel',
+    '00:1b:21': 'Intel',
+    '00:1b:77': 'Intel',
+    '00:1c:bf': 'Intel',
+    '00:1d:e0': 'Intel',
+    '00:1d:e1': 'Intel',
+    '00:1e:64': 'Intel',
+    '00:1e:65': 'Intel',
+    '00:1e:67': 'Intel',
+    '00:1f:3a': 'Intel',
+    '00:1f:3b': 'Intel',
+    '00:1f:3c': 'Intel',
+    
+    # Realtek
+    '00:e0:4c': 'Realtek',
+    '52:54:00': 'Realtek',
+    '00:01:6c': 'Realtek',
+    '00:0b:6a': 'Realtek',
+    '00:0c:76': 'Realtek',
+    '00:0e:2e': 'Realtek',
+    '00:11:f6': 'Realtek',
+    '00:13:3b': 'Realtek',
+    '00:19:21': 'Realtek',
+    '00:1c:f0': 'Realtek',
+    '00:1d:0f': 'Realtek',
+    '00:1f:1f': 'Realtek',
+    '00:50:fc': 'Realtek',
+    '08:00:27': 'Realtek',
+    '10:78:d2': 'Realtek',
+    '18:db:f2': 'Realtek',
+    '70:4f:57': 'Realtek',
+    '74:27:ea': 'Realtek',
+    '98:e7:43': 'Realtek',
+    'a8:5e:45': 'Realtek',
+    'd0:50:99': 'Realtek',
+    'e0:94:67': 'Realtek',
+    'f4:8e:92': 'Realtek',
+    
+    # 本地實際設備 OUI（從 DHCP 租約中發現）
+    '58:11:22': 'Realtek',
+    '60:cf:84': 'Realtek',
+    'e8:9c:25': 'Realtek',
+    '80:09:02': 'Intel',
+    '48:21:0b': 'Intel',
+    '84:a9:38': 'Intel',
+    'f0:2f:74': 'Intel',
+    '1c:69:7a': 'Intel',
+    '10:4f:58': 'Intel',
+    '60:6d:3c': 'TP-Link',
+    'f8:75:a4': 'D-Link',
+    'b8:97:5a': 'Arcadyan',
+    '9c:69:d3': 'Realtek',
+}
+
+
+def get_vendor_from_mac(mac_address):
+    """
+    根據 MAC 地址識別製造商
+    
+    參數:
+        mac_address: MAC 地址字串（格式: xx:xx:xx:xx:xx:xx 或 xx-xx-xx-xx-xx-xx）
+    
+    返回:
+        製造商名稱，如果無法識別則返回 'Unknown'
+    """
+    if not mac_address:
+        return 'Unknown'
+    
+    # 標準化 MAC 地址格式
+    mac = mac_address.strip().lower().replace('-', ':')
+    
+    # 提取前 8 位（OUI，格式: xx:xx:xx）
+    if len(mac) >= 8:
+        oui = mac[:8]
+        
+        # 查詢 OUI 對照表
+        vendor = MAC_VENDOR_MAP.get(oui, 'Unknown')
+        return vendor
+    
+    return 'Unknown'
+
+
+def get_all_vendors():
+    """
+    獲取所有已知的製造商列表
+    
+    返回:
+        製造商名稱列表（去重）
+    """
+    vendors = set(MAC_VENDOR_MAP.values())
+    return sorted(list(vendors))

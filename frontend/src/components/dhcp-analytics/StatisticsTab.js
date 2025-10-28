@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Card, Row, Col, Select, Space, Table, Statistic } from 'antd';
+import React, { useState, useEffect } from 'react';
+import { Card, Row, Col, Select, Space, Table, Statistic, Spin, message } from 'antd';
 import {
     LineChart,
     Line,
@@ -15,103 +15,50 @@ import {
     Legend,
     ResponsiveContainer,
 } from 'recharts';
+import axios from 'axios';
 
 const StatisticsTab = ({ serverId }) => {
     const [timeRange, setTimeRange] = useState('7d');
+    const [loading, setLoading] = useState(false);
+    const [statisticsData, setStatisticsData] = useState(null);
 
-    // 租約增長趨勢數據
-    const growthData = [
-        { date: '10/20', count: 1000 },
-        { date: '10/21', count: 1040 },
-        { date: '10/22', count: 1080 },
-        { date: '10/23', count: 1140 },
-        { date: '10/24', count: 1180 },
-        { date: '10/25', count: 1210 },
-        { date: '10/26', count: 1245 },
-    ];
+    // 獲取統計數據
+    const fetchStatistics = async () => {
+        setLoading(true);
+        try {
+            const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : timeRange === '90d' ? 90 : 7;
+            const response = await axios.get('/api/dhcp-analytics/statistics/', {
+                params: {
+                    server: serverId,
+                    days: days,
+                },
+            });
+            setStatisticsData(response.data);
+        } catch (error) {
+            console.error('獲取統計數據失敗:', error);
+            message.error('載入統計數據失敗：' + (error.response?.data?.error || error.message));
+        } finally {
+            setLoading(false);
+        }
+    };
 
-    // 每日活躍租約數
-    const dailyActiveData = [
-        { day: '週一', count: 720 },
-        { day: '週二', count: 750 },
-        { day: '週三', count: 780 },
-        { day: '週四', count: 820 },
-        { day: '週五', count: 850 },
-        { day: '週六', count: 670 },
-        { day: '週日', count: 650 },
-    ];
+    useEffect(() => {
+        if (serverId) {
+            fetchStatistics();
+        }
+    }, [serverId, timeRange]);
 
-    // Top 10 活躍客戶端
-    const topClientsData = [
-        { hostname: 'desktop-001', count: 156 },
-        { hostname: 'laptop-005', count: 142 },
-        { hostname: 'server-web-01', count: 98 },
-        { hostname: 'printer-002', count: 87 },
-        { hostname: 'mobile-device-123', count: 76 },
-        { hostname: 'iot-sensor-01', count: 65 },
-        { hostname: 'tablet-10', count: 54 },
-        { hostname: 'camera-entrance', count: 48 },
-        { hostname: 'switch-floor2', count: 42 },
-        { hostname: 'ap-office-3', count: 38 },
-    ];
+    // 如果還在載入或沒有數據
+    if (loading || !statisticsData) {
+        return (
+            <div style={{ textAlign: 'center', padding: '50px' }}>
+                <Spin size="large" />
+                <div style={{ marginTop: '16px' }}>載入統計數據中...</div>
+            </div>
+        );
+    }
 
-    // MAC Vendor 分佈
-    const vendorData = [
-        { name: 'Dell Inc.', value: 320, color: '#2196f3' },
-        { name: 'Apple, Inc.', value: 280, color: '#52c41a' },
-        { name: 'Samsung Electronics', value: 210, color: '#faad14' },
-        { name: 'HP Inc.', value: 180, color: '#ff4d4f' },
-        { name: '其他', value: 255, color: '#d9d9d9' },
-    ];
-
-    // 每日統計摘要
-    const dailySummary = [
-        {
-            key: '1',
-            date: '2025-10-26',
-            total: 1245,
-            active: 892,
-            expired: 253,
-            released: 100,
-            utilization: '71.6%',
-        },
-        {
-            key: '2',
-            date: '2025-10-25',
-            total: 1210,
-            active: 870,
-            expired: 240,
-            released: 100,
-            utilization: '69.8%',
-        },
-        {
-            key: '3',
-            date: '2025-10-24',
-            total: 1180,
-            active: 850,
-            expired: 230,
-            released: 100,
-            utilization: '68.2%',
-        },
-        {
-            key: '4',
-            date: '2025-10-23',
-            total: 1140,
-            active: 820,
-            expired: 220,
-            released: 100,
-            utilization: '66.5%',
-        },
-        {
-            key: '5',
-            date: '2025-10-22',
-            total: 1080,
-            active: 780,
-            expired: 200,
-            released: 100,
-            utilization: '64.1%',
-        },
-    ];
+    const { growth_data, daily_active_data, top_clients_data, vendor_data, daily_summary } = statisticsData;
 
     const summaryColumns = [
         {
@@ -172,7 +119,7 @@ const StatisticsTab = ({ serverId }) => {
                 <Col xs={24} lg={12}>
                     <Card title="租約增長趨勢" bordered={false}>
                         <ResponsiveContainer width="100%" height={250}>
-                            <LineChart data={growthData}>
+                            <LineChart data={growth_data}>
                                 <CartesianGrid strokeDasharray="3 3" />
                                 <XAxis dataKey="date" />
                                 <YAxis />
@@ -194,7 +141,7 @@ const StatisticsTab = ({ serverId }) => {
                 <Col xs={24} lg={12}>
                     <Card title="每日活躍租約數" bordered={false}>
                         <ResponsiveContainer width="100%" height={250}>
-                            <BarChart data={dailyActiveData}>
+                            <BarChart data={daily_active_data}>
                                 <CartesianGrid strokeDasharray="3 3" />
                                 <XAxis dataKey="day" />
                                 <YAxis />
@@ -209,41 +156,53 @@ const StatisticsTab = ({ serverId }) => {
                 {/* Top 10 活躍客戶端 */}
                 <Col xs={24} lg={12}>
                     <Card title="Top 10 活躍客戶端" bordered={false}>
-                        <ResponsiveContainer width="100%" height={300}>
-                            <BarChart data={topClientsData} layout="vertical">
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis type="number" />
-                                <YAxis dataKey="hostname" type="category" width={120} />
-                                <Tooltip />
-                                <Legend />
-                                <Bar dataKey="count" fill="#2196f3" name="租約次數" />
-                            </BarChart>
-                        </ResponsiveContainer>
+                        {top_clients_data && top_clients_data.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={300}>
+                                <BarChart data={top_clients_data} layout="vertical">
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis type="number" />
+                                    <YAxis dataKey="hostname" type="category" width={120} />
+                                    <Tooltip />
+                                    <Legend />
+                                    <Bar dataKey="count" fill="#2196f3" name="租約次數" />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div style={{ textAlign: 'center', padding: '50px', color: '#999' }}>
+                                暫無客戶端數據
+                            </div>
+                        )}
                     </Card>
                 </Col>
 
                 {/* MAC Vendor 分佈 */}
                 <Col xs={24} lg={12}>
                     <Card title="設備製造商分佈" bordered={false}>
-                        <ResponsiveContainer width="100%" height={300}>
-                            <PieChart>
-                                <Pie
-                                    data={vendorData}
-                                    cx="50%"
-                                    cy="50%"
-                                    labelLine={false}
-                                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                                    outerRadius={100}
-                                    fill="#8884d8"
-                                    dataKey="value"
-                                >
-                                    {vendorData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={entry.color} />
-                                    ))}
-                                </Pie>
-                                <Tooltip />
-                            </PieChart>
-                        </ResponsiveContainer>
+                        {vendor_data && vendor_data.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={300}>
+                                <PieChart>
+                                    <Pie
+                                        data={vendor_data}
+                                        cx="50%"
+                                        cy="50%"
+                                        labelLine={false}
+                                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                                        outerRadius={100}
+                                        fill="#8884d8"
+                                        dataKey="value"
+                                    >
+                                        {vendor_data.map((entry, index) => (
+                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div style={{ textAlign: 'center', padding: '50px', color: '#999' }}>
+                                暫無製造商數據
+                            </div>
+                        )}
                     </Card>
                 </Col>
             </Row>
@@ -252,7 +211,7 @@ const StatisticsTab = ({ serverId }) => {
             <Card title="每日統計摘要" bordered={false}>
                 <Table
                     columns={summaryColumns}
-                    dataSource={dailySummary}
+                    dataSource={daily_summary}
                     pagination={false}
                     size="middle"
                 />

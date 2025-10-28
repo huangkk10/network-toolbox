@@ -17,6 +17,7 @@ urlpatterns = [
     path('dhcp-analytics/status-distribution/', views.dhcp_analytics_status_distribution, name='dhcp_analytics_status_distribution'),
     path('dhcp-analytics/recent-leases/', views.dhcp_analytics_recent_leases, name='dhcp_analytics_recent_leases'),
     path('dhcp-analytics/logs/', views.dhcp_analytics_logs, name='dhcp_analytics_logs'),
+    path('dhcp-analytics/statistics/', views.dhcp_analytics_statistics, name='dhcp_analytics_statistics'),
     path('dhcp-servers/<int:server_id>/sync-leases/', views.dhcp_sync_leases, name='dhcp_sync_leases'),
     path('dhcp-servers/<int:server_id>/sync-logs/', views.dhcp_sync_logs, name='dhcp_sync_logs'),
     
