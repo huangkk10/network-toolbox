@@ -1,0 +1,22 @@
+.nas-analytics-page {
+    min-height: 100vh;
+}
+
+.nas-analytics-page .ant-card {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+    border-radius: 8px;
+}
+
+.nas-analytics-page .ant-statistic-title {
+    font-size: 14px;
+    color: #666;
+}
+
+.nas-analytics-page .ant-statistic-content {
+    font-size: 24px;
+    font-weight: 600;
+}
+
+.nas-analytics-page .recharts-wrapper {
+    margin: 0 auto;
+}

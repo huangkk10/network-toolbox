@@ -175,3 +175,47 @@ class DHCPLog(models.Model):
     
     def __str__(self):
         return f"[{self.level}] {self.timestamp} - {self.message[:50]}"
+
+
+class NASConnectionLog(models.Model):
+    """NAS 連線記錄模型 - 每5分鐘記錄一次，保留2週數據"""
+    
+    STATUS_CHOICES = [
+        ('success', '成功'),
+        ('failed', '失敗'),
+    ]
+    
+    timestamp = models.DateTimeField(verbose_name='記錄時間', db_index=True)
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        verbose_name='連線狀態',
+        db_index=True
+    )
+    
+    # 連線資訊
+    nas_ip = models.GenericIPAddressField(verbose_name='NAS IP')
+    nas_share = models.CharField(max_length=100, verbose_name='共享名稱')
+    
+    # 效能測試結果（可選）
+    response_time = models.FloatField(null=True, blank=True, verbose_name='響應時間 (ms)')
+    upload_speed = models.FloatField(null=True, blank=True, verbose_name='上傳速度 (MB/s)')
+    download_speed = models.FloatField(null=True, blank=True, verbose_name='下載速度 (MB/s)')
+    
+    # 錯誤訊息
+    error_message = models.TextField(blank=True, verbose_name='錯誤訊息')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    
+    class Meta:
+        verbose_name = 'NAS 連線記錄'
+        verbose_name_plural = 'NAS 連線記錄'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp'], name='idx_nas_timestamp'),
+            models.Index(fields=['status'], name='idx_nas_status'),
+            models.Index(fields=['timestamp', 'status'], name='idx_nas_time_status'),
+        ]
+    
+    def __str__(self):
+        return f"[{self.status}] {self.timestamp} - {self.nas_ip}/{self.nas_share}"

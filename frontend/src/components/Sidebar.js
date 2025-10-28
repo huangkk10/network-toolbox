@@ -10,6 +10,7 @@ import {
     MenuFoldOutlined,
     MenuUnfoldOutlined,
     ExperimentOutlined,
+    CloudServerOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
@@ -30,6 +31,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                 break;
             case 'dhcp-analytics':
                 navigate('/dhcp-analytics');
+                break;
+            case 'nas-analytics':
+                navigate('/nas-analytics');
                 break;
             case 'dhcp-server-management':
                 navigate('/admin/dhcp-server-management');
@@ -52,6 +56,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             key: 'dhcp-analytics',
             icon: <BarChartOutlined />,
             label: 'DHCP Server 分析',
+        },
+        {
+            key: 'nas-analytics',
+            icon: <CloudServerOutlined />,
+            label: 'NAS 分析',
         },
     ];
 

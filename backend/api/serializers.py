@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import DHCPServer, DHCPLease
+from .models import DHCPServer, DHCPLease, NASConnectionLog
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -51,4 +51,13 @@ class DHCPLeaseSerializer(serializers.ModelSerializer):
         model = DHCPLease
         fields = '__all__'
         read_only_fields = ('created_at', 'updated_at')
+
+
+class NASConnectionLogSerializer(serializers.ModelSerializer):
+    """NAS 連線記錄序列化器"""
+    
+    class Meta:
+        model = NASConnectionLog
+        fields = '__all__'
+        read_only_fields = ('created_at',)
 

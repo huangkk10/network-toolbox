@@ -60,6 +60,15 @@ app.conf.beat_schedule = {
             'expires': 540,    # 任務超時 9 分鐘
         }
     },
+    
+    # 任務 4：NAS 連線檢測（每 5 分鐘）
+    'check-nas-connection-every-5-minutes': {
+        'task': 'api.tasks.check_nas_connection_task',
+        'schedule': crontab(minute='*/5'),  # 每 5 分鐘執行一次
+        'options': {
+            'expires': 150,    # 任務超時 2.5 分鐘
+        }
+    },
 }
 
 

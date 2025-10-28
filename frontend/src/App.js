@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import DHCPAnalyticsPage from './pages/DHCPAnalyticsPage';
+import NASAnalyticsPage from './pages/NASAnalyticsPage';
 import DHCPServerManagementPage from './pages/DHCPServerManagementPage';
 import UserManagementPage from './pages/UserManagementPage';
 import SettingsPage from './pages/SettingsPage';
@@ -43,6 +44,8 @@ function AppLayout() {
                 return 'Dashboard';
             case '/dhcp-analytics':
                 return 'DHCP Server 分析';
+            case '/nas-analytics':
+                return 'NAS 分析';
             case '/admin/dhcp-server-management':
                 return 'DHCP Server 管理';
             case '/admin/user-management':
@@ -95,6 +98,7 @@ function AppLayout() {
                         <Route path="/" element={<Navigate to="/dhcp-analytics" replace />} />
                         <Route path="/dashboard" element={<DashboardPage />} />
                         <Route path="/dhcp-analytics" element={<DHCPAnalyticsPage />} />
+                        <Route path="/nas-analytics" element={<NASAnalyticsPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />
                         <Route path="/admin/user-management" element={<UserManagementPage />} />
                         <Route path="/settings" element={<SettingsPage />} />

@@ -457,3 +457,79 @@ def update_oui_database_task(self, source=0, backup=True):
                 'error_message': str(exc)
             }
 
+
+@shared_task(
+    bind=True,
+    name='api.tasks.check_nas_connection_task',
+    max_retries=2,
+    default_retry_delay=60,  # 失敗後 1 分鐘重試
+    time_limit=180,  # 硬限制 3 分鐘
+    soft_time_limit=150  # 軟限制 2.5 分鐘
+)
+def check_nas_connection_task(self):
+    """
+    NAS 連線檢測定時任務（每5分鐘執行一次）
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'status': str,      # 'success' or 'failed'
+            'nas_ip': str,
+            'nas_share': str,
+            'response_time': float,  # 響應時間（ms）
+            'upload_speed': float,   # 上傳速度（MB/s）
+            'download_speed': float, # 下載速度（MB/s）
+            'timestamp': str
+        }
+    """
+    try:
+        logger.info('[Celery] 開始執行 NAS 連線檢測')
+        
+        # 使用 NAS 服務執行檢測並記錄
+        from .nas_service import record_nas_connection
+        
+        success = record_nas_connection()
+        
+        # 獲取最新的記錄
+        from .models import NASConnectionLog
+        latest_log = NASConnectionLog.objects.order_by('-timestamp').first()
+        
+        if latest_log:
+            result = {
+                'success': success,
+                'status': latest_log.status,
+                'nas_ip': latest_log.nas_ip,
+                'nas_share': latest_log.nas_share,
+                'response_time': latest_log.response_time,
+                'upload_speed': latest_log.upload_speed,
+                'download_speed': latest_log.download_speed,
+                'timestamp': latest_log.timestamp.isoformat(),
+            }
+            
+            logger.info(
+                f'[Celery] NAS 連線檢測完成 - '
+                f'狀態: {result["status"]} | '
+                f'響應時間: {result["response_time"]:.2f} ms' if result["response_time"] else 'N/A'
+            )
+        else:
+            result = {
+                'success': False,
+                'error_message': '無法獲取最新記錄'
+            }
+        
+        return result
+        
+    except Exception as exc:
+        logger.error('[Celery] NAS 連線檢測失敗', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=60)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] NAS 連線檢測重試次數已達上限')
+            return {
+                'success': False,
+                'error_message': str(exc),
+                'timestamp': timezone.now().isoformat()
+            }
+

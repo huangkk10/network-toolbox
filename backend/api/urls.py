@@ -6,6 +6,7 @@ router = DefaultRouter()
 router.register(r'users', views.UserViewSet)
 router.register(r'dhcp-servers', views.DHCPServerViewSet)
 router.register(r'dhcp-leases', views.DHCPLeaseViewSet)
+router.register(r'nas-logs', views.NASConnectionLogViewSet)
 
 urlpatterns = [
     path('', views.api_root, name='api_root'),
