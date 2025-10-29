@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Tag, Input, Select, DatePicker, Space, Button, message } from 'antd';
-import { SearchOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Table, Tag, Space, Input, Select, DatePicker, Button, message, Modal, Typography } from 'antd';
+import { SearchOutlined, ReloadOutlined, EyeOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
 
+const { Paragraph } = Typography;
 const { RangePicker } = DatePicker;
 
 const LogsTab = ({ serverId }) => {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [modalVisible, setModalVisible] = useState(false);
+    const [selectedLog, setSelectedLog] = useState(null);
     const [pagination, setPagination] = useState({
         current: 1,
         pageSize: 50,
@@ -92,6 +95,16 @@ const LogsTab = ({ serverId }) => {
         });
     };
 
+    const showLogModal = (record) => {
+        setSelectedLog(record);
+        setModalVisible(true);
+    };
+
+    const handleModalClose = () => {
+        setModalVisible(false);
+        setSelectedLog(null);
+    };
+
     const columns = [
         {
             title: '時間',
@@ -100,12 +113,6 @@ const LogsTab = ({ serverId }) => {
             width: 180,
             render: (text) => dayjs(text).format('YYYY-MM-DD HH:mm:ss'),
             sorter: (a, b) => dayjs(a.timestamp).unix() - dayjs(b.timestamp).unix(),
-        },
-        {
-            title: 'Server',
-            dataIndex: 'server_ip',
-            key: 'server_ip',
-            width: 140,
         },
         {
             title: '類型',
@@ -152,13 +159,6 @@ const LogsTab = ({ serverId }) => {
             render: (text) => text || '-',
         },
         {
-            title: '文件路徑',
-            dataIndex: 'file_path',
-            key: 'file_path',
-            ellipsis: true,
-            render: (text) => text || '-',
-        },
-        {
             title: '狀態碼',
             dataIndex: 'status_code',
             key: 'status_code',
@@ -168,6 +168,23 @@ const LogsTab = ({ serverId }) => {
                 return <Tag color={color}>{code}</Tag>;
             },
         },
+        {
+            title: '原始 Log',
+            dataIndex: 'raw',
+            key: 'raw',
+            width: 150,
+            align: 'center',
+            render: (text, record) => (
+                <Button
+                    type="link"
+                    icon={<EyeOutlined />}
+                    onClick={() => showLogModal(record)}
+                    size="small"
+                >
+                    查看詳情
+                </Button>
+            ),
+        },
     ];
 
     return (
@@ -176,7 +193,7 @@ const LogsTab = ({ serverId }) => {
             <div style={{ marginBottom: '16px', background: '#fafafa', padding: '16px', borderRadius: '4px' }}>
                 <Space wrap>
                     <Input
-                        placeholder="搜尋 IP / MAC / 文件路徑"
+                        placeholder="搜尋 IP / MAC"
                         prefix={<SearchOutlined />}
                         style={{ width: 250 }}
                         value={filters.search}
@@ -232,6 +249,73 @@ const LogsTab = ({ serverId }) => {
                 size="middle"
                 scroll={{ x: 1200 }}
             />
+
+            {/* 原始 Log 詳情 Modal */}
+            <Modal
+                title="原始日誌詳情"
+                open={modalVisible}
+                onCancel={handleModalClose}
+                footer={[
+                    <Button key="close" onClick={handleModalClose}>
+                        關閉
+                    </Button>,
+                ]}
+                width={800}
+            >
+                {selectedLog && (
+                    <div>
+                        <div style={{ marginBottom: '16px' }}>
+                            <strong>時間：</strong>{dayjs(selectedLog.timestamp).format('YYYY-MM-DD HH:mm:ss')}
+                        </div>
+                        <div style={{ marginBottom: '16px' }}>
+                            <strong>Server：</strong>{selectedLog.server_ip}
+                        </div>
+                        <div style={{ marginBottom: '16px' }}>
+                            <strong>類型：</strong>
+                            <Tag color={selectedLog.log_type === 'MAC' ? 'blue' : 'green'} style={{ marginLeft: '8px' }}>
+                                {selectedLog.log_type}
+                            </Tag>
+                        </div>
+                        <div style={{ marginBottom: '16px' }}>
+                            <strong>動作：</strong>
+                            <Tag style={{ marginLeft: '8px' }}>{selectedLog.action}</Tag>
+                        </div>
+                        <div style={{ marginBottom: '16px' }}>
+                            <strong>Client IP：</strong>{selectedLog.client_ip}
+                        </div>
+                        {selectedLog.mac_address && (
+                            <div style={{ marginBottom: '16px' }}>
+                                <strong>MAC 地址：</strong>{selectedLog.mac_address}
+                            </div>
+                        )}
+                        <div style={{ marginBottom: '16px' }}>
+                            <strong>狀態碼：</strong>
+                            <Tag 
+                                color={selectedLog.status_code >= 200 && selectedLog.status_code < 300 ? 'success' : 'error'}
+                                style={{ marginLeft: '8px' }}
+                            >
+                                {selectedLog.status_code}
+                            </Tag>
+                        </div>
+                        <div style={{ marginBottom: '8px' }}>
+                            <strong>原始 Log：</strong>
+                        </div>
+                        <Paragraph
+                            copyable
+                            code
+                            style={{
+                                background: '#f5f5f5',
+                                padding: '12px',
+                                borderRadius: '4px',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-all',
+                            }}
+                        >
+                            {selectedLog.raw || '無原始日誌'}
+                        </Paragraph>
+                    </div>
+                )}
+            </Modal>
         </div>
     );
 };

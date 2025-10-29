@@ -1004,6 +1004,15 @@ class IPXELogViewSet(viewsets.ReadOnlyModelViewSet):
         if log_type:
             queryset = queryset.filter(log_type=log_type)
         
+        # 搜尋功能（支援 IP、MAC、原始 log）
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(client_ip__icontains=search) |
+                Q(mac_address__icontains=search) |
+                Q(raw__icontains=search)
+            )
+        
         # 依時間範圍篩選（預設 7 天）
         days = self.request.query_params.get('days', 7)
         try:
