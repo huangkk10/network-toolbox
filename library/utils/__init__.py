@@ -4,6 +4,7 @@
 提供各種可重用的工具函數，包括：
 - MAC 地址解析和驗證
 - 日期時間解析和格式化
+- 日誌解析（DHCP, Windows DHCP, iPXE）
 """
 
 # MAC 地址工具
@@ -23,6 +24,17 @@ from .datetime_utils import (
     format_remaining_time,
 )
 
+# 日誌解析工具
+from .log_parser import (
+    DHCPLogParser,
+    WindowsDHCPLogParser,
+    IPXELogParser,
+    LogLevel,
+    parse_dhcp_log,
+    parse_windows_dhcp_log,
+    parse_ipxe_log,
+)
+
 __all__ = [
     # MAC 工具
     'parse_windows_client_id',
@@ -35,4 +47,12 @@ __all__ = [
     'is_expired',
     'get_remaining_time',
     'format_remaining_time',
+    # 日誌解析工具
+    'DHCPLogParser',
+    'WindowsDHCPLogParser',
+    'IPXELogParser',
+    'LogLevel',
+    'parse_dhcp_log',
+    'parse_windows_dhcp_log',
+    'parse_ipxe_log',
 ]
