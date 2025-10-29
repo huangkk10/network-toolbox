@@ -23,6 +23,7 @@ const LogsTab = ({ serverId }) => {
     const [loading, setLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
     const [logLevel, setLogLevel] = useState('ALL');
+    const [clientType, setClientType] = useState('ALL');  // 新增：客戶端類型篩選
     const [keyword, setKeyword] = useState('');
     const [source, setSource] = useState('database');
     const [timeRange, setTimeRange] = useState('today');
@@ -46,7 +47,7 @@ const LogsTab = ({ serverId }) => {
             loadLogs();
             setCurrentPage(1);
         }
-    }, [serverId, logLevel, keyword, source, timeRange, customDateRange]);
+    }, [serverId, logLevel, clientType, keyword, source, timeRange, customDateRange]);
 
     useEffect(() => {
         if (serverId && serverId !== 'all' && currentPage > 0) {
@@ -72,6 +73,10 @@ const LogsTab = ({ serverId }) => {
 
             if (logLevel && logLevel !== 'ALL') {
                 params.level = logLevel;
+            }
+
+            if (clientType && clientType !== 'ALL') {
+                params.client_type = clientType;
             }
 
             if (keyword) {
@@ -154,6 +159,7 @@ const LogsTab = ({ serverId }) => {
 
     const handleClear = () => {
         setLogLevel('ALL');
+        setClientType('ALL');  // 新增
         setKeyword('');
         setTimeRange('today');
         setCustomDateRange(null);
@@ -172,6 +178,25 @@ const LogsTab = ({ serverId }) => {
         return (
             <Tag color={config.color} icon={config.icon}>
                 {level}
+            </Tag>
+        );
+    };
+
+    const getClientTypeTag = (clientType) => {
+        const typeConfig = {
+            'iPXE': { color: 'cyan', text: 'iPXE' },
+            'PXE': { color: 'geekblue', text: 'PXE' },
+            'WinPE': { color: 'purple', text: 'WinPE' },
+            'OS': { color: 'green', text: 'OS' },
+            'Unknown': { color: 'default', text: '-' },
+        };
+
+        const config = typeConfig[clientType] || typeConfig['Unknown'];
+        if (clientType === 'Unknown' || !clientType) return null;
+        
+        return (
+            <Tag color={config.color}>
+                {config.text}
             </Tag>
         );
     };
@@ -325,6 +350,25 @@ const LogsTab = ({ serverId }) => {
                                 <Option value="DEBUG">DEBUG</Option>
                             </Select>
                         </Col>
+
+                        <Col xs={24} sm={12} md={6}>
+                            <div style={{ marginBottom: '8px' }}>客戶端類型：</div>
+                            <Select
+                                style={{ width: '100%' }}
+                                value={clientType}
+                                onChange={(value) => {
+                                    setClientType(value);
+                                    setCurrentPage(1);
+                                }}
+                            >
+                                <Option value="ALL">全部</Option>
+                                <Option value="iPXE">iPXE</Option>
+                                <Option value="PXE">PXE (BIOS)</Option>
+                                <Option value="WinPE">Windows PE</Option>
+                                <Option value="OS">Operating System</Option>
+                                <Option value="Unknown">Unknown</Option>
+                            </Select>
+                        </Col>
                     </Row>
 
                     <Row gutter={[16, 16]}>
@@ -380,21 +424,40 @@ const LogsTab = ({ serverId }) => {
                                                 log.level === 'DEBUG' ? '#d9d9d9' :
                                                 '#52c41a'
                                             ),
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '12px',
                                         }}
                                     >
-                                        <span style={{ color: '#595959', fontWeight: '500', whiteSpace: 'nowrap' }}>
-                                            {formatTimestamp(log.timestamp)}
-                                        </span>
-                                        {getLevelTag(log.level)}
-                                        {log.event && (
-                                            <Tag color="purple">{log.event}</Tag>
-                                        )}
-                                        <span style={{ color: '#262626', fontWeight: '500', flex: 1, wordBreak: 'break-all' }}>
-                                            {log.message}
-                                        </span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px' }}>
+                                            <span style={{ color: '#595959', fontWeight: '500', whiteSpace: 'nowrap' }}>
+                                                {formatTimestamp(log.timestamp)}
+                                            </span>
+                                            {getLevelTag(log.level)}
+                                            {log.event && (
+                                                <Tag color="purple">{log.event}</Tag>
+                                            )}
+                                            {getClientTypeTag(log.client_type)}
+                                            {log.boot_stage && (
+                                                <Tag color="gold">{log.boot_stage}</Tag>
+                                            )}
+                                        </div>
+                                        <div style={{ paddingLeft: '12px' }}>
+                                            <div style={{ color: '#262626', fontWeight: '500', wordBreak: 'break-all', marginBottom: '4px' }}>
+                                                {log.message}
+                                            </div>
+                                            {(log.vendor_class || log.user_class) && (
+                                                <div style={{ fontSize: '12px', color: '#8c8c8c', marginTop: '4px' }}>
+                                                    {log.vendor_class && (
+                                                        <div>
+                                                            <strong>Vendor Class:</strong> {log.vendor_class}
+                                                        </div>
+                                                    )}
+                                                    {log.user_class && (
+                                                        <div>
+                                                            <strong>User Class:</strong> {log.user_class}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 ))}
                             </div>

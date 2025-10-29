@@ -475,9 +475,13 @@ class WindowsDHCPLogParser:
     """
     Windows DHCP Server 日誌解析器
     
-    Windows DHCP 日誌格式範例：
+    Windows DHCP 日誌格式範例（完整版）：
+    ID,Date,Time,Description,IP,Hostname,MAC,Username,TransactionID,QResult,Probationtime,CorrelationID,Dhcid,
+    VendorClass(Hex),VendorClass(ASCII),UserClass(Hex),UserClass(ASCII),RelayAgentInfo,DnsRegError
+    
+    範例：
     10,10/27/25,14:24:02,Assign,192.168.7.199,host-name,aa:bb:cc:dd:ee:ff,0
-    11,10/27/25,14:24:02,Renew,192.168.7.200,laptop-pc,11:22:33:44:55:66,0
+    11,10/18/25,15:32:59,Renew,10.250.132.27,,BCFCE73A61C9,,727830406,0,,,,0x505845436C69656E74...PXEClient:Arch:00007:UNDI:003010,0x69505845,iPXE
     """
     
     # Windows DHCP 事件代碼對應
@@ -496,6 +500,52 @@ class WindowsDHCPLogParser:
         '25': 'DHCPREQUEST',    # DHCP Request
         '30': 'NAP',            # 網路訪問保護
     }
+    
+    @staticmethod
+    def identify_client_type(fields):
+        """
+        識別客戶端類型（iPXE, PXE, WinPE, OS）
+        
+        Args:
+            fields: 日誌欄位列表
+        
+        Returns:
+            tuple: (client_type, boot_stage, vendor_class, user_class)
+        """
+        # 提取關鍵欄位
+        hostname = fields[5].strip() if len(fields) > 5 else ''
+        vendor_class_hex = fields[13].strip() if len(fields) > 13 else ''
+        vendor_class_ascii = fields[14].strip() if len(fields) > 14 else ''
+        user_class_hex = fields[15].strip() if len(fields) > 15 else ''
+        user_class_ascii = fields[16].strip() if len(fields) > 16 else ''
+        
+        # 合併 Vendor Class（取 ASCII 版本，若不存在則用 Hex）
+        vendor_class = vendor_class_ascii if vendor_class_ascii else vendor_class_hex
+        user_class = user_class_ascii if user_class_ascii else user_class_hex
+        
+        # 識別客戶端類型和啟動階段
+        if 'iPXE' in user_class or 'iPXE' in vendor_class:
+            # 明確的 iPXE 標識（通常在 User Class Option 77）
+            client_type = 'iPXE'
+            boot_stage = 'iPXE Loading'
+        elif 'PXEClient' in vendor_class or 'PXE' in vendor_class:
+            # BIOS PXE ROM（在 Vendor Class Option 60）
+            client_type = 'PXE'
+            boot_stage = 'BIOS PXE'
+        elif 'MSFT' in vendor_class or 'Microsoft' in vendor_class or hostname.lower().startswith('minint-'):
+            # Windows PE（Vendor Class 包含 "MSFT" 或主機名以 "minint-" 開頭）
+            client_type = 'WinPE'
+            boot_stage = 'Windows PE'
+        elif hostname and hostname != '-' and not vendor_class and not user_class:
+            # 正常 OS（有主機名，但沒有 DHCP Options）
+            client_type = 'OS'
+            boot_stage = 'Operating System'
+        else:
+            # 無法識別
+            client_type = 'Unknown'
+            boot_stage = ''
+        
+        return client_type, boot_stage, vendor_class, user_class
     
     @staticmethod
     def parse_log_lines(lines, limit=1000):
@@ -533,6 +583,11 @@ class WindowsDHCPLogParser:
                 event_type = WindowsDHCPLogParser.EVENT_TYPES.get(event_id, f'Unknown({event_id})')
                 
                 # 根據事件類型解析不同的欄位
+                client_type = 'Unknown'
+                boot_stage = ''
+                vendor_class = ''
+                user_class = ''
+                
                 if event_id in ['10', '11', '12', '13']:  # Assign, Renew, Release, Deny
                     ip_address = fields[4].strip() if len(fields) > 4 else '-'
                     hostname = fields[5].strip() if len(fields) > 5 else '-'
@@ -542,11 +597,17 @@ class WindowsDHCPLogParser:
                     if mac_address and mac_address != '-':
                         mac_address = mac_address.replace('-', ':').lower()
                     
-                    # 優化訊息格式
+                    # 識別客戶端類型（iPXE, PXE, WinPE, OS）
+                    client_type, boot_stage, vendor_class, user_class = WindowsDHCPLogParser.identify_client_type(fields)
+                    
+                    # 優化訊息格式（包含客戶端類型資訊）
                     if event_id == '10':  # Assign
                         message = f'DHCPOFFER of {ip_address} from ad:0d:10:73:dd:d5 via eth0'
                     elif event_id == '11':  # Renew
-                        message = f'DHCPREQUEST for {ip_address} from {mac_address} via eth0'
+                        if client_type != 'Unknown' and client_type != 'OS':
+                            message = f'DHCPREQUEST for {ip_address} from {mac_address} [{client_type}] via eth0'
+                        else:
+                            message = f'DHCPREQUEST for {ip_address} from {mac_address} via eth0'
                     elif event_id == '12':  # Release
                         message = f'DHCPRELEASE of {ip_address} from {mac_address} ({hostname})'
                     elif event_id == '13':  # Deny
@@ -597,6 +658,10 @@ class WindowsDHCPLogParser:
                     'event': event_type,
                     'message': message,
                     'raw': line,
+                    'client_type': client_type,
+                    'boot_stage': boot_stage,
+                    'vendor_class': vendor_class,
+                    'user_class': user_class,
                 })
             
             except Exception as e:
@@ -679,7 +744,11 @@ class DHCPLogService:
                             level=log_data['level'],
                             event=log_data.get('event', ''),
                             message=log_data['message'],
-                            raw=log_data['raw']
+                            raw=log_data['raw'],
+                            client_type=log_data.get('client_type', 'Unknown'),
+                            boot_stage=log_data.get('boot_stage', ''),
+                            vendor_class=log_data.get('vendor_class', ''),
+                            user_class=log_data.get('user_class', ''),
                         )
                         stats['created'] += 1
                     
@@ -694,7 +763,7 @@ class DHCPLogService:
             logger.error(f'同步日誌失敗: {str(e)}', exc_info=True)
             return stats
     
-    def get_db_logs(self, limit=100, page=1, level=None, keyword=None, start_time=None, end_time=None):
+    def get_db_logs(self, limit=100, page=1, level=None, client_type=None, keyword=None, start_time=None, end_time=None):
         """
         從資料庫讀取日誌（支援分頁和篩選）
         
@@ -702,6 +771,7 @@ class DHCPLogService:
             limit: 每頁數量
             page: 頁碼（從 1 開始）
             level: 日誌等級篩選
+            client_type: 客戶端類型篩選（iPXE, PXE, WinPE, OS, Unknown）
             keyword: 關鍵字篩選
             start_time: 開始時間 (datetime 物件)
             end_time: 結束時間 (datetime 物件)
@@ -730,11 +800,17 @@ class DHCPLogService:
             if level and level != 'ALL':
                 queryset = queryset.filter(level=level)
             
+            # 篩選客戶端類型
+            if client_type and client_type != 'ALL':
+                queryset = queryset.filter(client_type=client_type)
+            
             # 篩選關鍵字
             if keyword:
                 queryset = queryset.filter(
                     Q(message__icontains=keyword) | 
-                    Q(event__icontains=keyword)
+                    Q(event__icontains=keyword) |
+                    Q(vendor_class__icontains=keyword) |  # 新增：搜尋 Vendor Class
+                    Q(user_class__icontains=keyword)      # 新增：搜尋 User Class
                 )
             
             # 篩選時間範圍
@@ -764,6 +840,10 @@ class DHCPLogService:
                     'event': log.event,
                     'message': log.message,
                     'raw': log.raw,
+                    'client_type': log.client_type,
+                    'boot_stage': log.boot_stage,
+                    'vendor_class': log.vendor_class,
+                    'user_class': log.user_class,
                 })
             
             return {

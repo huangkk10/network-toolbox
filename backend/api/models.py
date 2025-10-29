@@ -143,6 +143,14 @@ class DHCPLog(models.Model):
         ('DEBUG', 'Debug'),
     ]
     
+    CLIENT_TYPE_CHOICES = [
+        ('iPXE', 'iPXE'),
+        ('PXE', 'PXE (BIOS)'),
+        ('WinPE', 'Windows PE'),
+        ('OS', 'Operating System'),
+        ('Unknown', 'Unknown'),
+    ]
+    
     server = models.ForeignKey(
         DHCPServer,
         on_delete=models.CASCADE,
@@ -160,6 +168,18 @@ class DHCPLog(models.Model):
     event = models.CharField(max_length=30, blank=True, verbose_name='事件類型')
     message = models.CharField(max_length=200, verbose_name='訊息')
     raw = models.TextField(verbose_name='原始日誌')
+    
+    # iPXE 識別相關欄位
+    client_type = models.CharField(
+        max_length=20,
+        choices=CLIENT_TYPE_CHOICES,
+        default='Unknown',
+        verbose_name='客戶端類型',
+        db_index=True
+    )
+    boot_stage = models.CharField(max_length=50, blank=True, verbose_name='啟動階段')
+    vendor_class = models.CharField(max_length=500, blank=True, verbose_name='Vendor Class (Option 60)')
+    user_class = models.CharField(max_length=200, blank=True, verbose_name='User Class (Option 77)')
     
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
     

@@ -377,6 +377,7 @@ def dhcp_analytics_logs(request):
     page = int(request.query_params.get('page', 1))
     page_size = int(request.query_params.get('page_size', 20))
     level = request.query_params.get('level', None)
+    client_type = request.query_params.get('client_type', None)  # 新增：客戶端類型篩選
     keyword = request.query_params.get('keyword', None)
     time_range = request.query_params.get('time_range', None)
     start_time_str = request.query_params.get('start_time', None)
@@ -425,6 +426,7 @@ def dhcp_analytics_logs(request):
                 limit=page_size,
                 page=page,
                 level=level,
+                client_type=client_type,  # 新增
                 keyword=keyword,
                 start_time=start_time,
                 end_time=end_time
@@ -437,10 +439,14 @@ def dhcp_analytics_logs(request):
             queryset = DHCPLog.objects.filter(server=server)
             if level and level != 'ALL':
                 queryset = queryset.filter(level=level)
+            if client_type and client_type != 'ALL':  # 新增
+                queryset = queryset.filter(client_type=client_type)
             if keyword:
                 queryset = queryset.filter(
                     Q(message__icontains=keyword) | 
-                    Q(event__icontains=keyword)
+                    Q(event__icontains=keyword) |
+                    Q(vendor_class__icontains=keyword) |  # 新增：搜尋 Vendor Class
+                    Q(user_class__icontains=keyword)      # 新增：搜尋 User Class
                 )
             if start_time:
                 queryset = queryset.filter(timestamp__gte=start_time)
