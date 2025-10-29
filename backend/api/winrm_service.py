@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from django.utils import timezone
+from library.utils.mac_utils import parse_windows_client_id
 
 logger = logging.getLogger(__name__)
 
@@ -146,28 +147,13 @@ ConvertTo-Json -Compress
             return []
     
     def parse_client_id(self, client_id):
-        """解析 ClientId（與 SSH 版本相同）"""
-        if not client_id:
-            return None
+        """
+        解析 ClientId
         
-        try:
-            parts = client_id.split('-')
-            if len(parts) > 1:
-                mac_parts = parts[1:7] if len(parts) >= 7 else parts[1:]
-            else:
-                mac_parts = parts
-            
-            mac_address = ':'.join(mac_parts).lower()
-            
-            if len(mac_address.split(':')) == 6:
-                return mac_address
-            else:
-                logger.warning(f'無效的 MAC 地址格式: {client_id}')
-                return None
-        
-        except Exception as e:
-            logger.error(f'MAC 地址解析失敗 ({client_id}): {str(e)}')
-            return None
+        [已棄用] 使用 library.utils.mac_utils.parse_windows_client_id() 代替
+        保留此方法以保持向後兼容性
+        """
+        return parse_windows_client_id(client_id)
     
     def parse_lease_expiry(self, expiry_str):
         """解析租約到期時間"""

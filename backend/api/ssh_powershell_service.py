@@ -7,6 +7,7 @@ import json
 import logging
 from django.utils import timezone
 from datetime import datetime, timedelta
+from library.utils.mac_utils import parse_windows_client_id
 
 logger = logging.getLogger(__name__)
 
@@ -181,9 +182,8 @@ class WindowsSSHPowerShellService:
         """
         解析 Windows DHCP ClientId 為標準 MAC 地址格式
         
-        Windows DHCP ClientId 可能的格式：
-        - 01-aa-bb-cc-dd-ee-ff (有類型前綴)
-        - aa-bb-cc-dd-ee-ff (無前綴)
+        [已棄用] 使用 library.utils.mac_utils.parse_windows_client_id() 代替
+        保留此方法以保持向後兼容性
         
         Args:
             client_id: Windows DHCP ClientId
@@ -191,37 +191,7 @@ class WindowsSSHPowerShellService:
         Returns:
             標準 MAC 地址格式 (aa:bb:cc:dd:ee:ff)
         """
-        if not client_id:
-            return None
-        
-        try:
-            # 分割 ClientId
-            parts = client_id.split('-')
-            
-            # 判斷格式
-            if len(parts) == 7:
-                # 格式：01-aa-bb-cc-dd-ee-ff (跳過第一個字節)
-                mac_parts = parts[1:7]
-            elif len(parts) == 6:
-                # 格式：aa-bb-cc-dd-ee-ff (直接使用)
-                mac_parts = parts
-            else:
-                logger.warning(f'無效的 MAC 地址格式: {client_id}')
-                return None
-            
-            # 轉換為標準格式（小寫，冒號分隔）
-            mac_address = ':'.join(mac_parts).lower()
-            
-            # 驗證格式
-            if len(mac_address.split(':')) == 6:
-                return mac_address
-            else:
-                logger.warning(f'無效的 MAC 地址格式: {client_id}')
-                return None
-        
-        except Exception as e:
-            logger.error(f'MAC 地址解析失敗 ({client_id}): {str(e)}')
-            return None
+        return parse_windows_client_id(client_id)
     
     def parse_lease_expiry(self, expiry_str):
         """
