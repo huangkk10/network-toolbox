@@ -1651,3 +1651,58 @@ def ipxe_analytics_statistics(request):
             {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def system_status(request):
+    """獲取系統狀態（磁碟空間、CPU、RAM 使用率）"""
+    import psutil
+    import shutil
+    
+    try:
+        # 1. 磁碟空間資訊
+        disk_usage = shutil.disk_usage('/')
+        disk_total = disk_usage.total / (1024 ** 3)  # GB
+        disk_used = disk_usage.used / (1024 ** 3)    # GB
+        disk_free = disk_usage.free / (1024 ** 3)    # GB
+        disk_percent = (disk_usage.used / disk_usage.total) * 100
+        
+        # 2. CPU 使用率（過去 1 秒的平均值）
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_count = psutil.cpu_count()
+        
+        # 3. RAM 使用率
+        memory = psutil.virtual_memory()
+        ram_total = memory.total / (1024 ** 3)      # GB
+        ram_used = memory.used / (1024 ** 3)        # GB
+        ram_available = memory.available / (1024 ** 3)  # GB
+        ram_percent = memory.percent
+        
+        logger.info(f'系統狀態查詢成功: CPU={cpu_percent}%, RAM={ram_percent}%, Disk={disk_percent:.1f}%')
+        
+        return Response({
+            'disk': {
+                'total': round(disk_total, 2),
+                'used': round(disk_used, 2),
+                'free': round(disk_free, 2),
+                'percent': round(disk_percent, 1),
+            },
+            'cpu': {
+                'percent': round(cpu_percent, 1),
+                'count': cpu_count,
+            },
+            'ram': {
+                'total': round(ram_total, 2),
+                'used': round(ram_used, 2),
+                'available': round(ram_available, 2),
+                'percent': round(ram_percent, 1),
+            },
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取系統狀態失敗: {str(e)}', exc_info=True)
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

@@ -33,5 +33,8 @@ urlpatterns = [
     # MAC 地址查詢 API
     path('dhcp-leases/lookup/', views.dhcp_lease_lookup, name='dhcp_lease_lookup'),
     
+    # 系統監控 API
+    path('system/status/', views.system_status, name='system_status'),
+    
     path('', include(router.urls)),
 ]

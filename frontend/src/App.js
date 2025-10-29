@@ -16,6 +16,7 @@ import DHCPServerManagementPage from './pages/DHCPServerManagementPage';
 import IPXEManagementPage from './pages/IPXEManagementPage';
 import UserManagementPage from './pages/UserManagementPage';
 import SettingsPage from './pages/SettingsPage';
+import SystemMonitorPage from './pages/SystemMonitorPage';
 
 const { Content } = Layout;
 
@@ -50,6 +51,8 @@ function AppLayout() {
                 return 'NAS 分析';
             case '/ipxe-analytics':
                 return 'IPXE 分析';
+            case '/system-monitor':
+                return '系統監控';
             case '/admin/dhcp-server-management':
                 return 'DHCP Server 管理';
             case '/admin/ipxe-server-management':
@@ -106,6 +109,7 @@ function AppLayout() {
                         <Route path="/dhcp-analytics" element={<DHCPAnalyticsPage />} />
                         <Route path="/nas-analytics" element={<NASAnalyticsPage />} />
                         <Route path="/ipxe-analytics" element={<IPXEAnalyticsPage />} />
+                        <Route path="/system-monitor" element={<SystemMonitorPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />
                         <Route path="/admin/ipxe-server-management" element={<IPXEManagementPage />} />
                         <Route path="/admin/user-management" element={<UserManagementPage />} />

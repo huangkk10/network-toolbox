@@ -6,6 +6,7 @@ python-decouple>=3.8
 paramiko>=3.3.1
 pysmb>=1.2.9.1
 requests>=2.31.0
+psutil>=5.9.0
 
 # Celery 定時任務相關
 celery==5.3.4

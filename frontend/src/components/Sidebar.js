@@ -11,6 +11,7 @@ import {
     MenuUnfoldOutlined,
     ExperimentOutlined,
     CloudServerOutlined,
+    DashboardOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
@@ -37,6 +38,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                 break;
             case 'ipxe-analytics':
                 navigate('/ipxe-analytics');
+                break;
+            case 'system-monitor':
+                navigate('/system-monitor');
                 break;
             case 'dhcp-server-management':
                 navigate('/admin/dhcp-server-management');
@@ -96,6 +100,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                     key: 'user-management',
                     icon: <UserOutlined />,
                     label: '用戶管理',
+                },
+                {
+                    key: 'system-monitor',
+                    icon: <DashboardOutlined />,
+                    label: '系統監控',
                 },
             ],
         },
