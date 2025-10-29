@@ -14,6 +14,7 @@ import {
     Typography,
     Alert,
     Empty,
+    Tabs,
 } from 'antd';
 import {
     CheckCircleOutlined,
@@ -45,6 +46,7 @@ import './NASAnalyticsPage.css';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+const { TabPane } = Tabs;
 
 const NASAnalyticsPage = () => {
     const [loading, setLoading] = useState(false);
@@ -248,25 +250,51 @@ const NASAnalyticsPage = () => {
 
             {/* 圖表 */}
             <Row gutter={[16, 16]} style={{ marginBottom: '24px' }}>
-                {/* 每日統計趨勢 */}
+                {/* 連線統計（每日/每小時切換） */}
                 <Col xs={24} lg={16}>
-                    <Card title="每日連線統計" extra={<Text type="secondary">最近 7 天</Text>}>
-                        {statistics?.daily_stats && statistics.daily_stats.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={300}>
-                                <LineChart data={statistics.daily_stats}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="date" />
-                                    <YAxis />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Line type="monotone" dataKey="success" stroke="#52c41a" name="成功" strokeWidth={2} />
-                                    <Line type="monotone" dataKey="failed" stroke="#ff4d4f" name="失敗" strokeWidth={2} />
-                                    <Line type="monotone" dataKey="total" stroke="#2196f3" name="總計" strokeWidth={2} strokeDasharray="5 5" />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <Empty description="暫無數據" />
-                        )}
+                    <Card title="連線統計">
+                        <Tabs defaultActiveKey="daily">
+                            <TabPane tab="每日統計" key="daily">
+                                {statistics?.daily_stats && statistics.daily_stats.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height={350}>
+                                        <LineChart data={statistics.daily_stats}>
+                                            <CartesianGrid strokeDasharray="3 3" />
+                                            <XAxis dataKey="date" />
+                                            <YAxis />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Line type="monotone" dataKey="success" stroke="#52c41a" name="成功" strokeWidth={2} />
+                                            <Line type="monotone" dataKey="failed" stroke="#ff4d4f" name="失敗" strokeWidth={2} />
+                                            <Line type="monotone" dataKey="total" stroke="#2196f3" name="總計" strokeWidth={2} strokeDasharray="5 5" />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                ) : (
+                                    <Empty description="暫無每日數據" />
+                                )}
+                            </TabPane>
+                            <TabPane tab="每小時統計" key="hourly">
+                                {statistics?.hourly_stats && statistics.hourly_stats.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height={350}>
+                                        <AreaChart data={statistics.hourly_stats}>
+                                            <CartesianGrid strokeDasharray="3 3" />
+                                            <XAxis 
+                                                dataKey="hour" 
+                                                angle={-45} 
+                                                textAnchor="end" 
+                                                height={80}
+                                            />
+                                            <YAxis />
+                                            <Tooltip />
+                                            <Legend />
+                                            <Area type="monotone" dataKey="success" stackId="1" stroke="#52c41a" fill="#52c41a" name="成功" />
+                                            <Area type="monotone" dataKey="failed" stackId="1" stroke="#ff4d4f" fill="#ff4d4f" name="失敗" />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                ) : (
+                                    <Empty description="暫無每小時數據" />
+                                )}
+                            </TabPane>
+                        </Tabs>
                     </Card>
                 </Col>
 
@@ -274,7 +302,7 @@ const NASAnalyticsPage = () => {
                 <Col xs={24} lg={8}>
                     <Card title="連線狀態分佈" extra={<Text type="secondary">總計</Text>}>
                         {pieData.length > 0 && pieData.some(d => d.value > 0) ? (
-                            <ResponsiveContainer width="100%" height={300}>
+                            <ResponsiveContainer width="100%" height={350}>
                                 <PieChart>
                                     <Pie
                                         data={pieData}
@@ -282,7 +310,7 @@ const NASAnalyticsPage = () => {
                                         cy="50%"
                                         labelLine={false}
                                         label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
-                                        outerRadius={80}
+                                        outerRadius={100}
                                         fill="#8884d8"
                                         dataKey="value"
                                     >
@@ -292,27 +320,6 @@ const NASAnalyticsPage = () => {
                                     </Pie>
                                     <Tooltip />
                                 </PieChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <Empty description="暫無數據" />
-                        )}
-                    </Card>
-                </Col>
-
-                {/* 每小時統計 */}
-                <Col xs={24}>
-                    <Card title="每小時連線統計" extra={<Text type="secondary">最近 24 小時</Text>}>
-                        {statistics?.hourly_stats && statistics.hourly_stats.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={300}>
-                                <AreaChart data={statistics.hourly_stats}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="hour" angle={-45} textAnchor="end" height={80} />
-                                    <YAxis />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Area type="monotone" dataKey="success" stackId="1" stroke="#52c41a" fill="#52c41a" name="成功" />
-                                    <Area type="monotone" dataKey="failed" stackId="1" stroke="#ff4d4f" fill="#ff4d4f" name="失敗" />
-                                </AreaChart>
                             </ResponsiveContainer>
                         ) : (
                             <Empty description="暫無數據" />
