@@ -134,7 +134,7 @@ class DHCPScope(models.Model):
 
 
 class DHCPLog(models.Model):
-    """DHCP 日誌模型 - 7天滾動視窗"""
+    """DHCP 日誌模型 - 15天滾動視窗"""
     
     LEVEL_CHOICES = [
         ('INFO', 'Information'),
@@ -302,7 +302,7 @@ class IPXEServer(models.Model):
 
 
 class IPXELog(models.Model):
-    """IPXE 日誌模型 - 7天滾動視窗"""
+    """IPXE 日誌模型 - 15天滾動視窗"""
     
     LOG_TYPE_CHOICES = [
         ('mac', 'MAC 管理'),

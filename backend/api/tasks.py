@@ -105,7 +105,7 @@ def sync_dhcp_logs_task(self, server_id, limit=500):
     time_limit=3600,  # 硬限制 1 小時
     soft_time_limit=3300  # 軟限制 55 分鐘
 )
-def cleanup_old_logs_task(self, days=7):
+def cleanup_old_logs_task(self, days=15):
     """
     清理舊的 DHCP 日誌
     

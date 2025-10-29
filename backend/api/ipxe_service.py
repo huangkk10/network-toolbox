@@ -195,7 +195,7 @@ class IPXEService:
             self.server.save()
             return {'error': str(e)}
     
-    def cleanup_old_logs(self, days: int = 7) -> int:
+    def cleanup_old_logs(self, days: int = 15) -> int:
         """清理超過指定天數的舊日誌"""
         try:
             cutoff_date = timezone.now() - timedelta(days=days)
