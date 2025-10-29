@@ -1,20 +1,38 @@
 """
-Library Utils - 工具函數模組
+工具函數模組
 
-本模組包含可重用的工具函數，適用於整個專案。
-
-可用工具：
-- mac_utils: MAC 地址處理工具
+提供各種可重用的工具函數，包括：
+- MAC 地址解析和驗證
+- 日期時間解析和格式化
 """
 
+# MAC 地址工具
 from .mac_utils import (
     parse_windows_client_id,
     normalize_mac_address,
     validate_mac_address,
 )
 
+# 日期時間工具
+from .datetime_utils import (
+    parse_windows_lease_expiry,
+    parse_lease_expiry,  # 向後兼容別名
+    format_datetime_for_display,
+    is_expired,
+    get_remaining_time,
+    format_remaining_time,
+)
+
 __all__ = [
+    # MAC 工具
     'parse_windows_client_id',
     'normalize_mac_address',
     'validate_mac_address',
+    # 日期時間工具
+    'parse_windows_lease_expiry',
+    'parse_lease_expiry',
+    'format_datetime_for_display',
+    'is_expired',
+    'get_remaining_time',
+    'format_remaining_time',
 ]

@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from django.utils import timezone
 from library.utils.mac_utils import parse_windows_client_id
+from library.utils.datetime_utils import parse_windows_lease_expiry
 from .models import DHCPLease, DHCPServer
 
 logger = logging.getLogger(__name__)
@@ -131,36 +132,16 @@ ConvertTo-Json -Compress
         """
         解析租約到期時間
         
+        [已棄用] 使用 library.utils.datetime_utils.parse_windows_lease_expiry() 代替
+        保留此方法以保持向後兼容性
+        
         Args:
             expiry_str: 時間字串
         
         Returns:
             datetime 對象
         """
-        if not expiry_str:
-            # 如果沒有到期時間，設為 24 小時後
-            return timezone.now() + timezone.timedelta(hours=24)
-        
-        try:
-            # PowerShell DateTime 格式：/Date(1698409200000)/
-            if '/Date(' in expiry_str:
-                timestamp = int(expiry_str.split('(')[1].split(')')[0]) / 1000
-                return datetime.fromtimestamp(timestamp, tz=timezone.get_current_timezone())
-            
-            # 嘗試其他常見格式
-            for fmt in ['%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %I:%M:%S %p']:
-                try:
-                    return timezone.make_aware(datetime.strptime(expiry_str, fmt))
-                except ValueError:
-                    continue
-            
-            # 無法解析，返回默認值
-            logger.warning(f'無法解析租約到期時間: {expiry_str}')
-            return timezone.now() + timezone.timedelta(hours=24)
-        
-        except Exception as e:
-            logger.error(f'租約到期時間解析失敗: {str(e)}')
-            return timezone.now() + timezone.timedelta(hours=24)
+        return parse_windows_lease_expiry(expiry_str)
     
     def sync_leases_to_db(self, lease_data_list):
         """

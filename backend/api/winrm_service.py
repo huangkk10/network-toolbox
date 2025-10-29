@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from django.utils import timezone
 from library.utils.mac_utils import parse_windows_client_id
+from library.utils.datetime_utils import parse_windows_lease_expiry
 
 logger = logging.getLogger(__name__)
 
@@ -156,17 +157,13 @@ ConvertTo-Json -Compress
         return parse_windows_client_id(client_id)
     
     def parse_lease_expiry(self, expiry_str):
-        """解析租約到期時間"""
-        if not expiry_str:
-            return timezone.now() + timedelta(hours=24)
+        """
+        解析租約到期時間
         
-        try:
-            dt = datetime.strptime(expiry_str, '%Y-%m-%d %H:%M:%S')
-            return timezone.make_aware(dt)
-        
-        except Exception as e:
-            logger.error(f'租約到期時間解析失敗: {str(e)}')
-            return timezone.now() + timedelta(hours=24)
+        [已棄用] 使用 library.utils.datetime_utils.parse_windows_lease_expiry() 代替
+        保留此方法以保持向後兼容性
+        """
+        return parse_windows_lease_expiry(expiry_str)
     
     def sync_leases_to_db(self):
         """同步租約到資料庫（與 SSH 版本相同）"""

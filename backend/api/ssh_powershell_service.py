@@ -8,6 +8,7 @@ import logging
 from django.utils import timezone
 from datetime import datetime, timedelta
 from library.utils.mac_utils import parse_windows_client_id
+from library.utils.datetime_utils import parse_windows_lease_expiry
 
 logger = logging.getLogger(__name__)
 
@@ -196,9 +197,9 @@ class WindowsSSHPowerShellService:
     def parse_lease_expiry(self, expiry_str):
         """
         解析租約到期時間
-        支援兩種格式：
-        1. Windows JSON 格式: /Date(1761993082644)/
-        2. 標準格式: yyyy-MM-dd HH:mm:ss
+        
+        [已棄用] 使用 library.utils.datetime_utils.parse_windows_lease_expiry() 代替
+        保留此方法以保持向後兼容性
         
         Args:
             expiry_str: 時間字串
@@ -206,30 +207,7 @@ class WindowsSSHPowerShellService:
         Returns:
             datetime 對象（帶時區）
         """
-        if not expiry_str:
-            return timezone.now() + timedelta(hours=24)
-        
-        try:
-            # 處理 /Date(timestamp)/ 格式
-            if isinstance(expiry_str, str) and expiry_str.startswith('/Date('):
-                # 提取毫秒時間戳：/Date(1761993082644)/
-                timestamp_str = expiry_str[6:-2]  # 移除 "/Date(" 和 ")/"
-                timestamp_ms = int(timestamp_str)
-                timestamp_sec = timestamp_ms / 1000.0
-                
-                # 從 UTC 時間戳創建 aware datetime
-                from datetime import timezone as dt_timezone
-                dt = datetime.fromtimestamp(timestamp_sec, tz=dt_timezone.utc)
-                return dt
-            
-            # 處理標準格式: yyyy-MM-dd HH:mm:ss
-            dt = datetime.strptime(str(expiry_str), '%Y-%m-%d %H:%M:%S')
-            # 使用 Django timezone 使其 aware
-            return timezone.make_aware(dt)
-        
-        except Exception as e:
-            logger.error(f'租約到期時間解析失敗 ({expiry_str}): {str(e)}')
-            return timezone.now() + timedelta(hours=24)
+        return parse_windows_lease_expiry(expiry_str)
     
     def sync_leases_to_db(self):
         """
