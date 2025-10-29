@@ -73,108 +73,37 @@ class IPXEService:
         """
         解析 ipxe_mac-flask 容器日誌
         
+        使用 library.utils.log_parser.IPXELogParser 進行解析。
+        
         格式：10.252.170.188 - - [28/Oct/2025:10:18:24 +0000] "GET /iPxeMac/Set?MAC=10:FF:E0:E2:91:56&BOOT=1 HTTP/1.1" 200 7 "-" "ansible-httpget"
+        
+        Returns:
+            dict: 解析後的日誌資料，包含 timestamp, client_ip, mac_address, boot_flag 等欄位
         """
-        pattern = r'(\d+\.\d+\.\d+\.\d+) - - \[([^\]]+)\] "([A-Z]+) ([^\s]+) ([^"]+)" (\d+) (\d+) "-" "([^"]+)"'
-        match = re.match(pattern, line)
+        from library.utils import IPXELogParser
         
-        if not match:
-            return None
+        # 使用新的 Log Parser 模組
+        result = IPXELogParser.parse_line(line, log_type='MAC')
         
-        client_ip, timestamp_str, method, url, protocol, status_code, bytes_sent, user_agent = match.groups()
-        
-        # 解析時間
-        try:
-            timestamp = datetime.strptime(timestamp_str, '%d/%b/%Y:%H:%M:%S %z')
-        except:
-            return None
-        
-        # 解析 URL 參數
-        mac_address = None
-        boot_flag = None
-        action = None
-        
-        if '/iPxeMac/Set' in url:
-            action = 'set_mac'
-            mac_match = re.search(r'MAC=([0-9A-Fa-f:]+)', url)
-            boot_match = re.search(r'BOOT=(\d)', url)
-            if mac_match:
-                mac_address = mac_match.group(1).lower()
-            if boot_match:
-                boot_flag = int(boot_match.group(1))
-        elif '/iPxeMac/Get' in url:
-            action = 'get_mac'
-            mac_match = re.search(r'MAC=([0-9A-Fa-f:]+)', url)
-            if mac_match:
-                mac_address = mac_match.group(1).lower()
-        
-        return {
-            'log_type': 'MAC',  # 大寫以符合模型定義
-            'timestamp': timestamp,
-            'client_ip': client_ip,
-            'method': method,
-            'url': url,
-            'action': action or 'other',
-            'status_code': int(status_code),
-            'bytes_sent': int(bytes_sent),
-            'user_agent': user_agent,
-            'mac_address': mac_address or '',
-            'boot_flag': boot_flag,
-            'file_requested': '',
-            'raw': line,
-        }
+        return result
     
     def parse_ipxe_log(self, line: str) -> dict:
         """
         解析 ipxe 容器日誌
         
+        使用 library.utils.log_parser.IPXELogParser 進行解析。
+        
         格式：10.250.53.25 - - [28/Oct/2025:10:18:57 +0000] "GET /boot.ipxe HTTP/1.1" 200 116 "-" "iPXE/1.21.1+ (g83449)" "-"
+        
+        Returns:
+            dict: 解析後的日誌資料，包含 timestamp, client_ip, method, url, status_code 等欄位
         """
-        pattern = r'(\d+\.\d+\.\d+\.\d+) - - \[([^\]]+)\] "([A-Z]+) ([^\s]+) ([^"]+)" (\d+) (\d+) "-" "([^"]+)"'
-        match = re.match(pattern, line)
+        from library.utils import IPXELogParser
         
-        if not match:
-            return None
+        # 使用新的 Log Parser 模組
+        result = IPXELogParser.parse_line(line, log_type='BOOT')
         
-        client_ip, timestamp_str, method, url, protocol, status_code, bytes_sent, user_agent = match.groups()
-        
-        # 解析時間
-        try:
-            timestamp = datetime.strptime(timestamp_str, '%d/%b/%Y:%H:%M:%S %z')
-        except:
-            return None
-        
-        # 解析請求的檔案
-        file_requested = url.lstrip('/')
-        
-        # 判斷 action
-        action = 'other'
-        if 'boot.ipxe' in file_requested:
-            action = 'boot.ipxe'
-        elif 'wimboot' in file_requested:
-            action = 'wimboot'
-        elif 'BCD' in file_requested:
-            action = 'BCD'
-        elif 'boot.sdi' in file_requested:
-            action = 'boot.sdi'
-        elif '.wim' in file_requested.lower():
-            action = 'wim_file'
-        
-        return {
-            'log_type': 'BOOT',  # 大寫以符合模型定義
-            'timestamp': timestamp,
-            'client_ip': client_ip,
-            'method': method,
-            'url': url,
-            'action': action,
-            'status_code': int(status_code),
-            'bytes_sent': int(bytes_sent),
-            'user_agent': user_agent,
-            'mac_address': '',
-            'boot_flag': None,
-            'file_requested': file_requested,
-            'raw': line,
-        }
+        return result
     
     def collect_logs_from_container(self, container_name: str, log_type: str, limit: int = 1000) -> int:
         """從指定容器收集日誌"""

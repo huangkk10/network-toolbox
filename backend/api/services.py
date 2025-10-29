@@ -348,7 +348,23 @@ class DHCPDataService:
 
 
 class DHCPLogParser:
-    """DHCP 日誌解析器"""
+    """
+    DHCP 日誌解析器
+    
+    .. deprecated:: 2025-10-30
+        請使用 `library.utils.log_parser.DHCPLogParser` 代替。
+        此類別將在未來版本中移除。
+        
+        遷移範例::
+        
+            # 舊方式
+            from api.services import DHCPLogParser
+            logs = DHCPLogParser.parse_log_file(content, limit=1000)
+            
+            # 新方式
+            from library.utils import parse_dhcp_log
+            logs = parse_dhcp_log(content, limit=1000)
+    """
     
     # 日誌等級對應
     LOG_LEVELS = {
@@ -474,6 +490,20 @@ class DHCPLogParser:
 class WindowsDHCPLogParser:
     """
     Windows DHCP Server 日誌解析器
+    
+    .. deprecated:: 2025-10-30
+        請使用 `library.utils.log_parser.WindowsDHCPLogParser` 代替。
+        此類別將在未來版本中移除。
+        
+        遷移範例::
+        
+            # 舊方式
+            from api.services import WindowsDHCPLogParser
+            logs = WindowsDHCPLogParser.parse_log_lines(lines, limit=1000)
+            
+            # 新方式
+            from library.utils import parse_windows_dhcp_log
+            logs = parse_windows_dhcp_log(content, limit=1000)
     
     Windows DHCP 日誌格式範例（完整版）：
     ID,Date,Time,Description,IP,Hostname,MAC,Username,TransactionID,QResult,Probationtime,CorrelationID,Dhcid,
@@ -716,8 +746,11 @@ class DHCPLogService:
                     logger.warning(f'無法讀取 Windows DHCP 日誌 ({self.server.ip_address})')
                     return stats
                 
-                # 解析日誌
-                logs = WindowsDHCPLogParser.parse_log_lines(log_lines, limit=limit)
+                # 使用新的 Log Parser 模組解析日誌
+                from library.utils import parse_windows_dhcp_log
+                # 將 log_lines 列表轉換為字串（以換行符分隔）
+                content = '\n'.join(log_lines)
+                logs = parse_windows_dhcp_log(content, limit=limit)
                 stats['total'] = len(logs)
                 
                 # 批次插入資料庫（避免重複）
@@ -888,7 +921,9 @@ class DHCPLogService:
             with open(log_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            logs = DHCPLogParser.parse_log_file(content, limit=limit * 2)  # 多讀一些以備篩選
+            # 使用新的 Log Parser 模組
+            from library.utils import parse_dhcp_log
+            logs = parse_dhcp_log(content, limit=limit * 2)  # 多讀一些以備篩選
             
             # 篩選日誌等級
             if level and level != 'ALL':
@@ -970,8 +1005,10 @@ class DHCPLogService:
                     logger.warning(f'無法讀取 Windows DHCP 日誌 ({self.server.ip_address})')
                     return []
                 
-                # 解析 Windows DHCP 日誌（增加解析量以備篩選）
-                logs = WindowsDHCPLogParser.parse_log_lines(log_lines, limit=limit * 3)
+                # 使用新的 Log Parser 模組解析 Windows DHCP 日誌（增加解析量以備篩選）
+                from library.utils import parse_windows_dhcp_log
+                content = '\n'.join(log_lines)
+                logs = parse_windows_dhcp_log(content, limit=limit * 3)
                 
                 # 篩選日誌等級
                 if level and level != 'ALL':
