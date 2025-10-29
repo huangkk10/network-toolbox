@@ -1,0 +1,18 @@
+<svg width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+  <!-- 藍色圓形背景 -->
+  <circle cx="128" cy="128" r="120" fill="#1890ff"/>
+  
+  <!-- 白色房子圖示 -->
+  <g transform="translate(128, 128)">
+    <!-- 房頂 -->
+    <path d="M -40,-20 L 0,-50 L 40,-20 Z" fill="white"/>
+    <!-- 房身 -->
+    <rect x="-35" y="-20" width="70" height="60" fill="white"/>
+    <!-- 門 -->
+    <rect x="-10" y="10" width="20" height="30" fill="#1890ff"/>
+    <!-- 窗戶左 -->
+    <rect x="-28" y="-5" width="15" height="15" fill="#1890ff"/>
+    <!-- 窗戶右 -->
+    <rect x="13" y="-5" width="15" height="15" fill="#1890ff"/>
+  </g>
+</svg>

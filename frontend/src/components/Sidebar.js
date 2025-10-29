@@ -142,8 +142,10 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                     <div className="logo-expanded">
                         <Avatar
                             size={48}
+                            src="/management.png"
                             icon={<HomeOutlined />}
                             className="logo-icon"
+                            style={{ backgroundColor: 'transparent' }}
                         />
                         <div className="logo-text">
                             <Text className="logo-title">NT</Text>
@@ -155,8 +157,10 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                     <div className="logo-collapsed">
                         <Avatar
                             size={40}
+                            src="/management.png"
                             icon={<HomeOutlined />}
                             className="logo-icon"
+                            style={{ backgroundColor: 'transparent' }}
                         />
                         <Text className="logo-title-small">NT</Text>
                     </div>
