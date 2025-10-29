@@ -319,6 +319,57 @@ const NASAnalyticsPage = () => {
                         )}
                     </Card>
                 </Col>
+
+                {/* 傳輸速度趨勢圖 */}
+                <Col xs={24}>
+                    <Card title="傳輸速度趨勢" extra={<Text type="secondary">上傳/下載速度（MB/s）</Text>}>
+                        {statistics?.speed_trends && statistics.speed_trends.length > 0 ? (
+                            <ResponsiveContainer width="100%" height={350}>
+                                <LineChart data={statistics.speed_trends}>
+                                    <CartesianGrid strokeDasharray="3 3" />
+                                    <XAxis 
+                                        dataKey="time" 
+                                        angle={-45} 
+                                        textAnchor="end" 
+                                        height={80}
+                                        style={{ fontSize: '12px' }}
+                                    />
+                                    <YAxis 
+                                        label={{ value: '速度 (MB/s)', angle: -90, position: 'insideLeft' }}
+                                        domain={[0, 'auto']}
+                                    />
+                                    <Tooltip 
+                                        formatter={(value) => value ? `${value.toFixed(2)} MB/s` : 'N/A'}
+                                        labelFormatter={(label) => `時間: ${label}`}
+                                    />
+                                    <Legend />
+                                    <Line 
+                                        type="monotone" 
+                                        dataKey="upload_speed" 
+                                        stroke="#1890ff" 
+                                        strokeWidth={2.5}
+                                        name="上傳速度" 
+                                        dot={{ r: 3 }}
+                                        activeDot={{ r: 5 }}
+                                        connectNulls
+                                    />
+                                    <Line 
+                                        type="monotone" 
+                                        dataKey="download_speed" 
+                                        stroke="#722ed1" 
+                                        strokeWidth={2.5}
+                                        name="下載速度" 
+                                        dot={{ r: 3 }}
+                                        activeDot={{ r: 5 }}
+                                        connectNulls
+                                    />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <Empty description="暫無速度數據" />
+                        )}
+                    </Card>
+                </Col>
             </Row>
 
             {/* 詳細記錄表格 */}

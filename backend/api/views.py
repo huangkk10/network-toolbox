@@ -890,6 +890,59 @@ class NASConnectionLogViewSet(viewsets.ModelViewSet):
                     'failed': hour_total - hour_success,
                 })
             
+            # 速度趨勢（根據時間範圍動態調整）
+            speed_trends = []
+            
+            # 根據天數決定採樣間隔
+            if days <= 1:
+                # 1 天內：每 5 分鐘一個數據點
+                interval_minutes = 5
+                num_points = int((days * 24 * 60) / interval_minutes)
+            elif days <= 3:
+                # 3 天內：每 15 分鐘一個數據點
+                interval_minutes = 15
+                num_points = int((days * 24 * 60) / interval_minutes)
+            elif days <= 7:
+                # 7 天內：每小時一個數據點
+                interval_minutes = 60
+                num_points = int((days * 24 * 60) / interval_minutes)
+            else:
+                # 7 天以上：每 3 小時一個數據點
+                interval_minutes = 180
+                num_points = int((days * 24 * 60) / interval_minutes)
+            
+            # 生成速度趨勢數據
+            for i in range(num_points - 1, -1, -1):
+                period_end = timezone.now() - timedelta(minutes=i * interval_minutes)
+                period_start = period_end - timedelta(minutes=interval_minutes)
+                
+                period_logs = logs.filter(
+                    timestamp__gte=period_start,
+                    timestamp__lt=period_end,
+                    status='success'
+                )
+                
+                # 計算該時段的平均速度
+                avg_upload = period_logs.filter(
+                    upload_speed__isnull=False
+                ).aggregate(Avg('upload_speed'))['upload_speed__avg']
+                
+                avg_download = period_logs.filter(
+                    download_speed__isnull=False
+                ).aggregate(Avg('download_speed'))['download_speed__avg']
+                
+                # 格式化時間標籤
+                if interval_minutes < 60:
+                    time_label = period_end.strftime('%m-%d %H:%M')
+                else:
+                    time_label = period_end.strftime('%m-%d %H:00')
+                
+                speed_trends.append({
+                    'time': time_label,
+                    'upload_speed': round(avg_upload, 2) if avg_upload else None,
+                    'download_speed': round(avg_download, 2) if avg_download else None,
+                })
+            
             return Response({
                 'total_records': total_records,
                 'success_count': success_count,
@@ -900,6 +953,7 @@ class NASConnectionLogViewSet(viewsets.ModelViewSet):
                 'avg_download_speed': round(avg_download_speed, 2),
                 'daily_stats': daily_stats,
                 'hourly_stats': hourly_stats,
+                'speed_trends': speed_trends,
             })
             
         except Exception as e:
