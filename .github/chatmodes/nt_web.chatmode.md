@@ -409,6 +409,168 @@ import {
 
 ## 開發指導原則
 
+### 測試文件管理規範
+
+**所有測試文件必須放置在 `tests/` 目錄下，並按照功能分類組織**
+
+#### 測試目錄結構
+
+```
+tests/
+├── unit/                  # 單元測試
+│   ├── backend/          # 後端單元測試
+│   │   ├── test_models.py
+│   │   ├── test_serializers.py
+│   │   └── test_services.py
+│   └── frontend/         # 前端單元測試
+│       └── components/
+├── integration/           # 整合測試
+│   ├── api/              # API 整合測試
+│   │   ├── test_dhcp_api.py
+│   │   └── test_logs_api.py
+│   └── services/         # 服務整合測試
+│       ├── test_dhcp_ssh.py
+│       └── test_nas_connection.py
+├── e2e/                   # 端對端測試
+│   └── test_workflows.py
+├── performance/           # 性能測試
+│   └── test_load.py
+└── fixtures/              # 測試數據
+    └── sample_data.json
+```
+
+#### 測試文件放置規則
+
+1. **單元測試**（Unit Tests）
+   - **位置**：`tests/unit/backend/` 或 `tests/unit/frontend/`
+   - **適用於**：測試單一函數、類別或組件
+   - **命名**：`test_<模組名稱>.py`
+   - **範例**：`tests/unit/backend/test_models.py`
+
+2. **整合測試**（Integration Tests）
+   - **位置**：`tests/integration/`
+   - **適用於**：測試多個組件之間的交互、API 測試、服務連接測試
+   - **命名**：`test_<功能名稱>.py`
+   - **範例**：`tests/integration/api/test_dhcp_api.py`
+
+3. **端對端測試**（E2E Tests）
+   - **位置**：`tests/e2e/`
+   - **適用於**：測試完整的使用者流程
+   - **命名**：`test_<流程名稱>.py`
+   - **範例**：`tests/e2e/test_dhcp_workflow.py`
+
+4. **性能測試**（Performance Tests）
+   - **位置**：`tests/performance/`
+   - **適用於**：負載測試、壓力測試、基準測試
+   - **命名**：`test_<測試類型>.py`
+   - **範例**：`tests/performance/test_api_load.py`
+
+#### 測試文件命名規範
+
+- **所有測試文件必須以 `test_` 開頭**
+- **使用 snake_case**：`test_feature_name.py`
+- **描述性命名**：清楚說明測試的內容
+- **範例**：
+  - ✅ `test_dhcp_lease_creation.py`
+  - ✅ `test_user_authentication.py`
+  - ❌ `dhcp_test.py`
+  - ❌ `TestFile.py`
+
+#### 測試代碼規範
+
+**Django 後端測試**：
+```python
+# tests/unit/backend/test_models.py
+from django.test import TestCase
+from api.models import DHCPServer
+
+class DHCPServerModelTest(TestCase):
+    def setUp(self):
+        """測試初始化"""
+        self.server = DHCPServer.objects.create(
+            name='Test Server',
+            ip_address='192.168.1.1'
+        )
+    
+    def test_server_creation(self):
+        """測試伺服器創建"""
+        self.assertEqual(self.server.name, 'Test Server')
+        self.assertEqual(self.server.ip_address, '192.168.1.1')
+    
+    def tearDown(self):
+        """測試清理"""
+        self.server.delete()
+```
+
+**React 前端測試**：
+```javascript
+// tests/unit/frontend/components/DHCPTable.test.js
+import { render, screen } from '@testing-library/react';
+import DHCPTable from '@/components/DHCPTable';
+
+describe('DHCPTable Component', () => {
+    test('renders table with data', () => {
+        const data = [
+            { id: 1, name: 'Server 1', ip: '192.168.1.1' }
+        ];
+        
+        render(<DHCPTable data={data} />);
+        expect(screen.getByText('Server 1')).toBeInTheDocument();
+    });
+});
+```
+
+**整合測試**：
+```python
+# tests/integration/api/test_dhcp_api.py
+from rest_framework.test import APITestCase
+from rest_framework import status
+
+class DHCPAPITest(APITestCase):
+    def test_get_dhcp_servers(self):
+        """測試獲取 DHCP 伺服器列表"""
+        response = self.client.get('/api/dhcp-servers/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+```
+
+#### 執行測試
+
+```bash
+# 執行所有測試
+python manage.py test tests/
+
+# 執行特定類型的測試
+python manage.py test tests/unit/
+python manage.py test tests/integration/
+
+# 執行特定測試文件
+python manage.py test tests/unit/backend/test_models.py
+
+# 前端測試
+npm test                    # 執行所有前端測試
+npm test -- --watch         # 監聽模式
+```
+
+#### AI 創建測試文件時的說明
+
+**當您要求 AI 創建測試文件時，請明確指定：**
+
+- **測試類型**：單元測試、整合測試、E2E 測試等
+- **測試目標**：要測試的功能或組件
+- **測試範圍**：前端還是後端
+
+**範例請求**：
+- ✅ "為 DHCPServer 模型創建單元測試"（會自動放在 `tests/unit/backend/`）
+- ✅ "創建 DHCP API 的整合測試"（會自動放在 `tests/integration/api/`）
+- ✅ "創建使用者登入流程的 E2E 測試"（會自動放在 `tests/e2e/`）
+- ❌ "創建一個測試文件"（不明確）
+
+**AI 會自動：**
+1. 根據測試類型選擇合適的 `tests/` 子目錄
+2. 使用正確的命名規範（`test_` 前綴）
+3. 生成符合專案規範的測試代碼
+4. 包含必要的導入和設置代碼
+
 ### 添加新功能時
 
 1. **前端頁面**：
