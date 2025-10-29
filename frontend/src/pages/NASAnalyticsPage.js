@@ -53,6 +53,7 @@ const NASAnalyticsPage = () => {
     const [statistics, setStatistics] = useState(null);
     const [logs, setLogs] = useState([]);
     const [timeRange, setTimeRange] = useState(7); // 默認7天
+    const [speedChartRange, setSpeedChartRange] = useState(7); // 傳輸速度圖表的時間範圍
 
     useEffect(() => {
         fetchData();
@@ -67,6 +68,10 @@ const NASAnalyticsPage = () => {
             // 獲取統計資料
             const statsResponse = await axios.get(`/api/nas-logs/statistics/?days=${timeRange}`);
             setStatistics(statsResponse.data);
+            
+            // 除錯：輸出速度趨勢數據
+            console.log('速度趨勢數據:', statsResponse.data.speed_trends);
+            console.log('速度趨勢數據數量:', statsResponse.data.speed_trends?.length || 0);
 
             // 獲取記錄列表
             const logsResponse = await axios.get(`/api/nas-logs/?days=${timeRange}`);
@@ -77,6 +82,45 @@ const NASAnalyticsPage = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    // 根據選擇的時間範圍過濾傳輸速度數據
+    const getFilteredSpeedData = () => {
+        if (!statistics?.speed_trends || statistics.speed_trends.length === 0) {
+            return [];
+        }
+
+        // 如果時間範圍等於或大於頁面全局設定，直接返回所有數據
+        if (speedChartRange >= timeRange) {
+            return statistics.speed_trends;
+        }
+
+        // 否則，只顯示最後 N 個數據點
+        const now = new Date();
+        const cutoffDate = new Date(now.getTime() - speedChartRange * 24 * 60 * 60 * 1000);
+        
+        // 嘗試解析時間字串（格式：MM-DD HH:MM 或 MM-DD HH:00）
+        return statistics.speed_trends.filter(item => {
+            try {
+                const currentYear = now.getFullYear();
+                // 將 "10-28 14:00" 轉換為完整日期
+                const [datePart, timePart] = item.time.split(' ');
+                const [month, day] = datePart.split('-');
+                const [hour, minute] = timePart.split(':');
+                
+                const itemDate = new Date(currentYear, parseInt(month) - 1, parseInt(day), parseInt(hour), parseInt(minute) || 0);
+                
+                // 處理跨年的情況
+                if (itemDate > now) {
+                    itemDate.setFullYear(currentYear - 1);
+                }
+                
+                return itemDate >= cutoffDate;
+            } catch (error) {
+                console.error('Error parsing date:', item.time, error);
+                return true; // 如果解析失敗，保留該數據點
+            }
+        });
     };
 
     // 表格列定義
@@ -329,51 +373,79 @@ const NASAnalyticsPage = () => {
 
                 {/* 傳輸速度趨勢圖 */}
                 <Col xs={24}>
-                    <Card title="傳輸速度趨勢" extra={<Text type="secondary">上傳/下載速度（MB/s）</Text>}>
+                    <Card 
+                        title="傳輸速度趨勢" 
+                        extra={
+                            <Space>
+                                <Text type="secondary">上傳/下載速度（MB/s）</Text>
+                                <Select 
+                                    value={speedChartRange} 
+                                    onChange={setSpeedChartRange} 
+                                    style={{ width: 120 }}
+                                    size="small"
+                                >
+                                    <Option value={1}>最近 1 天</Option>
+                                    <Option value={3}>最近 3 天</Option>
+                                    <Option value={7}>最近 1 週</Option>
+                                    <Option value={14}>最近 2 週</Option>
+                                </Select>
+                            </Space>
+                        }
+                    >
                         {statistics?.speed_trends && statistics.speed_trends.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={350}>
-                                <LineChart data={statistics.speed_trends}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis 
-                                        dataKey="time" 
-                                        angle={-45} 
-                                        textAnchor="end" 
-                                        height={80}
-                                        style={{ fontSize: '12px' }}
-                                    />
-                                    <YAxis 
-                                        label={{ value: '速度 (MB/s)', angle: -90, position: 'insideLeft' }}
-                                        domain={[0, 'auto']}
-                                    />
-                                    <Tooltip 
-                                        formatter={(value) => value ? `${value.toFixed(2)} MB/s` : 'N/A'}
-                                        labelFormatter={(label) => `時間: ${label}`}
-                                    />
-                                    <Legend />
-                                    <Line 
-                                        type="monotone" 
-                                        dataKey="upload_speed" 
-                                        stroke="#1890ff" 
-                                        strokeWidth={2.5}
-                                        name="上傳速度" 
-                                        dot={{ r: 3 }}
-                                        activeDot={{ r: 5 }}
-                                        connectNulls
-                                    />
-                                    <Line 
-                                        type="monotone" 
-                                        dataKey="download_speed" 
-                                        stroke="#722ed1" 
-                                        strokeWidth={2.5}
-                                        name="下載速度" 
-                                        dot={{ r: 3 }}
-                                        activeDot={{ r: 5 }}
-                                        connectNulls
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
+                            getFilteredSpeedData().length > 0 ? (
+                                <ResponsiveContainer width="100%" height={350}>
+                                    <LineChart data={getFilteredSpeedData()}>
+                                        <CartesianGrid strokeDasharray="3 3" />
+                                        <XAxis 
+                                            dataKey="time" 
+                                            angle={-45} 
+                                            textAnchor="end" 
+                                            height={80}
+                                            style={{ fontSize: '12px' }}
+                                        />
+                                        <YAxis 
+                                            label={{ value: '速度 (MB/s)', angle: -90, position: 'insideLeft' }}
+                                            domain={[0, 'auto']}
+                                        />
+                                        <Tooltip 
+                                            formatter={(value) => value ? `${value.toFixed(2)} MB/s` : 'N/A'}
+                                            labelFormatter={(label) => `時間: ${label}`}
+                                        />
+                                        <Legend />
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="upload_speed" 
+                                            stroke="#1890ff" 
+                                            strokeWidth={2.5}
+                                            name="上傳速度" 
+                                            dot={{ r: 3 }}
+                                            activeDot={{ r: 5 }}
+                                            connectNulls
+                                        />
+                                        <Line 
+                                            type="monotone" 
+                                            dataKey="download_speed" 
+                                            stroke="#722ed1" 
+                                            strokeWidth={2.5}
+                                            name="下載速度" 
+                                            dot={{ r: 3 }}
+                                            activeDot={{ r: 5 }}
+                                            connectNulls
+                                        />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <Empty 
+                                    description={`選定時間範圍內暫無數據，請選擇較長的時間範圍或等待數據採集`}
+                                    style={{ padding: '80px 0' }}
+                                />
+                            )
                         ) : (
-                            <Empty description="暫無速度數據" />
+                            <Empty 
+                                description="暫無速度數據" 
+                                style={{ padding: '80px 0' }}
+                            />
                         )}
                     </Card>
                 </Col>
