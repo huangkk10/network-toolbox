@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { Card, Tabs, Select, Button, Space, Typography, message } from 'antd';
 import {
     BarChartOutlined,
-    UnorderedListOutlined,
     FileTextOutlined,
     LineChartOutlined,
     CloudServerOutlined,
     ReloadOutlined,
+    GlobalOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 
@@ -14,6 +14,7 @@ import axios from 'axios';
 import OverviewTab from '../components/ipxe-analytics/OverviewTab';
 import LogsTab from '../components/ipxe-analytics/LogsTab';
 import StatisticsTab from '../components/ipxe-analytics/StatisticsTab';
+import NetworkQualityTab from '../components/ipxe-analytics/NetworkQualityTab';
 
 const { Title } = Typography;
 
@@ -114,6 +115,11 @@ const IPXEAnalyticsPage = () => {
             key: 'statistics',
             label: <span><LineChartOutlined /> 統計分析</span>,
             children: <StatisticsTab serverId={selectedServer} />,
+        },
+        {
+            key: 'network-quality',
+            label: <span><GlobalOutlined /> 網路品質</span>,
+            children: <NetworkQualityTab serverId={selectedServer} />,
         },
     ];
 

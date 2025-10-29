@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import DHCPServer, DHCPLease, NASConnectionLog, IPXEServer, IPXELog, IPXEStatistics
+from .models import DHCPServer, DHCPLease, NASConnectionLog, IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -93,6 +93,18 @@ class IPXEStatisticsSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = IPXEStatistics
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+
+class IPXENetworkQualitySerializer(serializers.ModelSerializer):
+    """IPXE 網路品質序列化器"""
+    
+    server_name = serializers.CharField(source='server.name', read_only=True)
+    server_ip = serializers.CharField(source='server.ip_address', read_only=True)
+    
+    class Meta:
+        model = IPXENetworkQuality
         fields = '__all__'
         read_only_fields = ('created_at',)
 

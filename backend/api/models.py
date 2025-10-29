@@ -398,3 +398,60 @@ class IPXEStatistics(models.Model):
     
     def __str__(self):
         return f"{self.server.name} - {self.timestamp} ({self.total_requests} requests)"
+
+
+class IPXENetworkQuality(models.Model):
+    """IPXE 伺服器網路品質監控記錄 - 每5分鐘記錄一次，保留2週數據"""
+    
+    STATUS_CHOICES = [
+        ('success', '成功'),
+        ('failed', '失敗'),
+    ]
+    
+    server = models.ForeignKey(
+        IPXEServer,
+        on_delete=models.CASCADE,
+        related_name='network_quality_logs',
+        verbose_name='所屬伺服器'
+    )
+    
+    timestamp = models.DateTimeField(verbose_name='記錄時間', db_index=True)
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        verbose_name='連線狀態',
+        db_index=True
+    )
+    
+    # Ping 測試結果
+    ping_latency = models.FloatField(null=True, blank=True, verbose_name='Ping 延遲 (ms)')
+    ping_packet_loss = models.FloatField(null=True, blank=True, verbose_name='丟包率 (%)')
+    
+    # HTTP 測試結果
+    http_response_time = models.FloatField(null=True, blank=True, verbose_name='HTTP 響應時間 (ms)')
+    http_status_code = models.IntegerField(null=True, blank=True, verbose_name='HTTP 狀態碼')
+    
+    # SSH 測試結果（可選）
+    ssh_response_time = models.FloatField(null=True, blank=True, verbose_name='SSH 響應時間 (ms)')
+    ssh_connected = models.BooleanField(default=False, verbose_name='SSH 連線成功')
+    
+    # 下載速度測試
+    download_speed = models.FloatField(null=True, blank=True, verbose_name='下載速度 (MB/s)')
+    
+    # 錯誤訊息
+    error_message = models.TextField(blank=True, verbose_name='錯誤訊息')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    
+    class Meta:
+        verbose_name = 'IPXE 網路品質記錄'
+        verbose_name_plural = 'IPXE 網路品質記錄'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp'], name='idx_ipxe_nq_timestamp'),
+            models.Index(fields=['server', '-timestamp'], name='idx_ipxe_nq_server_time'),
+            models.Index(fields=['status'], name='idx_ipxe_nq_status'),
+        ]
+    
+    def __str__(self):
+        return f"[{self.status}] {self.timestamp} - {self.server.name} (Ping: {self.ping_latency}ms)"

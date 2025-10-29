@@ -6,6 +6,7 @@ WORKDIR /app
 # 安裝系統依賴
 RUN apt-get update && apt-get install -y \
     postgresql-client \
+    iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 # 複製依賴文件

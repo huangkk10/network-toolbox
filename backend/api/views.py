@@ -6,8 +6,8 @@ from django.contrib.auth.models import User
 from django.db.models import Count, Q, Sum, Avg
 from django.utils import timezone
 from datetime import timedelta
-from .models import DHCPServer, DHCPLease, NASConnectionLog, IPXEServer, IPXELog, IPXEStatistics
-from .serializers import DHCPServerSerializer, DHCPLeaseSerializer, UserSerializer, NASConnectionLogSerializer, IPXEServerSerializer, IPXELogSerializer, IPXEStatisticsSerializer
+from .models import DHCPServer, DHCPLease, NASConnectionLog, IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality
+from .serializers import DHCPServerSerializer, DHCPLeaseSerializer, UserSerializer, NASConnectionLogSerializer, IPXEServerSerializer, IPXELogSerializer, IPXEStatisticsSerializer, IPXENetworkQualitySerializer
 from .ipxe_service import IPXEService
 import logging
 
@@ -1096,6 +1096,238 @@ class IPXELogViewSet(viewsets.ReadOnlyModelViewSet):
             return Response(serializer.data)
         except Exception as e:
             logger.error(f'獲取 IPXE 日誌失敗: {str(e)}', exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class IPXENetworkQualityViewSet(viewsets.ModelViewSet):
+    """IPXE 網路品質監控 API ViewSet"""
+    queryset = IPXENetworkQuality.objects.all()
+    serializer_class = IPXENetworkQualitySerializer
+    permission_classes = [AllowAny]
+    pagination_class = None  # 禁用分頁
+    
+    def get_queryset(self):
+        """過濾查詢，支援時間範圍和伺服器過濾"""
+        queryset = IPXENetworkQuality.objects.all()
+        
+        # 依 server_id 篩選
+        server_id = self.request.query_params.get('server_id', None)
+        if server_id:
+            queryset = queryset.filter(server_id=server_id)
+        
+        # 依時間範圍篩選（預設 7 天）
+        days = self.request.query_params.get('days', 7)
+        try:
+            days = int(days)
+            cutoff_time = timezone.now() - timedelta(days=days)
+            queryset = queryset.filter(timestamp__gte=cutoff_time)
+        except ValueError:
+            pass
+        
+        # 依狀態篩選
+        status_filter = self.request.query_params.get('status', None)
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        return queryset.order_by('-timestamp')
+    
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """IPXE 網路品質統計資料"""
+        try:
+            # 時間範圍
+            days = int(request.query_params.get('days', 7))
+            start_time = timezone.now() - timedelta(days=days)
+            
+            # 伺服器過濾
+            server_id = request.query_params.get('server_id', None)
+            
+            logs = IPXENetworkQuality.objects.filter(timestamp__gte=start_time)
+            if server_id:
+                logs = logs.filter(server_id=server_id)
+            
+            # 基本統計
+            total_records = logs.count()
+            success_count = logs.filter(status='success').count()
+            failed_count = logs.filter(status='failed').count()
+            partial_count = logs.filter(status='partial').count()
+            success_rate = (success_count / total_records * 100) if total_records > 0 else 0
+            
+            # 平均網路指標（計算所有有資料的記錄，不只是 success）
+            avg_ping_latency = logs.filter(
+                ping_latency__isnull=False
+            ).aggregate(Avg('ping_latency'))['ping_latency__avg'] or 0
+            
+            avg_http_response_time = logs.filter(
+                http_response_time__isnull=False
+            ).aggregate(Avg('http_response_time'))['http_response_time__avg'] or 0
+            
+            avg_ssh_response_time = logs.filter(
+                ssh_response_time__isnull=False
+            ).aggregate(Avg('ssh_response_time'))['ssh_response_time__avg'] or 0
+            
+            avg_download_speed = logs.filter(
+                download_speed__isnull=False
+            ).aggregate(Avg('download_speed'))['download_speed__avg'] or 0
+            
+            avg_packet_loss = logs.filter(
+                ping_packet_loss__isnull=False
+            ).aggregate(Avg('ping_packet_loss'))['ping_packet_loss__avg'] or 0
+            
+            # 每日統計
+            daily_stats = []
+            for i in range(6, -1, -1):
+                day_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=i)
+                day_end = day_start + timedelta(days=1)
+                
+                day_logs = logs.filter(timestamp__gte=day_start, timestamp__lt=day_end)
+                day_total = day_logs.count()
+                day_success = day_logs.filter(status='success').count()
+                day_failed = day_logs.filter(status='failed').count()
+                day_partial = day_logs.filter(status='partial').count()
+                
+                # 當日平均延遲
+                day_avg_ping = day_logs.filter(
+                    ping_latency__isnull=False
+                ).aggregate(Avg('ping_latency'))['ping_latency__avg']
+                
+                daily_stats.append({
+                    'date': day_start.strftime('%Y-%m-%d'),
+                    'total': day_total,
+                    'success': day_success,
+                    'failed': day_failed,
+                    'partial': day_partial,
+                    'success_rate': (day_success / day_total * 100) if day_total > 0 else 0,
+                    'avg_ping_latency': round(day_avg_ping, 2) if day_avg_ping else None,
+                })
+            
+            # 每小時統計（最近24小時）
+            hourly_stats = []
+            for i in range(23, -1, -1):
+                hour_start = timezone.now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=i)
+                hour_end = hour_start + timedelta(hours=1)
+                
+                hour_logs = logs.filter(timestamp__gte=hour_start, timestamp__lt=hour_end)
+                hour_total = hour_logs.count()
+                hour_success = hour_logs.filter(status='success').count()
+                
+                # 當小時平均延遲
+                hour_avg_ping = hour_logs.filter(
+                    ping_latency__isnull=False
+                ).aggregate(Avg('ping_latency'))['ping_latency__avg']
+                
+                hourly_stats.append({
+                    'hour': hour_start.strftime('%Y-%m-%d %H:00'),
+                    'total': hour_total,
+                    'success': hour_success,
+                    'failed': hour_total - hour_success,
+                    'avg_ping_latency': round(hour_avg_ping, 2) if hour_avg_ping else None,
+                })
+            
+            # 網路品質趨勢（根據時間範圍動態調整）
+            quality_trends = []
+            
+            # 根據天數決定採樣間隔
+            if days <= 1:
+                interval_minutes = 5  # 1 天內：每 5 分鐘
+                num_points = int((days * 24 * 60) / interval_minutes)
+            elif days <= 3:
+                interval_minutes = 15  # 3 天內：每 15 分鐘
+                num_points = int((days * 24 * 60) / interval_minutes)
+            elif days <= 7:
+                interval_minutes = 60  # 7 天內：每小時
+                num_points = int((days * 24 * 60) / interval_minutes)
+            else:
+                interval_minutes = 180  # 7 天以上：每 3 小時
+                num_points = int((days * 24 * 60) / interval_minutes)
+            
+            # 生成品質趨勢數據
+            for i in range(num_points - 1, -1, -1):
+                period_end = timezone.now() - timedelta(minutes=i * interval_minutes)
+                period_start = period_end - timedelta(minutes=interval_minutes)
+                
+                period_logs = logs.filter(
+                    timestamp__gte=period_start,
+                    timestamp__lt=period_end
+                )
+                
+                # 計算該時段的平均指標
+                avg_ping = period_logs.filter(
+                    ping_latency__isnull=False
+                ).aggregate(Avg('ping_latency'))['ping_latency__avg']
+                
+                avg_http = period_logs.filter(
+                    http_response_time__isnull=False
+                ).aggregate(Avg('http_response_time'))['http_response_time__avg']
+                
+                avg_ssh = period_logs.filter(
+                    ssh_response_time__isnull=False
+                ).aggregate(Avg('ssh_response_time'))['ssh_response_time__avg']
+                
+                avg_dl_speed = period_logs.filter(
+                    download_speed__isnull=False
+                ).aggregate(Avg('download_speed'))['download_speed__avg']
+                
+                avg_loss = period_logs.filter(
+                    ping_packet_loss__isnull=False
+                ).aggregate(Avg('ping_packet_loss'))['ping_packet_loss__avg']
+                
+                # 格式化時間標籤
+                if interval_minutes < 60:
+                    time_label = period_end.strftime('%m-%d %H:%M')
+                else:
+                    time_label = period_end.strftime('%m-%d %H:00')
+                
+                quality_trends.append({
+                    'time': time_label,
+                    'ping_latency': round(avg_ping, 2) if avg_ping else None,
+                    'http_response_time': round(avg_http, 2) if avg_http else None,
+                    'ssh_response_time': round(avg_ssh, 2) if avg_ssh else None,
+                    'download_speed': round(avg_dl_speed, 2) if avg_dl_speed else None,
+                    'packet_loss': round(avg_loss, 2) if avg_loss else None,
+                })
+            
+            # 最新狀態
+            latest_log = logs.order_by('-timestamp').first()
+            latest_status = None
+            if latest_log:
+                latest_status = {
+                    'timestamp': latest_log.timestamp,
+                    'status': latest_log.status,
+                    'ping_latency': latest_log.ping_latency,
+                    'ping_packet_loss': latest_log.ping_packet_loss,
+                    'http_response_time': latest_log.http_response_time,
+                    'http_status_code': latest_log.http_status_code,
+                    'ssh_response_time': latest_log.ssh_response_time,
+                    'ssh_connected': latest_log.ssh_connected,
+                    'download_speed': latest_log.download_speed,
+                    'error_message': latest_log.error_message,
+                }
+            
+            return Response({
+                'summary': {
+                    'total_records': total_records,
+                    'success_count': success_count,
+                    'failed_count': failed_count,
+                    'partial_count': partial_count,
+                    'success_rate': round(success_rate, 2),
+                    'avg_ping_latency': round(avg_ping_latency, 2),
+                    'avg_http_response_time': round(avg_http_response_time, 2),
+                    'avg_ssh_response_time': round(avg_ssh_response_time, 2),
+                    'avg_download_speed': round(avg_download_speed, 2),
+                    'avg_packet_loss': round(avg_packet_loss, 2),
+                },
+                'daily_stats': daily_stats,
+                'hourly_stats': hourly_stats,
+                'quality_trends': quality_trends,
+                'latest_status': latest_status,
+            })
+            
+        except Exception as e:
+            logger.error(f'獲取 IPXE 網路品質統計失敗: {str(e)}', exc_info=True)
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

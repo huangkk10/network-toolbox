@@ -533,3 +533,109 @@ def check_nas_connection_task(self):
                 'timestamp': timezone.now().isoformat()
             }
 
+
+@shared_task(
+    bind=True,
+    name='api.tasks.check_ipxe_network_quality_task',
+    max_retries=2,
+    default_retry_delay=60,  # 失敗後 1 分鐘重試
+    time_limit=180,  # 硬限制 3 分鐘
+    soft_time_limit=150  # 軟限制 2.5 分鐘
+)
+def check_ipxe_network_quality_task(self, server_id):
+    """
+    IPXE 網路品質檢測定時任務（每5分鐘執行一次）
+    
+    Args:
+        server_id: IPXE Server ID
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'status': str,              # 'success', 'partial', or 'failed'
+            'server_id': int,
+            'server_name': str,
+            'ping_latency': float,      # Ping 延遲（ms）
+            'ping_packet_loss': float,  # 丟包率（%）
+            'http_response_time': float,  # HTTP 響應時間（ms）
+            'ssh_response_time': float,   # SSH 響應時間（ms）
+            'download_speed': float,    # 下載速度（MB/s）
+            'timestamp': str
+        }
+    """
+    try:
+        logger.info(f'[Celery] 開始執行 IPXE 網路品質檢測 - Server ID: {server_id}')
+        
+        # 使用 IPXE 網路服務執行檢測並記錄
+        from .ipxe_network_service import record_ipxe_network_quality
+        from .models import IPXEServer, IPXENetworkQuality
+        
+        success = record_ipxe_network_quality(server_id)
+        
+        # 獲取伺服器資訊
+        try:
+            server = IPXEServer.objects.get(id=server_id)
+            server_name = server.name
+        except IPXEServer.DoesNotExist:
+            logger.error(f'[Celery] IPXE Server ID {server_id} 不存在')
+            return {
+                'success': False,
+                'error_message': f'IPXE Server ID {server_id} 不存在',
+                'timestamp': timezone.now().isoformat()
+            }
+        
+        # 獲取最新的記錄
+        latest_log = IPXENetworkQuality.objects.filter(
+            server_id=server_id
+        ).order_by('-timestamp').first()
+        
+        if latest_log:
+            result = {
+                'success': success,
+                'status': latest_log.status,
+                'server_id': server_id,
+                'server_name': server_name,
+                'ping_latency': latest_log.ping_latency,
+                'ping_packet_loss': latest_log.ping_packet_loss,
+                'http_response_time': latest_log.http_response_time,
+                'http_status_code': latest_log.http_status_code,
+                'ssh_response_time': latest_log.ssh_response_time,
+                'ssh_connected': latest_log.ssh_connected,
+                'download_speed': latest_log.download_speed,
+                'error_message': latest_log.error_message,
+                'timestamp': latest_log.timestamp.isoformat(),
+            }
+            
+            logger.info(
+                f'[Celery] IPXE 網路品質檢測完成 - '
+                f'Server: {server_name} | '
+                f'狀態: {result["status"]} | '
+                f'Ping: {result["ping_latency"]:.2f} ms | ' if result["ping_latency"] else 'Ping: N/A | '
+                f'HTTP: {result["http_response_time"]:.2f} ms | ' if result["http_response_time"] else 'HTTP: N/A | '
+                f'SSH: {result["ssh_response_time"]:.2f} ms' if result["ssh_response_time"] else 'SSH: N/A'
+            )
+        else:
+            result = {
+                'success': False,
+                'server_id': server_id,
+                'server_name': server_name,
+                'error_message': '無法獲取最新記錄',
+                'timestamp': timezone.now().isoformat()
+            }
+        
+        return result
+        
+    except Exception as exc:
+        logger.error(f'[Celery] IPXE 網路品質檢測失敗 - Server ID: {server_id}', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=60)
+        except self.MaxRetriesExceededError:
+            logger.error(f'[Celery] IPXE 網路品質檢測重試次數已達上限 - Server ID: {server_id}')
+            return {
+                'success': False,
+                'server_id': server_id,
+                'error_message': str(exc),
+                'timestamp': timezone.now().isoformat()
+            }

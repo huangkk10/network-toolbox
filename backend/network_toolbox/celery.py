@@ -69,6 +69,18 @@ app.conf.beat_schedule = {
             'expires': 150,    # 任務超時 2.5 分鐘
         }
     },
+    
+    # 任務 5：IPXE 網路品質檢測（每 5 分鐘）
+    'check-ipxe-network-quality-every-5-minutes': {
+        'task': 'api.tasks.check_ipxe_network_quality_task',
+        'schedule': crontab(minute='*/5'),  # 每 5 分鐘執行一次
+        'kwargs': {
+            'server_id': 1,    # IPXE Server ID
+        },
+        'options': {
+            'expires': 150,    # 任務超時 2.5 分鐘
+        }
+    },
 }
 
 

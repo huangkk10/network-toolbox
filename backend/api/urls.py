@@ -9,6 +9,7 @@ router.register(r'dhcp-leases', views.DHCPLeaseViewSet)
 router.register(r'nas-logs', views.NASConnectionLogViewSet)
 router.register(r'ipxe-servers', views.IPXEServerViewSet)
 router.register(r'ipxe-logs', views.IPXELogViewSet)
+router.register(r'ipxe-network-quality', views.IPXENetworkQualityViewSet)
 
 urlpatterns = [
     path('', views.api_root, name='api_root'),
