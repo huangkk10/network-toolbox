@@ -399,6 +399,7 @@ import {
 - **API 風格**：ViewSet + RESTful API
 - **序列化**：Django REST Framework Serializers
 - **日誌記錄**：詳細記錄操作和錯誤
+- **模組化開發**：可重用的功能模組統一放在 `backend/library/` 目錄下
 
 ## 數據模型
 
@@ -571,6 +572,258 @@ npm test -- --watch         # 監聽模式
 3. 生成符合專案規範的測試代碼
 4. 包含必要的導入和設置代碼
 
+### 後端模組化開發規範
+
+**所有可重用的後端功能模組必須放置在 `backend/library/` 目錄下，並按照功能分類組織**
+
+#### Library 目錄結構
+
+```
+backend/library/
+├── utils/                 # 工具函數
+│   ├── __init__.py
+│   ├── network.py        # 網路相關工具（IP 驗證、子網計算等）
+│   ├── date_time.py      # 日期時間工具
+│   ├── validators.py     # 自訂驗證器
+│   └── formatters.py     # 格式化工具
+├── services/              # 業務邏輯服務
+│   ├── __init__.py
+│   ├── ssh_service.py    # SSH 連接服務
+│   ├── email_service.py  # 郵件服務
+│   └── cache_service.py  # 快取服務
+├── middleware/            # 自訂中間件
+│   ├── __init__.py
+│   ├── auth.py           # 認證中間件
+│   └── logging.py        # 日誌中間件
+├── mixins/                # 模型或視圖 Mixins
+│   ├── __init__.py
+│   ├── timestamp.py      # 時間戳記 Mixin
+│   └── soft_delete.py    # 軟刪除 Mixin
+├── decorators/            # 自訂裝飾器
+│   ├── __init__.py
+│   ├── permission.py     # 權限檢查裝飾器
+│   └── cache.py          # 快取裝飾器
+└── exceptions/            # 自訂異常
+    ├── __init__.py
+    └── custom_errors.py  # 自訂錯誤類別
+```
+
+#### 模組化開發規則
+
+1. **工具函數**（Utils）
+   - **位置**：`backend/library/utils/`
+   - **適用於**：純函數、無狀態的輔助工具
+   - **範例**：IP 地址驗證、日期格式化、字串處理
+   - **命名**：`<功能類別>.py`（如 `network.py`, `validators.py`）
+
+2. **業務邏輯服務**（Services）
+   - **位置**：`backend/library/services/`
+   - **適用於**：包含業務邏輯的可重用服務類別
+   - **範例**：SSH 連接服務、郵件發送服務、第三方 API 封裝
+   - **命名**：`<服務名稱>_service.py`（如 `ssh_service.py`）
+
+3. **中間件**（Middleware）
+   - **位置**：`backend/library/middleware/`
+   - **適用於**：Django 中間件組件
+   - **範例**：自訂認證、請求日誌、性能監控
+   - **命名**：`<功能名稱>.py`（如 `auth.py`, `logging.py`）
+
+4. **Mixins**
+   - **位置**：`backend/library/mixins/`
+   - **適用於**：模型或視圖的可重用混入類別
+   - **範例**：時間戳記欄位、軟刪除功能、權限檢查
+   - **命名**：`<功能名稱>.py`（如 `timestamp.py`）
+
+5. **裝飾器**（Decorators）
+   - **位置**：`backend/library/decorators/`
+   - **適用於**：函數或方法的裝飾器
+   - **範例**：權限檢查、快取、速率限制
+   - **命名**：`<功能名稱>.py`（如 `permission.py`）
+
+6. **自訂異常**（Exceptions）
+   - **位置**：`backend/library/exceptions/`
+   - **適用於**：自訂錯誤類別
+   - **範例**：業務邏輯異常、驗證錯誤
+   - **命名**：`custom_errors.py` 或按類別分檔
+
+#### 模組開發規範
+
+**1. 每個模組必須包含 `__init__.py`**
+```python
+# backend/library/utils/__init__.py
+from .network import validate_ip, calculate_subnet
+from .validators import validate_mac_address
+
+__all__ = ['validate_ip', 'calculate_subnet', 'validate_mac_address']
+```
+
+**2. 工具函數範例**
+```python
+# backend/library/utils/network.py
+import ipaddress
+from typing import Optional
+
+def validate_ip(ip_string: str) -> bool:
+    """
+    驗證 IP 地址格式
+    
+    Args:
+        ip_string: IP 地址字串
+        
+    Returns:
+        bool: 是否為有效的 IP 地址
+    """
+    try:
+        ipaddress.ip_address(ip_string)
+        return True
+    except ValueError:
+        return False
+
+def calculate_subnet(ip: str, netmask: str) -> Optional[str]:
+    """計算子網路"""
+    try:
+        network = ipaddress.ip_network(f"{ip}/{netmask}", strict=False)
+        return str(network)
+    except ValueError:
+        return None
+```
+
+**3. 服務類別範例**
+```python
+# backend/library/services/ssh_service.py
+import paramiko
+import logging
+
+logger = logging.getLogger(__name__)
+
+class SSHService:
+    """SSH 連接服務"""
+    
+    def __init__(self, host: str, port: int = 22, username: str = None, password: str = None):
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.client = None
+    
+    def connect(self) -> bool:
+        """建立 SSH 連接"""
+        try:
+            self.client = paramiko.SSHClient()
+            self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            self.client.connect(
+                hostname=self.host,
+                port=self.port,
+                username=self.username,
+                password=self.password
+            )
+            logger.info(f"SSH 連接成功: {self.host}")
+            return True
+        except Exception as e:
+            logger.error(f"SSH 連接失敗: {e}", exc_info=True)
+            return False
+    
+    def execute_command(self, command: str) -> tuple:
+        """執行命令"""
+        if not self.client:
+            raise ConnectionError("未建立 SSH 連接")
+        
+        stdin, stdout, stderr = self.client.exec_command(command)
+        return stdout.read().decode(), stderr.read().decode()
+    
+    def close(self):
+        """關閉連接"""
+        if self.client:
+            self.client.close()
+            logger.info(f"SSH 連接已關閉: {self.host}")
+```
+
+**4. Mixin 範例**
+```python
+# backend/library/mixins/timestamp.py
+from django.db import models
+
+class TimestampMixin(models.Model):
+    """時間戳記 Mixin"""
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='創建時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    
+    class Meta:
+        abstract = True
+```
+
+**5. 裝飾器範例**
+```python
+# backend/library/decorators/permission.py
+from functools import wraps
+from rest_framework.response import Response
+from rest_framework import status
+
+def require_admin(view_func):
+    """要求管理員權限的裝飾器"""
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not request.user.is_staff:
+            return Response(
+                {'error': '需要管理員權限'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return view_func(request, *args, **kwargs)
+    return wrapper
+```
+
+#### 使用模組的方式
+
+**在 Django App 中使用 Library 模組**：
+```python
+# backend/api/views.py
+from library.utils.network import validate_ip
+from library.services.ssh_service import SSHService
+from library.mixins.timestamp import TimestampMixin
+from library.decorators.permission import require_admin
+
+# 使用工具函數
+if validate_ip(ip_address):
+    # 處理邏輯
+    pass
+
+# 使用服務
+ssh = SSHService(host='192.168.1.1', username='admin', password='password')
+if ssh.connect():
+    output, error = ssh.execute_command('ls -la')
+    ssh.close()
+
+# 使用 Mixin
+class MyModel(TimestampMixin):
+    name = models.CharField(max_length=100)
+
+# 使用裝飾器
+@require_admin
+def admin_only_view(request):
+    return Response({'message': 'Admin only'})
+```
+
+#### AI 創建模組時的說明
+
+**當您要求 AI 創建可重用模組時，請明確指定：**
+
+- **模組類型**：工具函數、服務、中間件、Mixin、裝飾器等
+- **模組功能**：要實現的具體功能
+- **使用場景**：在哪些地方會用到
+
+**範例請求**：
+- ✅ "創建一個 IP 地址驗證的工具函數"（會自動放在 `backend/library/utils/`）
+- ✅ "創建一個 SSH 連接服務類別"（會自動放在 `backend/library/services/`）
+- ✅ "創建一個時間戳記的 Model Mixin"（會自動放在 `backend/library/mixins/`）
+- ❌ "創建一個工具"（不明確）
+
+**AI 會自動：**
+1. 根據模組類型選擇合適的 `backend/library/` 子目錄
+2. 使用正確的命名規範
+3. 生成符合 Python 和 Django 最佳實踐的代碼
+4. 包含適當的類型提示、文檔字串和錯誤處理
+5. 在 `__init__.py` 中添加必要的導出
+
 ### 添加新功能時
 
 1. **前端頁面**：
@@ -614,6 +867,7 @@ npm test -- --watch         # 監聽模式
    - `views.py` 創建 ViewSet
    - `urls.py` 註冊路由
    - 執行遷移
+   - **可重用模組**：將通用功能模組化後放入 `backend/library/`
 
 3. **日誌記錄**：
    ```python
