@@ -54,15 +54,62 @@ const DHCPServerManagementPage = () => {
                 await axios.put(`/api/dhcp-servers/${editingServer.id}/`, values);
                 message.success('更新成功！');
             } else {
-                // 新增
-                await axios.post('/api/dhcp-servers/', values);
+                // 新增 DHCP Server
+                const response = await axios.post('/api/dhcp-servers/', values);
                 message.success('新增成功！');
+                
+                // 顯示自動同步結果
+                if (response.data.auto_sync) {
+                    const sync = response.data.auto_sync;
+                    
+                    // 顯示同步統計
+                    if (sync.scopes && sync.scopes.success) {
+                        const stats = sync.scopes.stats;
+                        message.success(
+                            `✓ 已同步 ${stats.found || 0} 個 Scope（新增 ${stats.created || 0}，更新 ${stats.updated || 0}）`, 
+                            5
+                        );
+                    }
+                    
+                    if (sync.leases && sync.leases.success) {
+                        const stats = sync.leases.stats;
+                        message.success(
+                            `✓ 已同步 ${stats.total || 0} 筆租約（新增 ${stats.created || 0}，更新 ${stats.updated || 0}）`, 
+                            5
+                        );
+                    }
+                    
+                    if (sync.logs && sync.logs.success) {
+                        const stats = sync.logs.stats;
+                        message.success(
+                            `✓ 已同步 ${stats.created || 0} 條日誌（跳過 ${stats.skipped || 0} 條重複）`, 
+                            5
+                        );
+                    }
+                    
+                    // 如果有錯誤，顯示警告
+                    if (sync.errors && sync.errors.length > 0) {
+                        message.warning(
+                            `部分數據同步失敗，但 Server 已創建成功。請檢查日誌或手動同步。`, 
+                            8
+                        );
+                        console.warn('同步錯誤:', sync.errors);
+                    }
+                    
+                    // 如果全部失敗，顯示提示
+                    if (!sync.scopes.success && !sync.leases.success && !sync.logs.success) {
+                        message.warning(
+                            `Server 已創建，但自動同步失敗。請檢查 SSH 連線設定後手動同步。`, 
+                            8
+                        );
+                    }
+                }
             }
             setModalVisible(false);
             fetchServers();
         } catch (error) {
             console.error('Error saving server:', error);
-            message.error('儲存失敗：' + error.message);
+            message.error('儲存失敗：' + (error.response?.data?.error || error.message));
         }
     };
 
