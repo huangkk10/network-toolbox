@@ -81,6 +81,15 @@ app.conf.beat_schedule = {
             'expires': 150,    # 任務超時 2.5 分鐘
         }
     },
+    
+    # 任務 6：DHCP Scope 自動同步（每天凌晨 4 點）
+    'sync-all-dhcp-scopes-daily': {
+        'task': 'api.tasks.sync_all_dhcp_scopes_task',
+        'schedule': crontab(hour=4, minute=0),  # 每天 04:00 執行
+        'options': {
+            'expires': 1800,   # 任務超時 30 分鐘
+        }
+    },
 }
 
 

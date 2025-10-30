@@ -93,7 +93,7 @@ class DHCPLeaseParser:
         """
         解析 dhcpd.leases 檔案內容
         
-        範例格式：
+        範例格式:
         lease 192.168.1.100 {
           starts 6 2025/10/26 14:30:22;
           ends 0 2025/10/27 14:30:22;
@@ -187,6 +187,249 @@ class DHCPLeaseParser:
             status_info['is_running'] = True
         
         return status_info
+
+
+class DHCPConfigParser:
+    """DHCP 配置文件解析器 - 解析 dhcpd.conf"""
+    
+    @staticmethod
+    def parse_config_file(content):
+        """
+        解析 dhcpd.conf 配置文件，提取 subnet 和 range 資訊
+        
+        範例格式:
+        subnet 192.168.1.0 netmask 255.255.255.0 {
+            range 192.168.1.10 192.168.1.100;
+            option routers 192.168.1.1;
+            option domain-name-servers 8.8.8.8, 8.8.4.4;
+        }
+        
+        Returns:
+            list: subnet 配置列表
+        """
+        import re
+        
+        subnets = []
+        
+        # 使用正則表達式匹配 subnet 區塊
+        subnet_pattern = re.compile(
+            r'subnet\s+([\d.]+)\s+netmask\s+([\d.]+)\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}',
+            re.MULTILINE | re.DOTALL
+        )
+        
+        for match in subnet_pattern.finditer(content):
+            subnet_ip = match.group(1)
+            netmask = match.group(2)
+            subnet_block = match.group(3)
+            
+            # 計算網路範圍
+            try:
+                import ipaddress
+                network = ipaddress.IPv4Network(f"{subnet_ip}/{netmask}", strict=False)
+                network_cidr = str(network)
+            except Exception:
+                network_cidr = f"{subnet_ip}/{netmask}"
+            
+            subnet_info = {
+                'subnet_id': subnet_ip,
+                'name': f'Subnet {subnet_ip}',
+                'subnet_mask': netmask,
+                'network_range': network_cidr,
+                'ranges': [],
+                'total_addresses': 0,
+                'state': 'Active'
+            }
+            
+            # 提取 range 定義
+            range_pattern = re.compile(r'range\s+([\d.]+)\s+([\d.]+)\s*;')
+            for range_match in range_pattern.finditer(subnet_block):
+                start_ip = range_match.group(1)
+                end_ip = range_match.group(2)
+                
+                # 計算範圍內的 IP 數量
+                try:
+                    start = ipaddress.IPv4Address(start_ip)
+                    end = ipaddress.IPv4Address(end_ip)
+                    range_size = int(end) - int(start) + 1
+                except Exception:
+                    range_size = 0
+                
+                range_info = {
+                    'start_range': start_ip,
+                    'end_range': end_ip,
+                    'size': range_size
+                }
+                
+                subnet_info['ranges'].append(range_info)
+                subnet_info['total_addresses'] += range_size
+            
+            subnets.append(subnet_info)
+        
+        logger.info(f'解析到 {len(subnets)} 個 subnet 配置')
+        return subnets
+    
+    @staticmethod
+    def calculate_ip_usage(subnets, active_leases):
+        """
+        根據 subnet 配置和活躍租約計算 IP 使用率
+        
+        Args:
+            subnets: subnet 配置列表
+            active_leases: 活躍租約列表
+            
+        Returns:
+            dict: 使用率統計
+        """
+        total_ips = sum(subnet['total_addresses'] for subnet in subnets)
+        used_ips = len(active_leases)
+        
+        usage_percentage = (used_ips / total_ips * 100) if total_ips > 0 else 0
+        
+        # 為每個 subnet 計算詳細使用率
+        for subnet in subnets:
+            subnet_leases = []
+            
+            # 找出屬於這個 subnet 的租約
+            for lease in active_leases:
+                try:
+                    lease_ip = ipaddress.IPv4Address(lease.get('ip_address', ''))
+                    
+                    # 檢查是否在任何 range 內
+                    for range_info in subnet['ranges']:
+                        start = ipaddress.IPv4Address(range_info['start_range'])
+                        end = ipaddress.IPv4Address(range_info['end_range'])
+                        
+                        if start <= lease_ip <= end:
+                            subnet_leases.append(lease)
+                            break
+                            
+                except Exception:
+                    continue
+            
+            subnet_used = len(subnet_leases)
+            subnet_total = subnet['total_addresses']
+            subnet_usage = (subnet_used / subnet_total * 100) if subnet_total > 0 else 0
+            
+            subnet.update({
+                'in_use_addresses': subnet_used,
+                'available_addresses': subnet_total - subnet_used,
+                'usage_percentage': round(subnet_usage, 2)
+            })
+        
+        return {
+            'total_addresses': total_ips,
+            'used_addresses': used_ips,
+            'available_addresses': total_ips - used_ips,
+            'usage_percentage': round(usage_percentage, 2),
+            'subnets': subnets
+        }
+        
+        範例格式:
+        subnet 10.250.130.0 netmask 255.255.255.0 {
+            range 10.250.130.10 10.250.130.250;
+            option routers 10.250.130.1;
+            option domain-name-servers 8.8.8.8;
+        }
+        
+        Returns:
+            list: Scope 配置列表
+        """
+        scopes = []
+        
+        # 移除註釋行
+        lines = []
+        for line in content.split('\n'):
+            # 移除 # 開頭的註釋
+            if '#' in line:
+                line = line[:line.index('#')]
+            line = line.strip()
+            if line:
+                lines.append(line)
+        
+        cleaned_content = ' '.join(lines)
+        
+        # 使用正則表達式解析 subnet 區塊
+        # 匹配: subnet 10.250.130.0 netmask 255.255.255.0 { ... }
+        subnet_pattern = re.compile(
+            r'subnet\s+([\d.]+)\s+netmask\s+([\d.]+)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}',
+            re.MULTILINE | re.DOTALL
+        )
+        
+        for match in subnet_pattern.finditer(cleaned_content):
+            subnet_id = match.group(1)
+            netmask = match.group(2)
+            subnet_block = match.group(3)
+            
+            # 初始化 scope 資訊
+            scope_info = {
+                'scope_id': subnet_id,
+                'subnet_mask': netmask,
+                'name': subnet_id.split('.')[-2],  # 使用倒數第二段作為名稱（如 130）
+                'ranges': [],
+                'options': {},
+                'state': 'Active',
+            }
+            
+            # 提取 range 定義（可能有多個）
+            range_pattern = re.compile(r'range\s+([\d.]+)\s+([\d.]+)\s*;')
+            for range_match in range_pattern.finditer(subnet_block):
+                start_ip = range_match.group(1)
+                end_ip = range_match.group(2)
+                scope_info['ranges'].append({
+                    'start': start_ip,
+                    'end': end_ip,
+                })
+            
+            # 提取常見選項
+            option_patterns = {
+                'routers': r'option\s+routers\s+([\d.,\s]+);',
+                'domain-name-servers': r'option\s+domain-name-servers\s+([\d.,\s]+);',
+                'domain-name': r'option\s+domain-name\s+"([^"]+)";',
+                'broadcast-address': r'option\s+broadcast-address\s+([\d.]+);',
+            }
+            
+            for option_name, pattern in option_patterns.items():
+                option_match = re.search(pattern, subnet_block)
+                if option_match:
+                    scope_info['options'][option_name] = option_match.group(1).strip()
+            
+            # 提取租約時間
+            lease_time_match = re.search(r'default-lease-time\s+(\d+);', subnet_block)
+            if lease_time_match:
+                scope_info['lease_duration'] = f"{int(lease_time_match.group(1)) // 3600}h"
+            
+            max_lease_time_match = re.search(r'max-lease-time\s+(\d+);', subnet_block)
+            if max_lease_time_match:
+                scope_info['max_lease_duration'] = f"{int(max_lease_time_match.group(1)) // 3600}h"
+            
+            # 如果有 range 定義才添加
+            if scope_info['ranges']:
+                scopes.append(scope_info)
+                logger.info(f"解析到 Scope: {subnet_id} with {len(scope_info['ranges'])} range(s)")
+        
+        logger.info(f'從配置文件解析到 {len(scopes)} 個 Scope')
+        return scopes
+    
+    @staticmethod
+    def calculate_ip_count(start_ip, end_ip):
+        """
+        計算 IP 範圍內的 IP 數量
+        
+        Args:
+            start_ip: 起始 IP (str)
+            end_ip: 結束 IP (str)
+            
+        Returns:
+            int: IP 數量
+        """
+        try:
+            import ipaddress
+            start = ipaddress.IPv4Address(start_ip)
+            end = ipaddress.IPv4Address(end_ip)
+            return int(end) - int(start) + 1
+        except Exception as e:
+            logger.error(f'計算 IP 數量失敗 ({start_ip} - {end_ip}): {str(e)}')
+            return 0
 
 
 class DHCPDataService:
@@ -352,8 +595,8 @@ class DHCPLogParser:
     DHCP 日誌解析器
     
     .. deprecated:: 2025-10-30
-        請使用 `library.utils.log_parser.DHCPLogParser` 代替。
-        此類別將在未來版本中移除。
+        Please use `library.utils.log_parser.DHCPLogParser` instead.
+        This class will be removed in future versions.
         
         遷移範例::
         
@@ -382,7 +625,7 @@ class DHCPLogParser:
         """
         解析單行 DHCP 日誌
         
-        支援的格式：
+        支援的格式:
         - syslog: Oct 27 14:30:22 dhcpd[1234]: DHCP DISCOVER from ...
         - dhcpd.log: 2025-10-27 14:30:22 INFO DHCP DISCOVER from ...
         - 本地日誌: [INFO] 2025-10-27 14:30:22 | DHCP DISCOVER from ...
@@ -1055,3 +1298,167 @@ class DHCPLogService:
         except Exception as e:
             logger.error(f'讀取遠端日誌失敗: {str(e)}', exc_info=True)
             return []
+
+
+class LinuxDHCPConfigService:
+    """Linux DHCP 配置同步服務 - 解析 dhcpd.conf 並創建 Scope"""
+    
+    def __init__(self, dhcp_server):
+        """
+        初始化服務
+        
+        Args:
+            dhcp_server: DHCPServer 模型實例
+        """
+        self.server = dhcp_server
+        self.ssh = None
+    
+    def __enter__(self):
+        """Context manager 支援"""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager 支援 - 關閉 SSH 連接"""
+        if self.ssh:
+            self.ssh.close()
+    
+    def sync_config_to_db(self):
+        """
+        從 dhcpd.conf 同步配置到資料庫，創建 DHCPScope 記錄
+        
+        Returns:
+            dict: 同步結果統計
+        """
+        from .models import DHCPScope, DHCPLease
+        from django.utils import timezone
+        
+        try:
+            # 建立 SSH 連接
+            self.ssh = DHCPServerSSH(
+                host=self.server.ip_address,
+                port=self.server.ssh_port,
+                username=self.server.ssh_username,
+                password=self.server.ssh_password,
+                key_file=self.server.ssh_key_file if self.server.ssh_key_file else None
+            )
+            
+            if not self.ssh.connect():
+                raise Exception(f'無法連接到 DHCP Server: {self.server.ip_address}')
+            
+            # 讀取 dhcpd.conf 配置文件
+            config_path = self.server.dhcp_config_path
+            logger.info(f'讀取配置文件: {config_path}')
+            
+            command = f'cat {config_path}'
+            output, error = self.ssh.execute_command(command)
+            
+            if error or not output:
+                raise Exception(f'讀取配置文件失敗: {error}')
+            
+            # 解析配置文件
+            scopes = DHCPConfigParser.parse_config_file(output)
+            
+            if not scopes:
+                logger.warning(f'配置文件中未找到 subnet 定義: {self.server.name}')
+                return {
+                    'success': True,
+                    'scopes_found': 0,
+                    'scopes_created': 0,
+                    'scopes_updated': 0,
+                    'message': '未找到 subnet 定義'
+                }
+            
+            # 統計資料
+            stats = {
+                'scopes_found': len(scopes),
+                'scopes_created': 0,
+                'scopes_updated': 0,
+                'scopes_with_leases': 0,
+            }
+            
+            # 處理每個 Scope
+            for scope_data in scopes:
+                scope_id = scope_data['scope_id']
+                
+                # 計算總 IP 數量（所有 range 的總和）
+                total_addresses = 0
+                start_range = None
+                end_range = None
+                
+                for ip_range in scope_data['ranges']:
+                    range_count = DHCPConfigParser.calculate_ip_count(
+                        ip_range['start'],
+                        ip_range['end']
+                    )
+                    total_addresses += range_count
+                    
+                    # 使用第一個 range 作為代表
+                    if start_range is None:
+                        start_range = ip_range['start']
+                        end_range = ip_range['end']
+                
+                # 計算已使用的 IP 數量（從租約表統計）
+                in_use_addresses = DHCPLease.objects.filter(
+                    server=self.server,
+                    is_active=True,
+                    ip_address__gte=start_range,
+                    ip_address__lte=end_range
+                ).count()
+                
+                available_addresses = total_addresses - in_use_addresses
+                usage_percentage = (in_use_addresses / total_addresses * 100) if total_addresses > 0 else 0
+                
+                # 創建或更新 Scope
+                scope, created = DHCPScope.objects.update_or_create(
+                    server=self.server,
+                    scope_id=scope_id,
+                    defaults={
+                        'name': scope_data['name'],
+                        'subnet_mask': scope_data['subnet_mask'],
+                        'start_range': start_range,
+                        'end_range': end_range,
+                        'state': scope_data.get('state', 'Active'),
+                        'lease_duration': scope_data.get('lease_duration', ''),
+                        'total_addresses': total_addresses,
+                        'in_use_addresses': in_use_addresses,
+                        'available_addresses': available_addresses,
+                        'usage_percentage': round(usage_percentage, 2),
+                    }
+                )
+                
+                if created:
+                    stats['scopes_created'] += 1
+                    logger.info(f'創建 Scope: {scope_id} ({total_addresses} IPs, {usage_percentage:.1f}% used)')
+                else:
+                    stats['scopes_updated'] += 1
+                    logger.info(f'更新 Scope: {scope_id} ({total_addresses} IPs, {usage_percentage:.1f}% used)')
+                
+                if in_use_addresses > 0:
+                    stats['scopes_with_leases'] += 1
+            
+            # 更新伺服器的 pool_usage（所有 Scope 的平均使用率）
+            all_scopes = DHCPScope.objects.filter(server=self.server)
+            if all_scopes.exists():
+                avg_usage = sum(s.usage_percentage for s in all_scopes) / all_scopes.count()
+                self.server.pool_usage = round(avg_usage, 2)
+                self.server.last_sync_at = timezone.now()
+                self.server.save()
+                logger.info(f'更新伺服器 pool_usage: {avg_usage:.2f}%')
+            
+            stats['success'] = True
+            stats['message'] = f'成功同步 {stats["scopes_created"] + stats["scopes_updated"]} 個 Scope'
+            
+            return stats
+        
+        except Exception as e:
+            logger.error(f'同步配置失敗: {str(e)}', exc_info=True)
+            return {
+                'success': False,
+                'error': str(e),
+                'scopes_found': 0,
+                'scopes_created': 0,
+                'scopes_updated': 0,
+            }
+        finally:
+            if self.ssh:
+                self.ssh.close()

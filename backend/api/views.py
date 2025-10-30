@@ -335,6 +335,64 @@ def dhcp_sync_leases(request, server_id):
         )
 
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def dhcp_sync_config(request, server_id):
+    """
+    同步指定 DHCP Server 的配置文件（dhcpd.conf）
+    解析 subnet 和 range 資訊，創建 DHCPScope 記錄
+    適用於 Linux DHCP Server (ISC DHCP)
+    """
+    try:
+        from .services import LinuxDHCPConfigService
+        
+        server = DHCPServer.objects.get(id=server_id)
+        
+        logger.info(f'開始同步 Linux DHCP 配置: {server.name} ({server.ip_address})')
+        
+        with LinuxDHCPConfigService(server) as service:
+            # 執行配置同步
+            result = service.sync_config_to_db()
+        
+        if result.get('success'):
+            logger.info(f'成功同步 Server {server.name} 的配置: {result}')
+            
+            return Response({
+                'message': result.get('message', '同步成功'),
+                'stats': {
+                    'scopes_found': result.get('scopes_found', 0),
+                    'scopes_created': result.get('scopes_created', 0),
+                    'scopes_updated': result.get('scopes_updated', 0),
+                    'scopes_with_leases': result.get('scopes_with_leases', 0),
+                },
+                'server': {
+                    'name': server.name,
+                    'ip': server.ip_address,
+                    'pool_usage': server.pool_usage,
+                    'total_leases': server.total_leases,
+                    'active_leases': server.active_leases,
+                    'last_sync': server.last_sync_at.strftime('%Y-%m-%d %H:%M:%S') if server.last_sync_at else None,
+                }
+            })
+        else:
+            return Response(
+                {'error': result.get('error', '同步失敗')},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    except DHCPServer.DoesNotExist:
+        return Response(
+            {'error': 'DHCP Server 不存在'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f'同步配置失敗: {str(e)}', exc_info=True)
+        return Response(
+            {'error': f'同步失敗: {str(e)}'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def dhcp_analytics_logs(request):

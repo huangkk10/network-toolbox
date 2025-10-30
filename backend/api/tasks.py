@@ -337,6 +337,128 @@ def sync_dhcp_scopes_task(self, server_id):
             }
 
 
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_all_dhcp_scopes_task',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def sync_all_dhcp_scopes_task(self):
+    """
+    批次同步所有 DHCP Server 的 Scope 資訊（定時任務）
+    
+    適用場景：
+    - 新增伺服器後自動初始化
+    - 定時更新所有伺服器的使用率
+    - 確保所有伺服器都有完整的 Scope 數據
+    
+    Returns:
+        dict: {
+            'total_servers': int,    # 處理的伺服器總數
+            'success_count': int,    # 成功的伺服器數
+            'failed_count': int,     # 失敗的伺服器數
+            'results': [...]         # 每個伺服器的詳細結果
+        }
+    """
+    try:
+        logger.info('[Celery] 開始批次同步所有 DHCP Server 的 Scope')
+        
+        # 獲取所有在線的 DHCP 伺服器
+        servers = DHCPServer.objects.filter(status='online')
+        total_servers = servers.count()
+        
+        logger.info(f'[Celery] 找到 {total_servers} 個在線的 DHCP Server')
+        
+        results = []
+        success_count = 0
+        failed_count = 0
+        
+        for server in servers:
+            try:
+                logger.info(f'[Celery] 正在同步 Server: {server.name} ({server.ip_address})')
+                
+                # 判斷伺服器類型並使用對應的同步方式
+                if server.ssh_username in ['administrator', 'Administrator']:
+                    # Windows DHCP Server - 使用 PowerShell
+                    from .ssh_powershell_service import WindowsSSHPowerShellService
+                    
+                    with WindowsSSHPowerShellService(server) as service:
+                        result = service.sync_scopes_to_db()
+                    
+                    result['server_id'] = server.id
+                    result['server_name'] = server.name
+                    result['server_type'] = 'Windows DHCP'
+                    result['sync_method'] = 'PowerShell'
+                    
+                else:
+                    # Linux DHCP Server - 解析 dhcpd.conf
+                    from .services import LinuxDHCPConfigService
+                    
+                    with LinuxDHCPConfigService(server) as service:
+                        result = service.sync_config_to_db()
+                    
+                    result['server_id'] = server.id
+                    result['server_name'] = server.name
+                    result['server_type'] = 'Linux DHCP'
+                    result['sync_method'] = 'Config File'
+                
+                # 重新載入 Server 以獲取更新後的 pool_usage
+                server.refresh_from_db()
+                result['pool_usage'] = server.pool_usage
+                
+                results.append(result)
+                success_count += 1
+                
+                logger.info(
+                    f'[Celery] Server {server.name} 同步成功 - '
+                    f'Scopes: {result.get("scopes_created", 0) + result.get("scopes_updated", 0)} | '
+                    f'使用率: {server.pool_usage:.2f}%'
+                )
+                
+            except Exception as e:
+                logger.error(f'[Celery] Server {server.name} 同步失敗: {str(e)}', exc_info=True)
+                
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'success': False,
+                    'error': str(e)
+                })
+                failed_count += 1
+        
+        summary = {
+            'total_servers': total_servers,
+            'success_count': success_count,
+            'failed_count': failed_count,
+            'results': results,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        logger.info(
+            f'[Celery] 批次同步完成 - '
+            f'總計: {total_servers} | 成功: {success_count} | 失敗: {failed_count}'
+        )
+        
+        return summary
+        
+    except Exception as exc:
+        logger.error('[Celery] 批次同步 DHCP Scope 失敗', exc_info=True)
+        
+        # 自動重試
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] Scope 批次同步重試次數已達上限')
+            return {
+                'total_servers': 0,
+                'success_count': 0,
+                'failed_count': 0,
+                'error': str(exc)
+            }
+
+
 @shared_task(name='api.tasks.get_logs_statistics_task')
 def get_logs_statistics_task():
     """

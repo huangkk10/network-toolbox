@@ -24,6 +24,7 @@ urlpatterns = [
     path('dhcp-analytics/statistics/', views.dhcp_analytics_statistics, name='dhcp_analytics_statistics'),
     path('dhcp-servers/<int:server_id>/sync-leases/', views.dhcp_sync_leases, name='dhcp_sync_leases'),
     path('dhcp-servers/<int:server_id>/sync-logs/', views.dhcp_sync_logs, name='dhcp_sync_logs'),
+    path('dhcp-servers/<int:server_id>/sync-config/', views.dhcp_sync_config, name='dhcp_sync_config'),
     
     # IPXE Analytics API
     path('ipxe-servers/<int:server_id>/sync-logs/', views.ipxe_sync_logs, name='ipxe_sync_logs'),
