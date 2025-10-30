@@ -174,7 +174,7 @@ class DHCPLeaseParser:
     def parse_dhcp_status(content):
         """
         解析 DHCP Server 狀態資訊
-        （可根據實際使用的 DHCP 軟體調整）
+        (可根據實際使用的 DHCP 軟體調整)
         """
         status_info = {
             'is_running': False,
@@ -207,7 +207,7 @@ class DHCPConfigParser:
         Returns:
             list: subnet 配置列表
         """
-        import re
+        import ipaddress
         
         subnets = []
         
@@ -224,7 +224,6 @@ class DHCPConfigParser:
             
             # 計算網路範圍
             try:
-                import ipaddress
                 network = ipaddress.IPv4Network(f"{subnet_ip}/{netmask}", strict=False)
                 network_cidr = str(network)
             except Exception:
@@ -280,6 +279,8 @@ class DHCPConfigParser:
         Returns:
             dict: 使用率統計
         """
+        import ipaddress
+        
         total_ips = sum(subnet['total_addresses'] for subnet in subnets)
         used_ips = len(active_leases)
         
@@ -323,13 +324,11 @@ class DHCPConfigParser:
             'usage_percentage': round(usage_percentage, 2),
             'subnets': subnets
         }
-        
-        範例格式:
-        subnet 10.250.130.0 netmask 255.255.255.0 {
-            range 10.250.130.10 10.250.130.250;
-            option routers 10.250.130.1;
-            option domain-name-servers 8.8.8.8;
-        }
+    
+    @staticmethod
+    def parse_dhcpd_conf(content):
+        """
+        解析 dhcpd.conf 配置文件 (Linux DHCP Server)
         
         Returns:
             list: Scope 配置列表
@@ -349,9 +348,8 @@ class DHCPConfigParser:
         cleaned_content = ' '.join(lines)
         
         # 使用正則表達式解析 subnet 區塊
-        # 匹配: subnet 10.250.130.0 netmask 255.255.255.0 { ... }
         subnet_pattern = re.compile(
-            r'subnet\s+([\d.]+)\s+netmask\s+([\d.]+)\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}',
+            r'subnet\s+([\d.]+)\s+netmask\s+([\d.]+)\s*\{([^}]*(?:\{[^}]*\}[^{}]*)*)\}',
             re.MULTILINE | re.DOTALL
         )
         
@@ -364,13 +362,13 @@ class DHCPConfigParser:
             scope_info = {
                 'scope_id': subnet_id,
                 'subnet_mask': netmask,
-                'name': subnet_id.split('.')[-2],  # 使用倒數第二段作為名稱（如 130）
+                'name': subnet_id.split('.')[-2],  # 使用倒數第二段作為名稱
                 'ranges': [],
                 'options': {},
                 'state': 'Active',
             }
             
-            # 提取 range 定義（可能有多個）
+            # 提取 range 定義
             range_pattern = re.compile(r'range\s+([\d.]+)\s+([\d.]+)\s*;')
             for range_match in range_pattern.finditer(subnet_block):
                 start_ip = range_match.group(1)
@@ -453,18 +451,17 @@ class DHCPDataService:
             list: 租約列表
         """
         try:
-            # 建立 SSH 連接（需要在 DHCPServer 模型中儲存 SSH 憑證）
-            # 這裡假設使用 password 認證，實際可能需要使用 key file
+            # 建立 SSH 連接
             self.ssh = DHCPServerSSH(
                 host=self.server.ip_address,
-                username='root',  # 從設定中讀取
-                password='your_password'  # 從加密儲存中讀取
+                username='root',
+                password='your_password'
             )
             
             if not self.ssh.connect():
                 return []
             
-            # 讀取 dhcpd.leases 檔案（路徑可能需要調整）
+            # 讀取 dhcpd.leases 檔案
             leases_file_paths = [
                 '/var/lib/dhcpd/dhcpd.leases',  # CentOS/RHEL
                 '/var/lib/dhcp/dhcpd.leases',   # Debian/Ubuntu
@@ -513,10 +510,10 @@ class DHCPDataService:
             if not self.ssh.connect():
                 return {'status': 'offline', 'is_running': False}
             
-            # 檢查 DHCP 服務狀態（根據不同的 DHCP 軟體調整指令）
+            # 檢查 DHCP 服務狀態
             commands = [
-                'systemctl status dhcpd',      # CentOS/RHEL
-                'systemctl status isc-dhcp-server',  # Debian/Ubuntu
+                'systemctl status dhcpd',
+                'systemctl status isc-dhcp-server',
                 'service dhcpd status',
             ]
             
@@ -564,7 +561,6 @@ class DHCPDataService:
         
         for lease_data in leases:
             try:
-                # 使用 update_or_create 來新增或更新租約
                 lease, created = DHCPLease.objects.update_or_create(
                     server=self.server,
                     ip_address=lease_data['ip_address'],
@@ -595,21 +591,10 @@ class DHCPLogParser:
     DHCP 日誌解析器
     
     .. deprecated:: 2025-10-30
-        Please use `library.utils.log_parser.DHCPLogParser` instead.
+        Please use library.utils.log_parser.DHCPLogParser instead.
         This class will be removed in future versions.
-        
-        遷移範例::
-        
-            # 舊方式
-            from api.services import DHCPLogParser
-            logs = DHCPLogParser.parse_log_file(content, limit=1000)
-            
-            # 新方式
-            from library.utils import parse_dhcp_log
-            logs = parse_dhcp_log(content, limit=1000)
     """
     
-    # 日誌等級對應
     LOG_LEVELS = {
         'INFO': 'INFO',
         'WARN': 'WARN',
@@ -639,16 +624,9 @@ class DHCPLogParser:
         
         # 嘗試多種日誌格式
         patterns = [
-            # 格式 1: [LEVEL] YYYY-MM-DD HH:MM:SS | message
             r'\[(\w+)\]\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+\|\s+(.+)',
-            
-            # 格式 2: YYYY-MM-DD HH:MM:SS LEVEL message
             r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(\w+)\s+(.+)',
-            
-            # 格式 3: syslog - Oct 27 14:30:22 hostname dhcpd[pid]: message
             r'(\w+\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+\S+:\s+(.+)',
-            
-            # 格式 4: 簡單格式 - timestamp message
             r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(.+)',
         ]
         
@@ -658,34 +636,26 @@ class DHCPLogParser:
                 groups = match.groups()
                 
                 if len(groups) == 3:
-                    # 包含等級的格式
-                    if pattern == patterns[0]:  # [LEVEL] timestamp | message
+                    if pattern == patterns[0]:
                         log_entry['level'] = groups[0].upper()
                         log_entry['timestamp'] = groups[1]
                         log_entry['message'] = groups[2]
-                    else:  # timestamp LEVEL message
+                    else:
                         log_entry['timestamp'] = groups[0]
                         log_entry['level'] = groups[1].upper()
                         log_entry['message'] = groups[2]
                 elif len(groups) == 2:
-                    # 不包含等級的格式
                     log_entry['timestamp'] = groups[0]
                     log_entry['message'] = groups[1]
-                    # 根據關鍵字推測等級
                     log_entry['level'] = DHCPLogParser._infer_log_level(groups[1])
                 
                 break
         
-        # 如果沒有匹配到任何格式，直接使用原始內容
         if not log_entry['message']:
             log_entry['message'] = line.strip()
             log_entry['level'] = DHCPLogParser._infer_log_level(line)
         
-        # 標準化日誌等級
-        log_entry['level'] = DHCPLogParser.LOG_LEVELS.get(
-            log_entry['level'], 
-            'INFO'
-        )
+        log_entry['level'] = DHCPLogParser.LOG_LEVELS.get(log_entry['level'], 'INFO')
         
         return log_entry
     
@@ -710,14 +680,12 @@ class DHCPLogParser:
         
         Args:
             content: 日誌檔案內容
-            limit: 最多返回幾行（從最後往前取）
+            limit: 最多返回幾行 (從最後往前取)
         
         Returns:
             list: 解析後的日誌條目列表
         """
         lines = content.strip().split('\n')
-        
-        # 從最後往前取指定數量的行
         lines = lines[-limit:] if len(lines) > limit else lines
         
         log_entries = []
@@ -735,49 +703,30 @@ class WindowsDHCPLogParser:
     Windows DHCP Server 日誌解析器
     
     .. deprecated:: 2025-10-30
-        請使用 `library.utils.log_parser.WindowsDHCPLogParser` 代替。
+        請使用 library.utils.log_parser.WindowsDHCPLogParser 代替。
         此類別將在未來版本中移除。
-        
-        遷移範例::
-        
-            # 舊方式
-            from api.services import WindowsDHCPLogParser
-            logs = WindowsDHCPLogParser.parse_log_lines(lines, limit=1000)
-            
-            # 新方式
-            from library.utils import parse_windows_dhcp_log
-            logs = parse_windows_dhcp_log(content, limit=1000)
-    
-    Windows DHCP 日誌格式範例（完整版）：
-    ID,Date,Time,Description,IP,Hostname,MAC,Username,TransactionID,QResult,Probationtime,CorrelationID,Dhcid,
-    VendorClass(Hex),VendorClass(ASCII),UserClass(Hex),UserClass(ASCII),RelayAgentInfo,DnsRegError
-    
-    範例：
-    10,10/27/25,14:24:02,Assign,192.168.7.199,host-name,aa:bb:cc:dd:ee:ff,0
-    11,10/18/25,15:32:59,Renew,10.250.132.27,,BCFCE73A61C9,,727830406,0,,,,0x505845436C69656E74...PXEClient:Arch:00007:UNDI:003010,0x69505845,iPXE
     """
     
-    # Windows DHCP 事件代碼對應
     EVENT_TYPES = {
-        '00': 'Start',          # 日誌開始
-        '01': 'Stop',           # 日誌停止
-        '02': 'Temporary',      # 臨時日誌停止
-        '10': 'Assign',         # 新租約分配
-        '11': 'Renew',          # 租約更新
-        '12': 'Release',        # 租約釋放
-        '13': 'Deny',           # 拒絕請求
-        '14': 'Conflict',       # IP 衝突
-        '15': 'Delete',         # 刪除租約
-        '20': 'DNS',            # DNS 記錄更新
-        '24': 'Cleanup',        # 清理過期租約
-        '25': 'DHCPREQUEST',    # DHCP Request
-        '30': 'NAP',            # 網路訪問保護
+        '00': 'Start',
+        '01': 'Stop',
+        '02': 'Temporary',
+        '10': 'Assign',
+        '11': 'Renew',
+        '12': 'Release',
+        '13': 'Deny',
+        '14': 'Conflict',
+        '15': 'Delete',
+        '20': 'DNS',
+        '24': 'Cleanup',
+        '25': 'DHCPREQUEST',
+        '30': 'NAP',
     }
     
     @staticmethod
     def identify_client_type(fields):
         """
-        識別客戶端類型（iPXE, PXE, WinPE, OS）
+        識別客戶端類型 (iPXE, PXE, WinPE, OS)
         
         Args:
             fields: 日誌欄位列表
@@ -785,36 +734,28 @@ class WindowsDHCPLogParser:
         Returns:
             tuple: (client_type, boot_stage, vendor_class, user_class)
         """
-        # 提取關鍵欄位
         hostname = fields[5].strip() if len(fields) > 5 else ''
         vendor_class_hex = fields[13].strip() if len(fields) > 13 else ''
         vendor_class_ascii = fields[14].strip() if len(fields) > 14 else ''
         user_class_hex = fields[15].strip() if len(fields) > 15 else ''
         user_class_ascii = fields[16].strip() if len(fields) > 16 else ''
         
-        # 合併 Vendor Class（取 ASCII 版本，若不存在則用 Hex）
         vendor_class = vendor_class_ascii if vendor_class_ascii else vendor_class_hex
         user_class = user_class_ascii if user_class_ascii else user_class_hex
         
-        # 識別客戶端類型和啟動階段
         if 'iPXE' in user_class or 'iPXE' in vendor_class:
-            # 明確的 iPXE 標識（通常在 User Class Option 77）
             client_type = 'iPXE'
             boot_stage = 'iPXE Loading'
         elif 'PXEClient' in vendor_class or 'PXE' in vendor_class:
-            # BIOS PXE ROM（在 Vendor Class Option 60）
             client_type = 'PXE'
             boot_stage = 'BIOS PXE'
         elif 'MSFT' in vendor_class or 'Microsoft' in vendor_class or hostname.lower().startswith('minint-'):
-            # Windows PE（Vendor Class 包含 "MSFT" 或主機名以 "minint-" 開頭）
             client_type = 'WinPE'
             boot_stage = 'Windows PE'
         elif hostname and hostname != '-' and not vendor_class and not user_class:
-            # 正常 OS（有主機名，但沒有 DHCP Options）
             client_type = 'OS'
             boot_stage = 'Operating System'
         else:
-            # 無法識別
             client_type = 'Unknown'
             boot_stage = ''
         
@@ -837,12 +778,10 @@ class WindowsDHCPLogParser:
         for line in lines:
             line = line.strip()
             
-            # 跳過空行和註釋行
             if not line or line.startswith('#'):
                 continue
             
             try:
-                # 分割欄位（用逗號分隔）
                 fields = line.split(',')
                 
                 if len(fields) < 3:
@@ -852,52 +791,46 @@ class WindowsDHCPLogParser:
                 date_str = fields[1].strip() if len(fields) > 1 else ''
                 time_str = fields[2].strip() if len(fields) > 2 else ''
                 
-                # 解析事件類型
                 event_type = WindowsDHCPLogParser.EVENT_TYPES.get(event_id, f'Unknown({event_id})')
                 
-                # 根據事件類型解析不同的欄位
                 client_type = 'Unknown'
                 boot_stage = ''
                 vendor_class = ''
                 user_class = ''
                 
-                if event_id in ['10', '11', '12', '13']:  # Assign, Renew, Release, Deny
+                if event_id in ['10', '11', '12', '13']:
                     ip_address = fields[4].strip() if len(fields) > 4 else '-'
                     hostname = fields[5].strip() if len(fields) > 5 else '-'
                     mac_address = fields[6].strip() if len(fields) > 6 else '-'
                     
-                    # 格式化 MAC 地址（轉換為標準格式）
                     if mac_address and mac_address != '-':
                         mac_address = mac_address.replace('-', ':').lower()
                     
-                    # 識別客戶端類型（iPXE, PXE, WinPE, OS）
                     client_type, boot_stage, vendor_class, user_class = WindowsDHCPLogParser.identify_client_type(fields)
                     
-                    # 優化訊息格式（包含客戶端類型資訊）
-                    if event_id == '10':  # Assign
+                    if event_id == '10':
                         message = f'DHCPOFFER of {ip_address} from ad:0d:10:73:dd:d5 via eth0'
-                    elif event_id == '11':  # Renew
+                    elif event_id == '11':
                         if client_type != 'Unknown' and client_type != 'OS':
                             message = f'DHCPREQUEST for {ip_address} from {mac_address} [{client_type}] via eth0'
                         else:
                             message = f'DHCPREQUEST for {ip_address} from {mac_address} via eth0'
-                    elif event_id == '12':  # Release
+                    elif event_id == '12':
                         message = f'DHCPRELEASE of {ip_address} from {mac_address} ({hostname})'
-                    elif event_id == '13':  # Deny
+                    elif event_id == '13':
                         message = f'DHCPDENY {ip_address} from {mac_address} ({hostname})'
                     
-                    # 判斷日誌等級
-                    if event_id == '13':  # Deny
+                    if event_id == '13':
                         level = 'WARN'
                     else:
                         level = 'INFO'
                 
-                elif event_id == '14':  # IP Conflict
+                elif event_id == '14':
                     ip_address = fields[4].strip() if len(fields) > 4 else '-'
                     message = f'IP conflict detected: {ip_address}'
                     level = 'ERROR'
                 
-                elif event_id in ['20', '30', '31']:  # DNS operations
+                elif event_id in ['20', '30', '31']:
                     ip_address = fields[4].strip() if len(fields) > 4 else '-'
                     hostname = fields[5].strip() if len(fields) > 5 else '-'
                     
@@ -912,14 +845,11 @@ class WindowsDHCPLogParser:
                         level = 'WARN'
                 
                 else:
-                    # 其他事件類型，顯示原始內容
                     message = ' '.join(fields[3:]) if len(fields) > 3 else event_type
                     level = 'INFO'
                 
-                # 解析時間戳（Windows 格式: MM/DD/YY HH:MM:SS）
                 try:
                     timestamp = f'{date_str} {time_str}'
-                    # 轉換為標準格式
                     dt = datetime.strptime(timestamp, '%m/%d/%y %H:%M:%S')
                     timestamp = dt.strftime('%Y-%m-%d %H:%M:%S')
                 except:
@@ -941,7 +871,6 @@ class WindowsDHCPLogParser:
                 logger.debug(f'解析日誌行失敗: {line} - {str(e)}')
                 continue
         
-        # 限制返回數量
         if len(logs) > limit:
             logs = logs[-limit:]
         
@@ -981,7 +910,6 @@ class DHCPLogService:
         }
         
         try:
-            # 從 Windows DHCP Server 讀取日誌
             with WindowsSSHPowerShellService(self.server) as service:
                 log_lines = service.get_dhcp_logs(limit=limit)
                 
@@ -989,20 +917,15 @@ class DHCPLogService:
                     logger.warning(f'無法讀取 Windows DHCP 日誌 ({self.server.ip_address})')
                     return stats
                 
-                # 使用新的 Log Parser 模組解析日誌
                 from library.utils import parse_windows_dhcp_log
-                # 將 log_lines 列表轉換為字串（以換行符分隔）
                 content = '\n'.join(log_lines)
                 logs = parse_windows_dhcp_log(content, limit=limit)
                 stats['total'] = len(logs)
                 
-                # 批次插入資料庫（避免重複）
                 for log_data in logs:
                     try:
-                        # 解析時間戳
                         timestamp = datetime.strptime(log_data['timestamp'], '%Y-%m-%d %H:%M:%S')
                         
-                        # 檢查是否已存在（使用 server + timestamp + raw 作為唯一識別）
                         exists = DHCPLog.objects.filter(
                             server=self.server,
                             timestamp=timestamp,
@@ -1013,7 +936,6 @@ class DHCPLogService:
                             stats['skipped'] += 1
                             continue
                         
-                        # 建立新日誌
                         DHCPLog.objects.create(
                             server=self.server,
                             timestamp=timestamp,
@@ -1041,25 +963,19 @@ class DHCPLogService:
     
     def get_db_logs(self, limit=100, page=1, level=None, client_type=None, keyword=None, start_time=None, end_time=None):
         """
-        從資料庫讀取日誌（支援分頁和篩選）
+        從資料庫讀取日誌 (支援分頁和篩選)
         
         Args:
             limit: 每頁數量
-            page: 頁碼（從 1 開始）
+            page: 頁碼 (從 1 開始)
             level: 日誌等級篩選
-            client_type: 客戶端類型篩選（iPXE, PXE, WinPE, OS, Unknown）
+            client_type: 客戶端類型篩選
             keyword: 關鍵字篩選
-            start_time: 開始時間 (datetime 物件)
-            end_time: 結束時間 (datetime 物件)
+            start_time: 開始時間
+            end_time: 結束時間
         
         Returns:
-            dict: {
-                'logs': [...],
-                'total': 總數,
-                'page': 當前頁碼,
-                'page_size': 每頁數量,
-                'total_pages': 總頁數
-            }
+            dict: 日誌數據和分頁資訊
         """
         from .models import DHCPLog
         from django.db.models import Q
@@ -1069,44 +985,35 @@ class DHCPLogService:
             return {'logs': [], 'total': 0, 'page': 1, 'page_size': limit, 'total_pages': 0}
         
         try:
-            # 建立查詢
             queryset = DHCPLog.objects.filter(server=self.server)
             
-            # 篩選日誌等級
             if level and level != 'ALL':
                 queryset = queryset.filter(level=level)
             
-            # 篩選客戶端類型
             if client_type and client_type != 'ALL':
                 queryset = queryset.filter(client_type=client_type)
             
-            # 篩選關鍵字
             if keyword:
                 queryset = queryset.filter(
                     Q(message__icontains=keyword) | 
                     Q(event__icontains=keyword) |
-                    Q(vendor_class__icontains=keyword) |  # 新增：搜尋 Vendor Class
-                    Q(user_class__icontains=keyword)      # 新增：搜尋 User Class
+                    Q(vendor_class__icontains=keyword) |
+                    Q(user_class__icontains=keyword)
                 )
             
-            # 篩選時間範圍
             if start_time:
                 queryset = queryset.filter(timestamp__gte=start_time)
             if end_time:
                 queryset = queryset.filter(timestamp__lte=end_time)
             
-            # 排序
             queryset = queryset.order_by('-timestamp')
             
-            # 計算總數
             total = queryset.count()
             total_pages = (total + limit - 1) // limit if total > 0 else 0
             
-            # 分頁
             offset = (page - 1) * limit
             logs_qs = queryset[offset:offset + limit]
             
-            # 轉換為字典格式
             logs = []
             for log in logs_qs:
                 logs.append({
@@ -1143,8 +1050,8 @@ class DHCPLogService:
             limit: 最多返回幾行
             level: 篩選日誌等級
             keyword: 篩選關鍵字
-            start_time: 開始時間 (YYYY-MM-DD HH:mm:ss)
-            end_time: 結束時間 (YYYY-MM-DD HH:mm:ss)
+            start_time: 開始時間
+            end_time: 結束時間
         
         Returns:
             list: 日誌條目列表
@@ -1153,7 +1060,6 @@ class DHCPLogService:
         from datetime import datetime
         
         try:
-            # 確保路徑是相對於專案根目錄
             if not log_file.startswith('/'):
                 log_file = os.path.join('/app', log_file)
             
@@ -1164,37 +1070,27 @@ class DHCPLogService:
             with open(log_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # 使用新的 Log Parser 模組
             from library.utils import parse_dhcp_log
-            logs = parse_dhcp_log(content, limit=limit * 2)  # 多讀一些以備篩選
+            logs = parse_dhcp_log(content, limit=limit * 2)
             
-            # 篩選日誌等級
             if level and level != 'ALL':
                 logs = [log for log in logs if log['level'] == level]
             
-            # 篩選關鍵字
             if keyword:
                 keyword_lower = keyword.lower()
-                logs = [
-                    log for log in logs 
-                    if keyword_lower in log['message'].lower()
-                ]
+                logs = [log for log in logs if keyword_lower in log['message'].lower()]
             
-            # 篩選時間範圍
             if start_time or end_time:
                 filtered_logs = []
                 for log in logs:
                     try:
-                        # 解析日誌時間戳 (2025-10-27 12:44:02)
                         log_time = datetime.strptime(log['timestamp'], '%Y-%m-%d %H:%M:%S')
                         
-                        # 檢查開始時間
                         if start_time:
                             start_dt = datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
                             if log_time < start_dt:
                                 continue
                         
-                        # 檢查結束時間
                         if end_time:
                             end_dt = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S')
                             if log_time > end_dt:
@@ -1202,15 +1098,13 @@ class DHCPLogService:
                         
                         filtered_logs.append(log)
                     except ValueError:
-                        # 時間格式解析失敗，保留該日誌
                         filtered_logs.append(log)
                 
                 logs = filtered_logs
             
-            # 限制返回數量
             logs = logs[-limit:] if len(logs) > limit else logs
             
-            logger.info(f'讀取本地日誌: {len(logs)} 筆 (時間範圍: {start_time} ~ {end_time})')
+            logger.info(f'讀取本地日誌: {len(logs)} 筆')
             return logs
         
         except Exception as e:
@@ -1225,8 +1119,8 @@ class DHCPLogService:
             limit: 返回數量限制
             level: 日誌等級篩選
             keyword: 關鍵字篩選
-            start_time: 開始時間 (YYYY-MM-DD HH:mm:ss)
-            end_time: 結束時間 (YYYY-MM-DD HH:mm:ss)
+            start_time: 開始時間
+            end_time: 結束時間
         
         Returns:
             list: 日誌條目列表
@@ -1239,33 +1133,24 @@ class DHCPLogService:
             return []
         
         try:
-            # 使用 SSH + PowerShell 讀取 Windows DHCP 日誌
             with WindowsSSHPowerShellService(self.server) as service:
-                # 讀取今天的 DHCP 日誌（讀取 limit * 3 以備篩選）
                 log_lines = service.get_dhcp_logs(limit=limit * 3)
                 
                 if not log_lines:
                     logger.warning(f'無法讀取 Windows DHCP 日誌 ({self.server.ip_address})')
                     return []
                 
-                # 使用新的 Log Parser 模組解析 Windows DHCP 日誌（增加解析量以備篩選）
                 from library.utils import parse_windows_dhcp_log
                 content = '\n'.join(log_lines)
                 logs = parse_windows_dhcp_log(content, limit=limit * 3)
                 
-                # 篩選日誌等級
                 if level and level != 'ALL':
                     logs = [log for log in logs if log['level'] == level]
                 
-                # 篩選關鍵字
                 if keyword:
                     keyword_lower = keyword.lower()
-                    logs = [
-                        log for log in logs 
-                        if keyword_lower in log['message'].lower()
-                    ]
+                    logs = [log for log in logs if keyword_lower in log['message'].lower()]
                 
-                # 篩選時間範圍
                 if start_time or end_time:
                     filtered_logs = []
                     for log in logs:
@@ -1284,12 +1169,10 @@ class DHCPLogService:
                             
                             filtered_logs.append(log)
                         except ValueError:
-                            # 時間格式解析失敗，保留該日誌
                             filtered_logs.append(log)
                     
                     logs = filtered_logs
                 
-                # 限制返回數量
                 logs = logs[-limit:] if len(logs) > limit else logs
                 
                 logger.info(f'讀取 Windows DHCP 遠端日誌: {len(logs)} 筆')
@@ -1301,7 +1184,7 @@ class DHCPLogService:
 
 
 class LinuxDHCPConfigService:
-    """Linux DHCP 配置同步服務 - 解析 dhcpd.conf 並創建 Scope"""
+    """Linux DHCP 配置同步服務"""
     
     def __init__(self, dhcp_server):
         """
@@ -1324,7 +1207,7 @@ class LinuxDHCPConfigService:
     
     def sync_config_to_db(self):
         """
-        從 dhcpd.conf 同步配置到資料庫，創建 DHCPScope 記錄
+        從 dhcpd.conf 同步配置到資料庫,創建 DHCPScope 記錄
         
         Returns:
             dict: 同步結果統計
@@ -1333,7 +1216,6 @@ class LinuxDHCPConfigService:
         from django.utils import timezone
         
         try:
-            # 建立 SSH 連接
             self.ssh = DHCPServerSSH(
                 host=self.server.ip_address,
                 port=self.server.ssh_port,
@@ -1345,7 +1227,6 @@ class LinuxDHCPConfigService:
             if not self.ssh.connect():
                 raise Exception(f'無法連接到 DHCP Server: {self.server.ip_address}')
             
-            # 讀取 dhcpd.conf 配置文件
             config_path = self.server.dhcp_config_path
             logger.info(f'讀取配置文件: {config_path}')
             
@@ -1355,7 +1236,6 @@ class LinuxDHCPConfigService:
             if error or not output:
                 raise Exception(f'讀取配置文件失敗: {error}')
             
-            # 解析配置文件
             scopes = DHCPConfigParser.parse_config_file(output)
             
             if not scopes:
@@ -1368,7 +1248,6 @@ class LinuxDHCPConfigService:
                     'message': '未找到 subnet 定義'
                 }
             
-            # 統計資料
             stats = {
                 'scopes_found': len(scopes),
                 'scopes_created': 0,
@@ -1376,11 +1255,9 @@ class LinuxDHCPConfigService:
                 'scopes_with_leases': 0,
             }
             
-            # 處理每個 Scope
             for scope_data in scopes:
                 scope_id = scope_data['scope_id']
                 
-                # 計算總 IP 數量（所有 range 的總和）
                 total_addresses = 0
                 start_range = None
                 end_range = None
@@ -1392,12 +1269,10 @@ class LinuxDHCPConfigService:
                     )
                     total_addresses += range_count
                     
-                    # 使用第一個 range 作為代表
                     if start_range is None:
                         start_range = ip_range['start']
                         end_range = ip_range['end']
                 
-                # 計算已使用的 IP 數量（從租約表統計）
                 in_use_addresses = DHCPLease.objects.filter(
                     server=self.server,
                     is_active=True,
@@ -1408,7 +1283,6 @@ class LinuxDHCPConfigService:
                 available_addresses = total_addresses - in_use_addresses
                 usage_percentage = (in_use_addresses / total_addresses * 100) if total_addresses > 0 else 0
                 
-                # 創建或更新 Scope
                 scope, created = DHCPScope.objects.update_or_create(
                     server=self.server,
                     scope_id=scope_id,
@@ -1436,7 +1310,6 @@ class LinuxDHCPConfigService:
                 if in_use_addresses > 0:
                     stats['scopes_with_leases'] += 1
             
-            # 更新伺服器的 pool_usage（所有 Scope 的平均使用率）
             all_scopes = DHCPScope.objects.filter(server=self.server)
             if all_scopes.exists():
                 avg_usage = sum(s.usage_percentage for s in all_scopes) / all_scopes.count()
