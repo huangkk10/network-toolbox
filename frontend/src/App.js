@@ -40,13 +40,16 @@ function AppLayout() {
     };
 
     const getPageTitle = (pathname) => {
+        // 處理 DHCP Analytics 子路由
+        if (pathname.startsWith('/dhcp-analytics')) {
+            return 'DHCP Server 分析';
+        }
+        
         switch (pathname) {
             case '/login':
                 return '登入';
             case '/dashboard':
                 return 'Dashboard';
-            case '/dhcp-analytics':
-                return 'DHCP Server 分析';
             case '/nas-analytics':
                 return 'NAS 分析';
             case '/ipxe-analytics':
@@ -106,7 +109,12 @@ function AppLayout() {
                     <Routes>
                         <Route path="/" element={<Navigate to="/dhcp-analytics" replace />} />
                         <Route path="/dashboard" element={<DashboardPage />} />
+                        
+                        {/* DHCP Analytics 路由 - 支援子路由 */}
                         <Route path="/dhcp-analytics" element={<DHCPAnalyticsPage />} />
+                        <Route path="/dhcp-analytics/:tab" element={<DHCPAnalyticsPage />} />
+                        <Route path="/dhcp-analytics/server/:serverId/:tab" element={<DHCPAnalyticsPage />} />
+                        
                         <Route path="/nas-analytics" element={<NASAnalyticsPage />} />
                         <Route path="/ipxe-analytics" element={<IPXEAnalyticsPage />} />
                         <Route path="/system-monitor" element={<SystemMonitorPage />} />

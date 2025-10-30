@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Tabs, Select, Button, Space, Typography, message } from 'antd';
+import { Card, Tabs, Select, Button, Space, Typography, message, Breadcrumb } from 'antd';
 import {
     BarChartOutlined,
     UnorderedListOutlined,
@@ -8,7 +8,9 @@ import {
     SettingOutlined,
     GlobalOutlined,
     ReloadOutlined,
+    HomeOutlined,
 } from '@ant-design/icons';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import axios from 'axios';
 
 // Tab 組件
@@ -21,8 +23,15 @@ import ConfigTab from '../components/dhcp-analytics/ConfigTab';
 const { Title } = Typography;
 
 const DHCPAnalyticsPage = () => {
-    const [selectedServer, setSelectedServer] = useState('all');
-    const [activeTab, setActiveTab] = useState('overview');
+    // 從 URL 獲取參數
+    const { serverId: urlServerId, tab: urlTab } = useParams();
+    const [searchParams] = useSearchParams();
+    const navigate = useNavigate();
+    
+    // 從 URL 決定當前狀態（URL 為唯一真實來源）
+    const activeTab = urlTab || 'overview';
+    const selectedServer = urlServerId || searchParams.get('server') || 'all';
+    
     const [loading, setLoading] = useState(false);
     const [servers, setServers] = useState([]);
     const [loadingServers, setLoadingServers] = useState(false);
@@ -45,14 +54,47 @@ const DHCPAnalyticsPage = () => {
     useEffect(() => {
         fetchServers();
     }, []);
+    
+    // 動態設定頁面標題
+    useEffect(() => {
+        const serverInfo = servers.find(s => s.id.toString() === selectedServer);
+        const serverName = serverInfo ? 
+            `${serverInfo.ip_address} (${serverInfo.name})` : 
+            selectedServer === 'all' ? '所有 Server' : 'Server';
+        
+        const tabName = {
+            'overview': '概覽',
+            'logs': '日誌查看',
+            'leases': '租約管理',
+            'statistics': '統計分析',
+            'config': 'Server 設定',
+        }[activeTab] || '概覽';
+        
+        document.title = `${tabName} - ${serverName} | DHCP Server 分析`;
+    }, [activeTab, selectedServer, servers]);
 
+    // Server 切換處理（保持當前 Tab）
     const handleServerChange = (serverId) => {
-        setSelectedServer(serverId);
         console.log('切換到 Server:', serverId);
+        
+        if (serverId === 'all') {
+            // 切換到彙總視圖
+            navigate(`/dhcp-analytics/${activeTab}`);
+        } else {
+            // 切換到特定 Server
+            navigate(`/dhcp-analytics/server/${serverId}/${activeTab}`);
+        }
     };
 
+    // Tab 切換處理（保持當前 Server）
     const handleTabChange = (key) => {
-        setActiveTab(key);
+        if (selectedServer === 'all') {
+            // 彙總視圖
+            navigate(`/dhcp-analytics/${key}`);
+        } else {
+            // 特定 Server
+            navigate(`/dhcp-analytics/server/${selectedServer}/${key}`);
+        }
     };
 
     const handleRefresh = () => {
@@ -120,9 +162,53 @@ const DHCPAnalyticsPage = () => {
             children: <ConfigTab serverId={selectedServer} />,
         },
     ];
+    
+    // 生成麵包屑
+    const renderBreadcrumb = () => {
+        const serverInfo = servers.find(s => s.id.toString() === selectedServer);
+        const serverName = serverInfo ? 
+            `${serverInfo.ip_address} (${serverInfo.name})` : 
+            '所有 Server';
+        
+        const tabName = {
+            'overview': '概覽',
+            'logs': '日誌查看',
+            'leases': '租約管理',
+            'statistics': '統計分析',
+            'config': 'Server 設定',
+        }[activeTab] || '概覽';
+        
+        return (
+            <Breadcrumb style={{ marginBottom: '16px' }}>
+                <Breadcrumb.Item>
+                    <Link to="/dashboard">
+                        <HomeOutlined /> Home
+                    </Link>
+                </Breadcrumb.Item>
+                <Breadcrumb.Item>
+                    <Link to="/dhcp-analytics/overview">
+                        <GlobalOutlined /> DHCP Server 分析
+                    </Link>
+                </Breadcrumb.Item>
+                {selectedServer !== 'all' && serverInfo ? (
+                    <Breadcrumb.Item>
+                        <Link to={`/dhcp-analytics/server/${selectedServer}/overview`}>
+                            {serverName}
+                        </Link>
+                    </Breadcrumb.Item>
+                ) : (
+                    <Breadcrumb.Item>{serverName}</Breadcrumb.Item>
+                )}
+                <Breadcrumb.Item>{tabName}</Breadcrumb.Item>
+            </Breadcrumb>
+        );
+    };
 
     return (
         <div style={{ padding: '24px', background: '#f5f5f5' }}>
+            {/* 麵包屑導航 */}
+            {renderBreadcrumb()}
+            
             <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Title level={3} style={{ margin: 0 }}>
                     <GlobalOutlined /> DHCP Server 分析
