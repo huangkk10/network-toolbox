@@ -25,18 +25,7 @@ import {
     DownloadOutlined,
     WarningOutlined,
 } from '@ant-design/icons';
-import {
-    LineChart,
-    Line,
-    AreaChart,
-    Area,
-    XAxis,
-    YAxis,
-    CartesianGrid,
-    Tooltip,
-    Legend,
-    ResponsiveContainer,
-} from 'recharts';
+import NetworkQualityChart from '../NetworkQualityChart';
 
 const { Text } = Typography;
 const { Option } = Select;
@@ -342,142 +331,90 @@ const NetworkQualityTab = ({ serverId }) => {
                         </Col>
                     </Row>
 
-                    {/* Ping 延遲趨勢圖 */}
-                    <Card title="Ping 延遲趨勢" style={{ marginBottom: '16px' }}>
-                        {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={250}>
-                                <LineChart data={statistics.quality_trends}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis 
-                                        dataKey="time" 
-                                        angle={-45}
-                                        textAnchor="end"
-                                        height={80}
-                                        tick={{ fontSize: 12 }}
-                                    />
-                                    <YAxis 
-                                        label={{ value: '延遲 (ms)', angle: -90, position: 'insideLeft' }}
-                                    />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Line 
-                                        type="monotone" 
-                                        dataKey="ping_latency" 
-                                        stroke="#2196f3" 
-                                        name="Ping 延遲"
-                                        connectNulls
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        ) : (
+                    {/* Ping 延遲趨勢圖 - 使用新的品質分級圖表 */}
+                    {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
+                        <NetworkQualityChart
+                            data={statistics.quality_trends.map(item => ({
+                                timestamp: item.time,
+                                value: item.ping_latency,
+                            }))}
+                            metricType="ping"
+                            title="Ping 延遲"
+                            unit="ms"
+                        />
+                    ) : (
+                        <Card title="Ping 延遲趨勢" style={{ marginBottom: '16px' }}>
                             <Empty description="無數據" />
-                        )}
-                    </Card>
+                        </Card>
+                    )}
 
-                    {/* 響應時間對比圖 */}
-                    <Card title="響應時間對比" style={{ marginBottom: '16px' }}>
-                        {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={250}>
-                                <LineChart data={statistics.quality_trends}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis 
-                                        dataKey="time" 
-                                        angle={-45}
-                                        textAnchor="end"
-                                        height={80}
-                                        tick={{ fontSize: 12 }}
-                                    />
-                                    <YAxis 
-                                        label={{ value: '響應時間 (ms)', angle: -90, position: 'insideLeft' }}
-                                    />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Line 
-                                        type="monotone" 
-                                        dataKey="http_response_time" 
-                                        stroke="#52c41a" 
-                                        name="HTTP 響應"
-                                        connectNulls
-                                    />
-                                    <Line 
-                                        type="monotone" 
-                                        dataKey="ssh_response_time" 
-                                        stroke="#faad14" 
-                                        name="SSH 響應"
-                                        connectNulls
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        ) : (
+                    {/* HTTP 響應時間趨勢圖 - 使用新的品質分級圖表 */}
+                    {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
+                        <NetworkQualityChart
+                            data={statistics.quality_trends.map(item => ({
+                                timestamp: item.time,
+                                value: item.http_response_time,
+                            }))}
+                            metricType="http"
+                            title="HTTP 響應時間"
+                            unit="ms"
+                        />
+                    ) : (
+                        <Card title="HTTP 響應時間" style={{ marginBottom: '16px' }}>
                             <Empty description="無數據" />
-                        )}
-                    </Card>
+                        </Card>
+                    )}
 
-                    {/* 丟包率趨勢圖 */}
-                    <Card title="丟包率趨勢" style={{ marginBottom: '16px' }}>
-                        {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={250}>
-                                <AreaChart data={statistics.quality_trends}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis 
-                                        dataKey="time" 
-                                        angle={-45}
-                                        textAnchor="end"
-                                        height={80}
-                                        tick={{ fontSize: 12 }}
-                                    />
-                                    <YAxis 
-                                        label={{ value: '丟包率 (%)', angle: -90, position: 'insideLeft' }}
-                                    />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Area 
-                                        type="monotone" 
-                                        dataKey="packet_loss" 
-                                        stroke="#ff4d4f" 
-                                        fill="#ff4d4f"
-                                        fillOpacity={0.3}
-                                        name="丟包率"
-                                        connectNulls
-                                    />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        ) : (
+                    {/* SSH 響應時間趨勢圖 - 使用新的品質分級圖表 */}
+                    {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
+                        <NetworkQualityChart
+                            data={statistics.quality_trends.map(item => ({
+                                timestamp: item.time,
+                                value: item.ssh_response_time,
+                            }))}
+                            metricType="ssh"
+                            title="SSH 響應時間"
+                            unit="ms"
+                        />
+                    ) : (
+                        <Card title="SSH 響應時間" style={{ marginBottom: '16px' }}>
                             <Empty description="無數據" />
-                        )}
-                    </Card>
+                        </Card>
+                    )}
 
-                    {/* 下載速度趨勢圖 */}
-                    <Card title="下載速度趨勢" style={{ marginBottom: '16px' }}>
-                        {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={250}>
-                                <LineChart data={statistics.quality_trends}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis 
-                                        dataKey="time" 
-                                        angle={-45}
-                                        textAnchor="end"
-                                        height={80}
-                                        tick={{ fontSize: 12 }}
-                                    />
-                                    <YAxis 
-                                        label={{ value: '下載速度 (MB/s)', angle: -90, position: 'insideLeft' }}
-                                    />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Line 
-                                        type="monotone" 
-                                        dataKey="download_speed" 
-                                        stroke="#722ed1" 
-                                        name="下載速度"
-                                        connectNulls
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        ) : (
+                    {/* 丟包率趨勢圖 - 使用新的品質分級圖表 */}
+                    {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
+                        <NetworkQualityChart
+                            data={statistics.quality_trends.map(item => ({
+                                timestamp: item.time,
+                                value: item.packet_loss,
+                            }))}
+                            metricType="packet_loss"
+                            title="丟包率"
+                            unit="%"
+                        />
+                    ) : (
+                        <Card title="丟包率趨勢" style={{ marginBottom: '16px' }}>
                             <Empty description="無數據" />
-                        )}
-                    </Card>
+                        </Card>
+                    )}
+
+                    {/* 下載速度趨勢圖 - 使用新的品質分級圖表 */}
+                    {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
+                        <NetworkQualityChart
+                            data={statistics.quality_trends.map(item => ({
+                                timestamp: item.time,
+                                value: item.download_speed,
+                            }))}
+                            metricType="download_speed"
+                            title="下載速度"
+                            unit="MB/s"
+                        />
+                    ) : (
+                        <Card title="下載速度趨勢" style={{ marginBottom: '16px' }}>
+                            <Empty description="無數據" />
+                        </Card>
+                    )}
                 </>
             )}
 
