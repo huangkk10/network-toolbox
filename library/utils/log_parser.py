@@ -222,11 +222,19 @@ class WindowsDHCPLogParser:
             # 解析事件類型
             event_type = cls.EVENT_TYPES.get(event_id, f'Unknown({event_id})')
             
+            # 解析並格式化時間戳（轉換為標準格式）
+            try:
+                dt = datetime.strptime(f'{date_str} {time_str}', '%m/%d/%y %H:%M:%S')
+                timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                # 如果解析失敗，保留原始格式
+                timestamp_str = f'{date_str} {time_str}'
+            
             # 基本日誌條目
             log_entry = {
                 'event_id': event_id,
                 'event_type': event_type,
-                'timestamp': f'{date_str} {time_str}',
+                'timestamp': timestamp_str,
                 'raw': line,
             }
             
