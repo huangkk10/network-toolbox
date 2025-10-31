@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Tabs, Select, Button, Space, Typography, message } from 'antd';
+import { Card, Tabs, Select, Button, Space, Typography, message, Breadcrumb } from 'antd';
 import {
     BarChartOutlined,
     FileTextOutlined,
@@ -7,8 +7,10 @@ import {
     CloudServerOutlined,
     ReloadOutlined,
     GlobalOutlined,
+    HomeOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { Link } from 'react-router-dom';
 
 // Tab 組件
 import OverviewTab from '../components/ipxe-analytics/OverviewTab';
@@ -123,12 +125,50 @@ const IPXEAnalyticsPage = () => {
         },
     ];
 
-    return (
-        <div style={{ padding: '24px', background: '#f5f5f5' }}>
-            <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Title level={3} style={{ margin: 0 }}>
-                    <CloudServerOutlined /> IPXE 伺服器分析
-                </Title>
+    // 獲取當前選擇的伺服器資訊
+    const serverInfo = servers.find(s => s.id.toString() === selectedServer);
+    const serverName = selectedServer === 'all' 
+        ? '所有 Server（彙整）' 
+        : serverInfo 
+            ? `${serverInfo.name} (${serverInfo.ip_address})`
+            : '載入中...';
+
+    // Tab 對應的中文名稱
+    const tabNameMap = {
+        'overview': '概覽',
+        'logs': '日誌查看',
+        'statistics': '統計分析',
+        'network-quality': '網路品質',
+    };
+    const tabName = tabNameMap[activeTab] || activeTab;
+
+    // 渲染麵包屑導航
+    const renderBreadcrumb = () => {
+        return (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <Breadcrumb>
+                    <Breadcrumb.Item>
+                        <Link to="/dashboard">
+                            <HomeOutlined /> Home
+                        </Link>
+                    </Breadcrumb.Item>
+                    <Breadcrumb.Item>
+                        <Link to="/ipxe-analytics/overview">
+                            <GlobalOutlined /> iPXE 分析
+                        </Link>
+                    </Breadcrumb.Item>
+                    {selectedServer !== 'all' && serverInfo ? (
+                        <Breadcrumb.Item>
+                            <Link to={`/ipxe-analytics/server/${selectedServer}/overview`}>
+                                {serverName}
+                            </Link>
+                        </Breadcrumb.Item>
+                    ) : (
+                        <Breadcrumb.Item>{serverName}</Breadcrumb.Item>
+                    )}
+                    <Breadcrumb.Item>{tabName}</Breadcrumb.Item>
+                </Breadcrumb>
+                
                 <Space>
                     <Select
                         style={{ width: 280 }}
@@ -143,6 +183,14 @@ const IPXEAnalyticsPage = () => {
                     </Button>
                 </Space>
             </div>
+        );
+    };
+
+    return (
+        <div style={{ padding: '24px', background: '#f5f5f5' }}>
+            {/* 麵包屑導航與操作按鈕 */}
+            {renderBreadcrumb()}
+            
             <Card>
                 <Tabs activeKey={activeTab} onChange={handleTabChange} items={tabItems} size="large" />
             </Card>
