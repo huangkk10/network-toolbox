@@ -244,6 +244,8 @@ class WindowsDHCPLogParser:
                 log_entry['hostname'] = fields[5].strip() if len(fields) > 5 else '-'
                 log_entry['mac_address'] = cls._format_mac_address(fields[6].strip() if len(fields) > 6 else '-')
                 
+                logger.debug(f'[Parsing DHCP Log] Event={event_type}, IP={log_entry["ip_address"]}, MAC={log_entry["mac_address"]}')
+                
                 # 識別客戶端類型（iPXE, PXE, WinPE, OS）
                 client_info = cls.identify_client_type(fields)
                 log_entry.update(client_info)
@@ -253,6 +255,9 @@ class WindowsDHCPLogParser:
                 
                 # 判斷日誌等級
                 log_entry['level'] = LogLevel.WARN if event_id == '13' else LogLevel.INFO
+                
+                # 記錄最終結果
+                logger.debug(f'[Parsed Result] {log_entry["message"]} | Client Type: {log_entry.get("client_type", "Unknown")}')
             
             elif event_id == '14':  # IP Conflict
                 log_entry['ip_address'] = fields[4].strip() if len(fields) > 4 else '-'
@@ -283,6 +288,7 @@ class WindowsDHCPLogParser:
         """
         # 提取關鍵欄位
         hostname = fields[5].strip() if len(fields) > 5 else ''
+        mac_address = fields[6].strip() if len(fields) > 6 else ''
         vendor_class_hex = fields[13].strip() if len(fields) > 13 else ''
         vendor_class_ascii = fields[14].strip() if len(fields) > 14 else ''
         user_class_hex = fields[15].strip() if len(fields) > 15 else ''
@@ -292,22 +298,52 @@ class WindowsDHCPLogParser:
         vendor_class = vendor_class_ascii if vendor_class_ascii else vendor_class_hex
         user_class = user_class_ascii if user_class_ascii else user_class_hex
         
-        # 識別客戶端類型和啟動階段
+        # 記錄詳細的識別資訊
+        logger.debug(f'[Client Type Detection] MAC: {mac_address}')
+        logger.debug(f'  Hostname: "{hostname}" (empty={not hostname}, is_dash={hostname == "-"})')
+        logger.debug(f'  Vendor Class (Hex): {vendor_class_hex}')
+        logger.debug(f'  Vendor Class (ASCII): {vendor_class_ascii}')
+        logger.debug(f'  User Class (Hex): {user_class_hex}')
+        logger.debug(f'  User Class (ASCII): {user_class_ascii}')
+        
+        # 識別客戶端類型和啟動階段（優先級順序）
         if 'iPXE' in user_class or 'iPXE' in vendor_class:
+            # 1. DHCP Option 明確標示 iPXE
             client_type = 'iPXE'
             boot_stage = 'iPXE Loading'
+            logger.debug(f'  ✓ Matched: iPXE (found "iPXE" in user_class or vendor_class)')
         elif 'PXEClient' in vendor_class or 'PXE' in vendor_class:
+            # 2. DHCP Option 明確標示 PXE
             client_type = 'PXE'
             boot_stage = 'BIOS PXE'
-        elif 'MSFT' in vendor_class or 'Microsoft' in vendor_class or hostname.lower().startswith('minint-'):
+            logger.debug(f'  ✓ Matched: PXE (found "PXEClient" or "PXE" in vendor_class)')
+        elif hostname.lower().startswith('minint-'):
+            # 3. 標準 WinPE 主機名稱格式
             client_type = 'WinPE'
             boot_stage = 'Windows PE'
+            logger.debug(f'  ✓ Matched: WinPE (hostname starts with "MININT-")')
+        elif ('MSFT' in vendor_class or 'Microsoft' in vendor_class) and (not hostname or hostname == '-'):
+            # 4. MSFT Vendor Class + 無主機名稱 = WinPE
+            client_type = 'WinPE'
+            boot_stage = 'Windows PE'
+            logger.debug(f'  ✓ Matched: WinPE (MSFT vendor class + no hostname)')
+        elif ('MSFT' in vendor_class or 'Microsoft' in vendor_class) and hostname and hostname != '-' and not hostname.lower().startswith('minint-'):
+            # 5. 正常的 Windows 系統：有主機名且不是 MININT- 開頭
+            client_type = 'Windows'
+            boot_stage = 'Operating System'
+            logger.debug(f'  ✓ Matched: Windows OS (MSFT vendor class + hostname "{hostname}" without MININT- prefix)')
         elif hostname and hostname != '-' and not vendor_class and not user_class:
+            # 6. 一般作業系統
             client_type = 'OS'
             boot_stage = 'Operating System'
+            logger.debug(f'  ✓ Matched: Generic OS (has hostname, no vendor/user class)')
         else:
+            # 7. 無法識別
             client_type = 'Unknown'
             boot_stage = ''
+            logger.debug(f'  ✗ No match: Unknown client type')
+        
+        logger.debug(f'  → Result: client_type={client_type}, boot_stage={boot_stage}')
         
         return {
             'client_type': client_type,
@@ -432,14 +468,14 @@ class IPXELogParser:
             logger.warning(f'無法解析時間戳: {timestamp_str}')
             return None
         
-        # 基本日誌條目
+        # 基本日誌條目（不包含 protocol，因為 IPXELog 模型不需要）
         log_entry = {
             'log_type': log_type,
             'timestamp': timestamp,
             'client_ip': client_ip,
             'method': method,
             'url': url,
-            'protocol': protocol,
+            # 'protocol': protocol,  # 移除：IPXELog 模型沒有此欄位
             'status_code': int(status_code),
             'bytes_sent': int(bytes_sent),
             'user_agent': user_agent,

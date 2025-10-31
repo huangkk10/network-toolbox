@@ -257,6 +257,17 @@ LOGGING = {
             'formatter': 'simple',
             'encoding': 'utf-8',
         },
+        # Debug 詳細日誌（保留 3 天，用於調試）
+        'debug_file': {
+            'level': 'DEBUG',
+            'class': 'logging.handlers.TimedRotatingFileHandler',
+            'filename': '/app/logs/debug.log',
+            'when': 'midnight',
+            'interval': 1,
+            'backupCount': 3,  # Debug log 只保留 3 天
+            'formatter': 'detailed',
+            'encoding': 'utf-8',
+        },
     },
     'loggers': {
         # API Views
@@ -282,6 +293,12 @@ LOGGING = {
         'api.services': {
             'handlers': ['console', 'daily_file', 'daily_error_file'],
             'level': 'INFO',
+            'propagate': False,
+        },
+        # Library 工具模組（包含 log_parser）- 啟用 DEBUG
+        'library.utils': {
+            'handlers': ['console', 'debug_file', 'daily_file'],
+            'level': 'DEBUG',
             'propagate': False,
         },
         # Root logger
