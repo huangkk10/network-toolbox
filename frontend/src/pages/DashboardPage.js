@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Button, Alert, Table, Tag, Space, Progress } from 'antd';
+import { Card, Row, Col, Statistic, Button, Alert, Table, Tag, Space, Progress, message } from 'antd';
 import {
     DatabaseOutlined,
     CheckCircleOutlined,
@@ -7,81 +7,121 @@ import {
     ReloadOutlined,
     ArrowUpOutlined,
     ArrowDownOutlined,
+    CloseCircleOutlined,
 } from '@ant-design/icons';
+import axios from 'axios';
 import './DashboardPage.css';
 
 const DashboardPage = () => {
     const [loading, setLoading] = useState(false);
     const [dashboardData, setDashboardData] = useState({
-        totalServers: 3,
-        totalLeases: 456,
-        activeLeases: 398,
-        expiredLeases: 58,
-        avgPoolUsage: 72,
+        totalServers: 0,
+        onlineServers: 0,
+        warningServers: 0,
+        offlineServers: 0,
+        totalLeases: 0,
+        activeLeases: 0,
+        avgPoolUsage: 0,
     });
+    const [dhcpServers, setDhcpServers] = useState([]);
+    const [recentAlerts, setRecentAlerts] = useState([]);
 
-    // 模擬 DHCP Server 數據
-    const dhcpServers = [
-        {
-            id: 1,
-            name: 'Server-1',
-            ip: '10.0.1.1',
-            hostname: 'dhcp-server-01.local',
-            status: 'running',
-            leases: 150,
-            maxLeases: 200,
-            activeLeases: 142,
-        },
-        {
-            id: 2,
-            name: 'Server-2',
-            ip: '10.0.2.1',
-            hostname: 'dhcp-server-02.local',
-            status: 'running',
-            leases: 180,
-            maxLeases: 250,
-            activeLeases: 165,
-        },
-        {
-            id: 3,
-            name: 'Server-3',
-            ip: '192.168.1.1',
-            hostname: 'dhcp-server-03.local',
-            status: 'warning',
-            leases: 126,
-            maxLeases: 150,
-            activeLeases: 91,
-        },
-    ];
-
-    // 最近告警
-    const recentAlerts = [
-        {
-            id: 1,
-            type: 'warning',
-            message: 'Server-3 IP 池使用率達到 84%',
-            time: '2分鐘前',
-        },
-        {
-            id: 2,
-            type: 'info',
-            message: 'Server-1 新增 12 個租約',
-            time: '10分鐘前',
-        },
-        {
-            id: 3,
-            type: 'success',
-            message: '定時同步完成：3 台服務器',
-            time: '30分鐘前',
-        },
-    ];
-
-    const refreshData = () => {
-        setLoading(true);
-        setTimeout(() => {
-            setLoading(false);
-        }, 1000);
+    // 獲取 Dashboard 統計數據
+    const fetchDashboardStats = async () => {
+        try {
+            const response = await axios.get('/api/dashboard/stats/');
+            setDashboardData({
+                totalServers: response.data.total_servers,
+                onlineServers: response.data.online_servers,
+                warningServers: response.data.warning_servers,
+                offlineServers: response.data.offline_servers,
+                totalLeases: response.data.total_leases,
+                activeLeases: response.data.active_leases,
+                avgPoolUsage: response.data.avg_pool_usage,
+            });
+        } catch (error) {
+            console.error('獲取 Dashboard 統計失敗:', error);
+            message.error('載入統計數據失敗：' + (error.response?.data?.error || error.message));
+        }
     };
+
+    // 獲取 DHCP Server 列表
+    const fetchDHCPServers = async () => {
+        try {
+            const response = await axios.get('/api/dhcp-servers/');
+            // API 返回的是分頁格式，需要取 results
+            const servers = response.data.results || response.data;
+            setDhcpServers(servers);
+            
+            // 根據服務器狀態生成告警
+            generateAlerts(servers);
+        } catch (error) {
+            console.error('獲取 DHCP Server 列表失敗:', error);
+            message.error('載入服務器列表失敗：' + (error.response?.data?.error || error.message));
+        }
+    };
+
+    // 生成系統告警
+    const generateAlerts = (servers) => {
+        const alerts = [];
+        
+        servers.forEach(server => {
+            // 高使用率警告
+            if (server.pool_usage > 80) {
+                alerts.push({
+                    id: `warning-${server.id}`,
+                    type: 'warning',
+                    message: `${server.name} IP 池使用率達到 ${server.pool_usage.toFixed(1)}%`,
+                    time: '即時',
+                });
+            }
+            
+            // 離線警告
+            if (server.status === 'offline') {
+                alerts.push({
+                    id: `offline-${server.id}`,
+                    type: 'error',
+                    message: `${server.name} 伺服器離線`,
+                    time: '即時',
+                });
+            }
+        });
+        
+        // 如果沒有告警，顯示成功訊息
+        if (alerts.length === 0 && servers.length > 0) {
+            alerts.push({
+                id: 'success-1',
+                type: 'success',
+                message: `所有 ${servers.length} 台 DHCP 伺服器運行正常`,
+                time: '即時',
+            });
+        }
+        
+        setRecentAlerts(alerts);
+    };
+
+    // 載入所有數據
+    const loadAllData = async () => {
+        setLoading(true);
+        try {
+            await Promise.all([
+                fetchDashboardStats(),
+                fetchDHCPServers(),
+            ]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // 重新整理數據
+    const refreshData = () => {
+        loadAllData();
+    };
+
+    // 初始載入
+    useEffect(() => {
+        loadAllData();
+    }, []);
 
     // DHCP Server 表格列定義
     const columns = [
@@ -93,14 +133,16 @@ const DashboardPage = () => {
                 <div>
                     <strong>{text}</strong>
                     <br />
-                    <span style={{ color: '#757575', fontSize: '12px' }}>{record.hostname}</span>
+                    <span style={{ color: '#757575', fontSize: '12px' }}>
+                        {record.hostname || record.ip_address}
+                    </span>
                 </div>
             ),
         },
         {
             title: 'IP 地址',
-            dataIndex: 'ip',
-            key: 'ip',
+            dataIndex: 'ip_address',
+            key: 'ip_address',
         },
         {
             title: '狀態',
@@ -108,11 +150,11 @@ const DashboardPage = () => {
             key: 'status',
             render: (status) => {
                 const statusConfig = {
-                    running: { color: 'success', text: '運行中', icon: <CheckCircleOutlined /> },
+                    online: { color: 'success', text: '運行中', icon: <CheckCircleOutlined /> },
                     warning: { color: 'warning', text: '警告', icon: <WarningOutlined /> },
-                    error: { color: 'error', text: '錯誤', icon: <WarningOutlined /> },
+                    offline: { color: 'error', text: '離線', icon: <CloseCircleOutlined /> },
                 };
-                const config = statusConfig[status] || statusConfig.running;
+                const config = statusConfig[status] || statusConfig.online;
                 return (
                     <Tag color={config.color} icon={config.icon}>
                         {config.text}
@@ -124,18 +166,19 @@ const DashboardPage = () => {
             title: '租約使用情況',
             key: 'usage',
             render: (_, record) => {
-                const percentage = Math.round((record.leases / record.maxLeases) * 100);
-                const status = percentage > 80 ? 'exception' : percentage > 60 ? 'normal' : 'success';
+                const poolUsage = record.pool_usage || 0;
+                const progressStatus = poolUsage > 80 ? 'exception' : poolUsage > 60 ? 'normal' : 'success';
+                
                 return (
                     <div>
                         <Progress
-                            percent={percentage}
+                            percent={poolUsage}
                             size="small"
-                            status={status}
-                            format={() => `${record.leases}/${record.maxLeases}`}
+                            status={progressStatus}
+                            format={(percent) => `${percent.toFixed(1)}%`}
                         />
                         <div style={{ fontSize: '12px', color: '#757575', marginTop: '4px' }}>
-                            活躍: {record.activeLeases} 個
+                            總租約: {record.total_leases || 0} 個
                         </div>
                     </div>
                 );
@@ -146,10 +189,10 @@ const DashboardPage = () => {
             key: 'actions',
             render: (_, record) => (
                 <Space size="small">
-                    <Button type="link" size="small">
+                    <Button type="link" size="small" href={`/dhcp-servers/${record.id}`}>
                         查看詳情
                     </Button>
-                    <Button type="link" size="small">
+                    <Button type="link" size="small" href={`/dhcp-analytics?server=${record.id}`}>
                         管理租約
                     </Button>
                 </Space>
@@ -183,7 +226,15 @@ const DashboardPage = () => {
                             suffix="台"
                         />
                         <div className="stat-footer">
-                            <CheckCircleOutlined style={{ color: '#52c41a' }} /> 全部運行中
+                            {dashboardData.onlineServers === dashboardData.totalServers ? (
+                                <>
+                                    <CheckCircleOutlined style={{ color: '#52c41a' }} /> 全部運行中
+                                </>
+                            ) : (
+                                <>
+                                    <WarningOutlined style={{ color: '#ff9800' }} /> {dashboardData.onlineServers} 台運行中
+                                </>
+                            )}
                         </div>
                     </Card>
                 </Col>
@@ -195,7 +246,7 @@ const DashboardPage = () => {
                             valueStyle={{ color: '#37474f' }}
                         />
                         <div className="stat-footer">
-                            <ArrowUpOutlined style={{ color: '#52c41a' }} /> +12 今日
+                            <CheckCircleOutlined style={{ color: '#52c41a' }} /> {dashboardData.activeLeases} 個活躍
                         </div>
                     </Card>
                 </Col>
@@ -207,7 +258,15 @@ const DashboardPage = () => {
                             valueStyle={{ color: '#52c41a' }}
                         />
                         <div className="stat-footer">
-                            <CheckCircleOutlined style={{ color: '#52c41a' }} /> 正常
+                            {dashboardData.activeLeases > 0 ? (
+                                <>
+                                    <CheckCircleOutlined style={{ color: '#52c41a' }} /> 正常運作中
+                                </>
+                            ) : (
+                                <>
+                                    <WarningOutlined style={{ color: '#ff9800' }} /> 無活躍租約
+                                </>
+                            )}
                         </div>
                     </Card>
                 </Col>
@@ -216,11 +275,26 @@ const DashboardPage = () => {
                         <Statistic
                             title="IP池使用率"
                             value={dashboardData.avgPoolUsage}
-                            valueStyle={{ color: '#ff9800' }}
+                            valueStyle={{ 
+                                color: dashboardData.avgPoolUsage > 80 ? '#f44336' : 
+                                       dashboardData.avgPoolUsage > 60 ? '#ff9800' : '#52c41a'
+                            }}
                             suffix="%"
                         />
                         <div className="stat-footer">
-                            <WarningOutlined style={{ color: '#ff9800' }} /> 中等
+                            {dashboardData.avgPoolUsage > 80 ? (
+                                <>
+                                    <WarningOutlined style={{ color: '#f44336' }} /> 使用率偏高
+                                </>
+                            ) : dashboardData.avgPoolUsage > 60 ? (
+                                <>
+                                    <WarningOutlined style={{ color: '#ff9800' }} /> 使用率中等
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircleOutlined style={{ color: '#52c41a' }} /> 使用率正常
+                                </>
+                            )}
                         </div>
                     </Card>
                 </Col>
