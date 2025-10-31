@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Avatar, Typography } from 'antd';
 import {
     HomeOutlined,
@@ -22,6 +22,47 @@ const { Text } = Typography;
 const Sidebar = ({ collapsed, onCollapse }) => {
     const { user, isAuthenticated } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
+    
+    // 根據當前路徑決定選中的菜單項
+    const getSelectedKey = () => {
+        const pathname = location.pathname;
+        
+        // 處理 DHCP Analytics 子路由
+        if (pathname.startsWith('/dhcp-analytics')) {
+            return 'dhcp-analytics';
+        }
+        
+        // 處理 iPXE Analytics 子路由
+        if (pathname.startsWith('/ipxe-analytics')) {
+            return 'ipxe-analytics';
+        }
+        
+        // 處理其他路由
+        if (pathname.startsWith('/admin/dhcp-server-management')) {
+            return 'dhcp-server-management';
+        }
+        if (pathname.startsWith('/admin/ipxe-server-management')) {
+            return 'ipxe-server-management';
+        }
+        if (pathname.startsWith('/admin/user-management')) {
+            return 'user-management';
+        }
+        if (pathname.startsWith('/nas-analytics')) {
+            return 'nas-analytics';
+        }
+        if (pathname.startsWith('/system-monitor')) {
+            return 'system-monitor';
+        }
+        if (pathname.startsWith('/settings')) {
+            return 'settings';
+        }
+        if (pathname.startsWith('/dashboard') || pathname === '/') {
+            return 'dashboard';
+        }
+        
+        return 'dashboard';
+    };
 
     // 處理選單點擊
     const handleMenuClick = ({ key }) => {
@@ -180,7 +221,7 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             <Menu
                 theme="light"
                 mode="inline"
-                defaultSelectedKeys={['dashboard']}
+                selectedKeys={[getSelectedKey()]}
                 items={allMenuItems}
                 onClick={handleMenuClick}
                 className="sidebar-menu"

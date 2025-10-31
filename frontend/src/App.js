@@ -51,6 +51,11 @@ function AppLayout() {
             return 'DHCP Server 分析';
         }
         
+        // 處理 iPXE Analytics 子路由
+        if (pathname.startsWith('/ipxe-analytics')) {
+            return 'iPXE 分析';
+        }
+        
         switch (pathname) {
             case '/login':
                 return '登入';
@@ -60,8 +65,6 @@ function AppLayout() {
                 return 'Dashboard';
             case '/nas-analytics':
                 return 'NAS 分析';
-            case '/ipxe-analytics':
-                return 'IPXE 分析';
             case '/system-monitor':
                 return '系統監控';
             case '/admin/dhcp-server-management':
@@ -125,7 +128,11 @@ function AppLayout() {
                         <Route path="/dhcp-analytics/server/:serverId/:tab" element={<DHCPAnalyticsPage />} />
                         
                         <Route path="/nas-analytics" element={<NASAnalyticsPage />} />
+                        
+                        {/* iPXE Analytics 路由 - 支援子路由 */}
                         <Route path="/ipxe-analytics" element={<IPXEAnalyticsPage />} />
+                        <Route path="/ipxe-analytics/:tab" element={<IPXEAnalyticsPage />} />
+                        <Route path="/ipxe-analytics/server/:serverId/:tab" element={<IPXEAnalyticsPage />} />
                         <Route path="/system-monitor" element={<SystemMonitorPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />
                         <Route path="/admin/ipxe-server-management" element={<IPXEManagementPage />} />

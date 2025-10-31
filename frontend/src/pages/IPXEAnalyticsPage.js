@@ -9,8 +9,8 @@ import {
     GlobalOutlined,
     HomeOutlined,
 } from '@ant-design/icons';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import axios from 'axios';
-import { Link } from 'react-router-dom';
 
 // Tab 組件
 import OverviewTab from '../components/ipxe-analytics/OverviewTab';
@@ -21,8 +21,15 @@ import NetworkQualityTab from '../components/ipxe-analytics/NetworkQualityTab';
 const { Title } = Typography;
 
 const IPXEAnalyticsPage = () => {
-    const [selectedServer, setSelectedServer] = useState('all');
-    const [activeTab, setActiveTab] = useState('overview');
+    // 從 URL 獲取參數
+    const { serverId: urlServerId, tab: urlTab } = useParams();
+    const [searchParams] = useSearchParams();
+    const navigate = useNavigate();
+    
+    // 從 URL 決定當前狀態（URL 為唯一真實來源）
+    const activeTab = urlTab || 'overview';
+    const selectedServer = urlServerId || searchParams.get('server') || 'all';
+    
     const [loading, setLoading] = useState(false);
     const [servers, setServers] = useState([]);
     const [loadingServers, setLoadingServers] = useState(false);
@@ -53,14 +60,46 @@ const IPXEAnalyticsPage = () => {
 
         return () => clearInterval(intervalId);
     }, []);
+    
+    // 動態設定頁面標題
+    useEffect(() => {
+        const serverInfo = servers.find(s => s.id.toString() === selectedServer);
+        const serverName = serverInfo ? 
+            `${serverInfo.ip_address} (${serverInfo.name})` : 
+            selectedServer === 'all' ? '所有 Server' : 'Server';
+        
+        const tabName = {
+            'overview': '概覽',
+            'logs': '日誌查看',
+            'statistics': '統計分析',
+            'network-quality': '網路品質',
+        }[activeTab] || '概覽';
+        
+        document.title = `${tabName} - ${serverName} | iPXE 分析`;
+    }, [activeTab, selectedServer, servers]);
 
+    // Server 切換處理（保持當前 Tab）
     const handleServerChange = (serverId) => {
-        setSelectedServer(serverId);
         console.log('切換到 Server:', serverId);
+        
+        if (serverId === 'all') {
+            // 切換到彙總視圖
+            navigate(`/ipxe-analytics/${activeTab}`);
+        } else {
+            // 切換到特定 Server
+            navigate(`/ipxe-analytics/server/${serverId}/${activeTab}`);
+        }
     };
 
+    // Tab 切換處理（保持當前 Server）
     const handleTabChange = (key) => {
-        setActiveTab(key);
+        if (selectedServer === 'all') {
+            // 彙總視圖
+            navigate(`/ipxe-analytics/${key}`);
+        } else {
+            // 特定 Server
+            navigate(`/ipxe-analytics/server/${selectedServer}/${key}`);
+        }
     };
 
     const handleRefresh = () => {
