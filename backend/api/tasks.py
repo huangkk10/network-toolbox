@@ -999,3 +999,139 @@ def check_ipxe_network_quality_task(self, server_id):
                 'error_message': str(exc),
                 'timestamp': timezone.now().isoformat()
             }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.check_all_ipxe_network_quality_task',
+    max_retries=1,
+    time_limit=600,  # 硬限制 10 分鐘（多個 Server）
+    soft_time_limit=540  # 軟限制 9 分鐘
+)
+def check_all_ipxe_network_quality_task(self):
+    """
+    批次檢測所有線上 IPXE Server 的網路品質（每5分鐘執行一次）
+    
+    此任務會自動偵測所有狀態為 'online' 的 IPXE Server，
+    並對每個 Server 執行網路品質檢測。
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'total_servers': int,        # 總共檢測的 Server 數量
+            'success_count': int,         # 成功的數量
+            'failed_count': int,          # 失敗的數量
+            'results': list,              # 每個 Server 的詳細結果
+            'timestamp': str
+        }
+    """
+    try:
+        logger.info('[Celery] 開始批次執行 IPXE 網路品質檢測')
+        
+        from .models import IPXEServer
+        from .ipxe_network_service import record_ipxe_network_quality
+        
+        # 獲取所有線上的 IPXE Server
+        online_servers = IPXEServer.objects.filter(status='online')
+        total_servers = online_servers.count()
+        
+        if total_servers == 0:
+            logger.warning('[Celery] 沒有線上的 IPXE Server 可供檢測')
+            return {
+                'success': True,
+                'total_servers': 0,
+                'success_count': 0,
+                'failed_count': 0,
+                'results': [],
+                'timestamp': timezone.now().isoformat()
+            }
+        
+        logger.info(f'[Celery] 找到 {total_servers} 個線上的 IPXE Server')
+        
+        results = []
+        success_count = 0
+        failed_count = 0
+        
+        # 逐一檢測每個 Server
+        for server in online_servers:
+            try:
+                logger.info(f'[Celery] 正在檢測 Server: {server.name} (ID: {server.id}, IP: {server.ip_address})')
+                
+                # 執行網路品質檢測
+                success = record_ipxe_network_quality(server.id)
+                
+                if success:
+                    success_count += 1
+                    logger.info(f'[Celery] Server {server.name} 檢測成功')
+                else:
+                    failed_count += 1
+                    logger.warning(f'[Celery] Server {server.name} 檢測失敗')
+                
+                # 獲取最新記錄
+                from .models import IPXENetworkQuality
+                latest_log = IPXENetworkQuality.objects.filter(
+                    server_id=server.id
+                ).order_by('-timestamp').first()
+                
+                result_item = {
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'success': success,
+                }
+                
+                if latest_log:
+                    result_item.update({
+                        'status': latest_log.status,
+                        'ping_latency': latest_log.ping_latency,
+                        'http_response_time': latest_log.http_response_time,
+                        'ssh_response_time': latest_log.ssh_response_time,
+                        'download_speed': latest_log.download_speed,
+                    })
+                
+                results.append(result_item)
+                
+            except Exception as e:
+                failed_count += 1
+                logger.error(f'[Celery] Server {server.name} 檢測異常: {e}', exc_info=True)
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'success': False,
+                    'error_message': str(e)
+                })
+        
+        logger.info(
+            f'[Celery] 批次網路品質檢測完成 - '
+            f'總計: {total_servers} | '
+            f'成功: {success_count} | '
+            f'失敗: {failed_count}'
+        )
+        
+        return {
+            'success': True,
+            'total_servers': total_servers,
+            'success_count': success_count,
+            'failed_count': failed_count,
+            'results': results,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as exc:
+        logger.error('[Celery] 批次 IPXE 網路品質檢測失敗', exc_info=True)
+        
+        # 自動重試（最多 1 次）
+        try:
+            raise self.retry(exc=exc, countdown=120)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 批次 IPXE 網路品質檢測重試次數已達上限')
+            return {
+                'success': False,
+                'total_servers': 0,
+                'success_count': 0,
+                'failed_count': 0,
+                'results': [],
+                'error_message': str(exc),
+                'timestamp': timezone.now().isoformat()
+            }
