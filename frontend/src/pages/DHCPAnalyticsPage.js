@@ -179,40 +179,30 @@ const DHCPAnalyticsPage = () => {
         }[activeTab] || '概覽';
         
         return (
-            <Breadcrumb style={{ marginBottom: '16px' }}>
-                <Breadcrumb.Item>
-                    <Link to="/dashboard">
-                        <HomeOutlined /> Home
-                    </Link>
-                </Breadcrumb.Item>
-                <Breadcrumb.Item>
-                    <Link to="/dhcp-analytics/overview">
-                        <GlobalOutlined /> DHCP Server 分析
-                    </Link>
-                </Breadcrumb.Item>
-                {selectedServer !== 'all' && serverInfo ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <Breadcrumb>
                     <Breadcrumb.Item>
-                        <Link to={`/dhcp-analytics/server/${selectedServer}/overview`}>
-                            {serverName}
+                        <Link to="/dashboard">
+                            <HomeOutlined /> Home
                         </Link>
                     </Breadcrumb.Item>
-                ) : (
-                    <Breadcrumb.Item>{serverName}</Breadcrumb.Item>
-                )}
-                <Breadcrumb.Item>{tabName}</Breadcrumb.Item>
-            </Breadcrumb>
-        );
-    };
-
-    return (
-        <div style={{ padding: '24px', background: '#f5f5f5' }}>
-            {/* 麵包屑導航 */}
-            {renderBreadcrumb()}
-            
-            <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Title level={3} style={{ margin: 0 }}>
-                    <GlobalOutlined /> DHCP Server 分析
-                </Title>
+                    <Breadcrumb.Item>
+                        <Link to="/dhcp-analytics/overview">
+                            <GlobalOutlined /> DHCP Server 分析
+                        </Link>
+                    </Breadcrumb.Item>
+                    {selectedServer !== 'all' && serverInfo ? (
+                        <Breadcrumb.Item>
+                            <Link to={`/dhcp-analytics/server/${selectedServer}/overview`}>
+                                {serverName}
+                            </Link>
+                        </Breadcrumb.Item>
+                    ) : (
+                        <Breadcrumb.Item>{serverName}</Breadcrumb.Item>
+                    )}
+                    <Breadcrumb.Item>{tabName}</Breadcrumb.Item>
+                </Breadcrumb>
+                
                 <Space>
                     <Select
                         style={{ width: 250 }}
@@ -227,6 +217,13 @@ const DHCPAnalyticsPage = () => {
                     </Button>
                 </Space>
             </div>
+        );
+    };
+
+    return (
+        <div style={{ padding: '24px', background: '#f5f5f5' }}>
+            {/* 麵包屑導航與操作按鈕 */}
+            {renderBreadcrumb()}
             <Card>
                 <Tabs activeKey={activeTab} onChange={handleTabChange} items={tabItems} size="large" />
             </Card>
