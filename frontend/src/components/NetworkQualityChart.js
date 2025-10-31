@@ -249,6 +249,7 @@ const NetworkQualityChart = ({ data, metricType = 'ping', title, unit = 'ms' }) 
                         dot={{ r: 4, fill: '#1890ff' }}
                         activeDot={{ r: 6 }}
                         name={title}
+                        connectNulls={true}
                     />
                 </LineChart>
             </ResponsiveContainer>

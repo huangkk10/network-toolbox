@@ -334,10 +334,12 @@ const NetworkQualityTab = ({ serverId }) => {
                     {/* Ping 延遲趨勢圖 - 使用新的品質分級圖表 */}
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
-                            data={statistics.quality_trends.map(item => ({
-                                timestamp: item.time,
-                                value: item.ping_latency,
-                            }))}
+                            data={statistics.quality_trends
+                                .filter(item => item.ping_latency !== null && item.ping_latency !== undefined)
+                                .map(item => ({
+                                    timestamp: item.time,
+                                    value: item.ping_latency,
+                                }))}
                             metricType="ping"
                             title="Ping 延遲"
                             unit="ms"
@@ -351,10 +353,12 @@ const NetworkQualityTab = ({ serverId }) => {
                     {/* HTTP 響應時間趨勢圖 - 使用新的品質分級圖表 */}
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
-                            data={statistics.quality_trends.map(item => ({
-                                timestamp: item.time,
-                                value: item.http_response_time,
-                            }))}
+                            data={statistics.quality_trends
+                                .filter(item => item.http_response_time !== null && item.http_response_time !== undefined)
+                                .map(item => ({
+                                    timestamp: item.time,
+                                    value: item.http_response_time,
+                                }))}
                             metricType="http"
                             title="HTTP 響應時間"
                             unit="ms"
@@ -368,10 +372,12 @@ const NetworkQualityTab = ({ serverId }) => {
                     {/* SSH 響應時間趨勢圖 - 使用新的品質分級圖表 */}
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
-                            data={statistics.quality_trends.map(item => ({
-                                timestamp: item.time,
-                                value: item.ssh_response_time,
-                            }))}
+                            data={statistics.quality_trends
+                                .filter(item => item.ssh_response_time !== null && item.ssh_response_time !== undefined)
+                                .map(item => ({
+                                    timestamp: item.time,
+                                    value: item.ssh_response_time,
+                                }))}
                             metricType="ssh"
                             title="SSH 響應時間"
                             unit="ms"
@@ -385,10 +391,12 @@ const NetworkQualityTab = ({ serverId }) => {
                     {/* 丟包率趨勢圖 - 使用新的品質分級圖表 */}
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
-                            data={statistics.quality_trends.map(item => ({
-                                timestamp: item.time,
-                                value: item.packet_loss,
-                            }))}
+                            data={statistics.quality_trends
+                                .filter(item => item.packet_loss !== null && item.packet_loss !== undefined)
+                                .map(item => ({
+                                    timestamp: item.time,
+                                    value: item.packet_loss,
+                                }))}
                             metricType="packet_loss"
                             title="丟包率"
                             unit="%"
@@ -402,10 +410,12 @@ const NetworkQualityTab = ({ serverId }) => {
                     {/* 下載速度趨勢圖 - 使用新的品質分級圖表 */}
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
-                            data={statistics.quality_trends.map(item => ({
-                                timestamp: item.time,
-                                value: item.download_speed,
-                            }))}
+                            data={statistics.quality_trends
+                                .filter(item => item.download_speed !== null && item.download_speed !== undefined)
+                                .map(item => ({
+                                    timestamp: item.time,
+                                    value: item.download_speed,
+                                }))}
                             metricType="download_speed"
                             title="下載速度"
                             unit="MB/s"

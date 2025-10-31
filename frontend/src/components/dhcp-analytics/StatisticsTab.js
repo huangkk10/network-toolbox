@@ -131,6 +131,7 @@ const StatisticsTab = ({ serverId }) => {
                                     stroke="#2196f3"
                                     strokeWidth={2}
                                     name="租約總數"
+                                    connectNulls={true}
                                 />
                             </LineChart>
                         </ResponsiveContainer>

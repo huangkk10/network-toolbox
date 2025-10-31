@@ -307,9 +307,9 @@ const NASAnalyticsPage = () => {
                                             <YAxis />
                                             <Tooltip />
                                             <Legend />
-                                            <Line type="monotone" dataKey="success" stroke="#52c41a" name="成功" strokeWidth={2} />
-                                            <Line type="monotone" dataKey="failed" stroke="#ff4d4f" name="失敗" strokeWidth={2} />
-                                            <Line type="monotone" dataKey="total" stroke="#2196f3" name="總計" strokeWidth={2} strokeDasharray="5 5" />
+                                            <Line type="monotone" dataKey="success" stroke="#52c41a" name="成功" strokeWidth={2} connectNulls={true} />
+                                            <Line type="monotone" dataKey="failed" stroke="#ff4d4f" name="失敗" strokeWidth={2} connectNulls={true} />
+                                            <Line type="monotone" dataKey="total" stroke="#2196f3" name="總計" strokeWidth={2} strokeDasharray="5 5" connectNulls={true} />
                                         </LineChart>
                                     </ResponsiveContainer>
                                 ) : (

@@ -154,9 +154,9 @@ const StatisticsTab = ({ serverId }) => {
                                 <YAxis />
                                 <Tooltip />
                                 <Legend />
-                                <Line type="monotone" dataKey="mac_count" stroke="#2196f3" name="MAC 管理" strokeWidth={2} />
-                                <Line type="monotone" dataKey="boot_count" stroke="#52c41a" name="BOOT 請求" strokeWidth={2} />
-                                <Line type="monotone" dataKey="total_count" stroke="#faad14" name="總計" strokeWidth={2} strokeDasharray="5 5" />
+                                <Line type="monotone" dataKey="mac_count" stroke="#2196f3" name="MAC 管理" strokeWidth={2} connectNulls={true} />
+                                <Line type="monotone" dataKey="boot_count" stroke="#52c41a" name="BOOT 請求" strokeWidth={2} connectNulls={true} />
+                                <Line type="monotone" dataKey="total_count" stroke="#faad14" name="總計" strokeWidth={2} strokeDasharray="5 5" connectNulls={true} />
                             </LineChart>
                         </ResponsiveContainer>
                     </Card>
