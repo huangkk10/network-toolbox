@@ -35,7 +35,6 @@ const LoginPage = () => {
             <Card className="login-card">
                 <div className="login-header">
                     <Title level={2}>Network Toolbox</Title>
-                    <p>DHCP 伺服器管理平台</p>
                 </div>
                 <Form
                     name="login"
@@ -78,9 +77,6 @@ const LoginPage = () => {
                         </Button>
                     </Form.Item>
                 </Form>
-                <div className="login-footer">
-                    <p>預設帳號：admin / admin</p>
-                </div>
             </Card>
         </div>
     );

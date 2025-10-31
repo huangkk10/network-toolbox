@@ -18,9 +18,11 @@ export const AuthProvider = ({ children }) => {
             } catch (error) {
                 console.error('Failed to parse stored user:', error);
                 localStorage.removeItem('user');
+                setUser(null);
+                setIsAuthenticated(false);
             }
         } else {
-            // 訪客模式：允許未登入用戶訪問（無用戶選單）
+            // 未登入用戶必須先登入
             setUser(null);
             setIsAuthenticated(false);
         }

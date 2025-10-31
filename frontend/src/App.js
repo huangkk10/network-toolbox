@@ -39,6 +39,11 @@ function AppLayout() {
         setCollapsed(!collapsed);
     };
 
+    // 未登入且不在登入頁面，重定向到登入頁
+    if (!loading && !isAuthenticated && location.pathname !== '/login') {
+        return <Navigate to="/login" replace />;
+    }
+
     const getPageTitle = (pathname) => {
         // 處理 DHCP Analytics 子路由
         if (pathname.startsWith('/dhcp-analytics')) {
@@ -85,7 +90,7 @@ function AppLayout() {
         );
     }
 
-    // 主要介面（支援訪客模式）
+    // 主要介面（需要登入）
     return (
         <Layout style={{ minHeight: '100vh' }}>
             <Sidebar
