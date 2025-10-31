@@ -5,11 +5,12 @@ import {
     CheckCircleOutlined,
     WarningOutlined,
     ReloadOutlined,
-    ArrowUpOutlined,
-    ArrowDownOutlined,
     CloseCircleOutlined,
+    CloudUploadOutlined,
+    CloudDownloadOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import './DashboardPage.css';
 
 const DashboardPage = () => {
@@ -25,6 +26,12 @@ const DashboardPage = () => {
     });
     const [dhcpServers, setDhcpServers] = useState([]);
     const [recentAlerts, setRecentAlerts] = useState([]);
+    const [nasSpeedTrend, setNasSpeedTrend] = useState([]);
+    const [nasStats, setNasStats] = useState({
+        avgUploadSpeed: 0,
+        avgDownloadSpeed: 0,
+        successRate: 0,
+    });
 
     // 獲取 Dashboard 統計數據
     const fetchDashboardStats = async () => {
@@ -58,6 +65,28 @@ const DashboardPage = () => {
         } catch (error) {
             console.error('獲取 DHCP Server 列表失敗:', error);
             message.error('載入服務器列表失敗：' + (error.response?.data?.error || error.message));
+        }
+    };
+
+    // 獲取 NAS 速度趨勢數據
+    const fetchNASSpeedTrend = async () => {
+        try {
+            const response = await axios.get('/api/nas-logs/statistics/?days=1');
+            
+            // 過濾掉 null 值的數據點
+            const validTrends = response.data.speed_trends.filter(
+                item => item.upload_speed !== null && item.download_speed !== null
+            );
+            
+            setNasSpeedTrend(validTrends);
+            setNasStats({
+                avgUploadSpeed: response.data.avg_upload_speed,
+                avgDownloadSpeed: response.data.avg_download_speed,
+                successRate: response.data.success_rate,
+            });
+        } catch (error) {
+            console.error('獲取 NAS 速度趨勢失敗:', error);
+            // 不顯示錯誤訊息，避免干擾用戶
         }
     };
 
@@ -107,6 +136,7 @@ const DashboardPage = () => {
             await Promise.all([
                 fetchDashboardStats(),
                 fetchDHCPServers(),
+                fetchNASSpeedTrend(),
             ]);
         } finally {
             setLoading(false);
@@ -121,6 +151,7 @@ const DashboardPage = () => {
     // 初始載入
     useEffect(() => {
         loadAllData();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // DHCP Server 表格列定義
@@ -313,6 +344,77 @@ const DashboardPage = () => {
                     pagination={false}
                     loading={loading}
                 />
+            </Card>
+
+            {/* NAS 傳輸速度趨勢 */}
+            <Card 
+                title="NAS 傳輸速度趨勢（最近 24 小時）" 
+                extra={
+                    <Space>
+                        <Statistic
+                            title="平均上傳"
+                            value={nasStats.avgUploadSpeed}
+                            suffix="MB/s"
+                            valueStyle={{ fontSize: '14px', color: '#2196f3' }}
+                            prefix={<CloudUploadOutlined />}
+                        />
+                        <Statistic
+                            title="平均下載"
+                            value={nasStats.avgDownloadSpeed}
+                            suffix="MB/s"
+                            valueStyle={{ fontSize: '14px', color: '#52c41a' }}
+                            prefix={<CloudDownloadOutlined />}
+                        />
+                    </Space>
+                }
+                style={{ marginTop: 16 }}
+            >
+                {nasSpeedTrend.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={nasSpeedTrend} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis 
+                                dataKey="time" 
+                                tick={{ fontSize: 12 }}
+                                angle={-45}
+                                textAnchor="end"
+                                height={80}
+                            />
+                            <YAxis 
+                                label={{ value: '速度 (MB/s)', angle: -90, position: 'insideLeft' }}
+                                tick={{ fontSize: 12 }}
+                            />
+                            <Tooltip 
+                                formatter={(value) => `${value} MB/s`}
+                                labelStyle={{ color: '#000' }}
+                            />
+                            <Legend />
+                            <Line 
+                                type="monotone" 
+                                dataKey="upload_speed" 
+                                stroke="#2196f3" 
+                                name="上傳速度"
+                                strokeWidth={2}
+                                dot={{ r: 2 }}
+                                activeDot={{ r: 5 }}
+                            />
+                            <Line 
+                                type="monotone" 
+                                dataKey="download_speed" 
+                                stroke="#52c41a" 
+                                name="下載速度"
+                                strokeWidth={2}
+                                dot={{ r: 2 }}
+                                activeDot={{ r: 5 }}
+                            />
+                        </LineChart>
+                    </ResponsiveContainer>
+                ) : (
+                    <div style={{ textAlign: 'center', padding: '40px', color: '#757575' }}>
+                        <CloudDownloadOutlined style={{ fontSize: '48px', marginBottom: '16px' }} />
+                        <p>暫無 NAS 速度數據</p>
+                    </div>
+                )}
             </Card>
 
             {/* 系統通知與告警 */}
