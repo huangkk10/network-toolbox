@@ -5,8 +5,6 @@ import {
     UserOutlined,
     SettingOutlined,
     LogoutOutlined,
-    BellOutlined,
-    ReloadOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -90,20 +88,6 @@ const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions }) => {
                 <Space size="middle">
                     {/* 額外操作按鈕 */}
                     {extraActions && <div className="extra-actions">{extraActions}</div>}
-
-                    {/* 通知按鈕 */}
-                    <Button
-                        type="text"
-                        icon={<BellOutlined />}
-                        className="icon-button"
-                    />
-
-                    {/* 重新載入按鈕 */}
-                    <Button
-                        type="text"
-                        icon={<ReloadOutlined />}
-                        className="icon-button"
-                    />
 
                     {/* 用戶選單或登入按鈕 */}
                     {isAuthenticated && user ? (
