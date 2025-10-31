@@ -459,6 +459,244 @@ def sync_all_dhcp_scopes_task(self):
             }
 
 
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_all_dhcp_logs_task',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def sync_all_dhcp_logs_task(self, limit=500):
+    """
+    批次同步所有 DHCP Server 的日誌（定時任務）
+    
+    適用場景：
+    - 定時自動同步所有伺服器的日誌
+    - 確保所有伺服器都有最新的日誌數據
+    
+    Args:
+        limit: 每個伺服器最多同步的日誌數量
+        
+    Returns:
+        dict: {
+            'total_servers': int,    # 處理的伺服器總數
+            'success_count': int,    # 成功的伺服器數
+            'failed_count': int,     # 失敗的伺服器數
+            'total_logs_created': int,  # 總共新增的日誌數
+            'results': [...]         # 每個伺服器的詳細結果
+        }
+    """
+    try:
+        logger.info(f'[Celery] 開始批次同步所有 DHCP Server 的日誌 (limit={limit})')
+        
+        # 獲取所有在線的 DHCP 伺服器
+        servers = DHCPServer.objects.filter(status='online')
+        total_servers = servers.count()
+        
+        logger.info(f'[Celery] 找到 {total_servers} 個在線的 DHCP Server')
+        
+        results = []
+        success_count = 0
+        failed_count = 0
+        total_logs_created = 0
+        
+        for server in servers:
+            try:
+                logger.info(f'[Celery] 正在同步 Server 日誌: {server.name} ({server.ip_address})')
+                
+                # 創建日誌服務並同步
+                service = DHCPLogService(dhcp_server=server)
+                result = service.sync_logs_to_db(limit=limit)
+                
+                # 添加伺服器資訊
+                result['server_id'] = server.id
+                result['server_name'] = server.name
+                result['server_ip'] = server.ip_address
+                
+                results.append(result)
+                success_count += 1
+                total_logs_created += result.get('created', 0)
+                
+                logger.info(
+                    f'[Celery] Server {server.name} 日誌同步成功 - '
+                    f'讀取: {result.get("total", 0)} 筆 | '
+                    f'新增: {result.get("created", 0)} 筆 | '
+                    f'跳過: {result.get("skipped", 0)} 筆'
+                )
+                
+            except Exception as e:
+                logger.error(f'[Celery] Server {server.name} 日誌同步失敗: {str(e)}', exc_info=True)
+                
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'total': 0,
+                    'created': 0,
+                    'skipped': 0,
+                    'errors': 1,
+                    'error_message': str(e)
+                })
+                failed_count += 1
+        
+        summary = {
+            'total_servers': total_servers,
+            'success_count': success_count,
+            'failed_count': failed_count,
+            'total_logs_created': total_logs_created,
+            'results': results,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        logger.info(
+            f'[Celery] 批次日誌同步完成 - '
+            f'伺服器總計: {total_servers} | 成功: {success_count} | 失敗: {failed_count} | '
+            f'總共新增日誌: {total_logs_created} 筆'
+        )
+        
+        return summary
+        
+    except Exception as exc:
+        logger.error('[Celery] 批次同步 DHCP 日誌失敗', exc_info=True)
+        
+        # 自動重試
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 日誌批次同步重試次數已達上限')
+            return {
+                'total_servers': 0,
+                'success_count': 0,
+                'failed_count': 0,
+                'total_logs_created': 0,
+                'error': str(exc)
+            }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_all_dhcp_leases_task',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def sync_all_dhcp_leases_task(self):
+    """
+    批次同步所有 DHCP Server 的租約（定時任務）
+    
+    適用場景：
+    - 定時自動同步所有伺服器的租約
+    - 確保所有伺服器都有最新的租約數據
+    
+    Returns:
+        dict: {
+            'total_servers': int,    # 處理的伺服器總數
+            'success_count': int,    # 成功的伺服器數
+            'failed_count': int,     # 失敗的伺服器數
+            'total_leases_created': int,  # 總共新增的租約數
+            'total_leases_updated': int,  # 總共更新的租約數
+            'results': [...]         # 每個伺服器的詳細結果
+        }
+    """
+    try:
+        logger.info('[Celery] 開始批次同步所有 DHCP Server 的租約')
+        
+        # 獲取所有在線的 DHCP 伺服器
+        servers = DHCPServer.objects.filter(status='online')
+        total_servers = servers.count()
+        
+        logger.info(f'[Celery] 找到 {total_servers} 個在線的 DHCP Server')
+        
+        results = []
+        success_count = 0
+        failed_count = 0
+        total_leases_created = 0
+        total_leases_updated = 0
+        
+        for server in servers:
+            try:
+                logger.info(f'[Celery] 正在同步 Server 租約: {server.name} ({server.ip_address})')
+                
+                # 使用 SSH + PowerShell 同步租約
+                from .ssh_powershell_service import WindowsSSHPowerShellService
+                
+                with WindowsSSHPowerShellService(server) as service:
+                    result = service.sync_leases_to_db()
+                
+                # 添加伺服器資訊
+                result['server_id'] = server.id
+                result['server_name'] = server.name
+                result['server_ip'] = server.ip_address
+                
+                # 更新 Server 的租約統計
+                server.total_leases = DHCPLease.objects.filter(server=server).count()
+                server.active_leases = DHCPLease.objects.filter(server=server, is_active=True).count()
+                server.last_sync_at = timezone.now()
+                server.save(update_fields=['total_leases', 'active_leases', 'last_sync_at'])
+                
+                results.append(result)
+                success_count += 1
+                total_leases_created += result.get('created', 0)
+                total_leases_updated += result.get('updated', 0)
+                
+                logger.info(
+                    f'[Celery] Server {server.name} 租約同步成功 - '
+                    f'總計: {result.get("total", 0)} 筆 | '
+                    f'新增: {result.get("created", 0)} 筆 | '
+                    f'更新: {result.get("updated", 0)} 筆 | '
+                    f'活躍: {server.active_leases} 筆'
+                )
+                
+            except Exception as e:
+                logger.error(f'[Celery] Server {server.name} 租約同步失敗: {str(e)}', exc_info=True)
+                
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'success': False,
+                    'error': str(e)
+                })
+                failed_count += 1
+        
+        summary = {
+            'total_servers': total_servers,
+            'success_count': success_count,
+            'failed_count': failed_count,
+            'total_leases_created': total_leases_created,
+            'total_leases_updated': total_leases_updated,
+            'results': results,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        logger.info(
+            f'[Celery] 批次租約同步完成 - '
+            f'伺服器總計: {total_servers} | 成功: {success_count} | 失敗: {failed_count} | '
+            f'總共新增租約: {total_leases_created} 筆 | 總共更新租約: {total_leases_updated} 筆'
+        )
+        
+        return summary
+        
+    except Exception as exc:
+        logger.error('[Celery] 批次同步 DHCP 租約失敗', exc_info=True)
+        
+        # 自動重試
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 租約批次同步重試次數已達上限')
+            return {
+                'total_servers': 0,
+                'success_count': 0,
+                'failed_count': 0,
+                'total_leases_created': 0,
+                'total_leases_updated': 0,
+                'error': str(exc)
+            }
+
+
 @shared_task(name='api.tasks.get_logs_statistics_task')
 def get_logs_statistics_task():
     """

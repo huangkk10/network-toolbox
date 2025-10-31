@@ -23,16 +23,15 @@ app.autodiscover_tasks()
 
 # ==================== 定時任務排程配置 ====================
 app.conf.beat_schedule = {
-    # 任務 1：DHCP 日誌自動同步（每 5 分鐘）
-    'sync-dhcp-logs-every-5-minutes': {
-        'task': 'api.tasks.sync_dhcp_logs_task',
-        'schedule': crontab(minute='*/5'),  # 每 5 分鐘執行一次
+    # 任務 1：DHCP 日誌自動同步（每 10 分鐘，同步所有在線伺服器）
+    'sync-all-dhcp-logs-every-10-minutes': {
+        'task': 'api.tasks.sync_all_dhcp_logs_task',
+        'schedule': crontab(minute='*/10'),  # 每 10 分鐘執行一次
         'kwargs': {
-            'server_id': 1,    # DHCP Server ID
-            'limit': 500       # 每次最多同步 500 筆
+            'limit': 500       # 每個伺服器最多同步 500 筆
         },
         'options': {
-            'expires': 240,    # 任務超時 4 分鐘（避免與下次重疊）
+            'expires': 540,    # 任務超時 9 分鐘（避免與下次重疊）
         }
     },
     
@@ -88,6 +87,15 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour=4, minute=0),  # 每天 04:00 執行
         'options': {
             'expires': 1800,   # 任務超時 30 分鐘
+        }
+    },
+    
+    # 任務 7：DHCP 租約自動同步（每 15 分鐘，同步所有在線伺服器）
+    'sync-all-dhcp-leases-every-15-minutes': {
+        'task': 'api.tasks.sync_all_dhcp_leases_task',
+        'schedule': crontab(minute='*/15'),  # 每 15 分鐘執行一次
+        'options': {
+            'expires': 810,    # 任務超時 13.5 分鐘（避免與下次重疊）
         }
     },
 }
