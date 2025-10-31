@@ -30,16 +30,69 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const login = async (credentials) => {
-        // TODO: 實現真實的登入邏輯
-        const user = {
-            username: credentials.username,
-            email: credentials.email || 'user@network-toolbox.local',
-            is_staff: true,
-        };
-        setUser(user);
-        setIsAuthenticated(true);
-        localStorage.setItem('user', JSON.stringify(user));
-        return { success: true };
+        try {
+            const response = await fetch('/api/users/login/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(credentials),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                return { 
+                    success: false, 
+                    message: data.error || '登入失敗' 
+                };
+            }
+
+            const user = data.user;
+            setUser(user);
+            setIsAuthenticated(true);
+            localStorage.setItem('user', JSON.stringify(user));
+            return { success: true };
+        } catch (error) {
+            console.error('Login error:', error);
+            return { 
+                success: false, 
+                message: '連接伺服器失敗' 
+            };
+        }
+    };
+
+    const register = async (userData) => {
+        try {
+            const response = await fetch('/api/users/register/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(userData),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                return { 
+                    success: false, 
+                    message: data.error || '註冊失敗' 
+                };
+            }
+
+            return { 
+                success: true, 
+                message: data.message || '註冊成功',
+                user: data.user
+            };
+        } catch (error) {
+            console.error('Register error:', error);
+            return { 
+                success: false, 
+                message: '連接伺服器失敗' 
+            };
+        }
     };
 
     const logout = () => {
@@ -53,6 +106,7 @@ export const AuthProvider = ({ children }) => {
         isAuthenticated,
         loading,
         login,
+        register,
         logout,
     };
 

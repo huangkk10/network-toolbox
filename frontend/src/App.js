@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Pages
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import DHCPAnalyticsPage from './pages/DHCPAnalyticsPage';
 import NASAnalyticsPage from './pages/NASAnalyticsPage';
@@ -39,8 +40,8 @@ function AppLayout() {
         setCollapsed(!collapsed);
     };
 
-    // 未登入且不在登入頁面，重定向到登入頁
-    if (!loading && !isAuthenticated && location.pathname !== '/login') {
+    // 未登入且不在登入或註冊頁面，重定向到登入頁
+    if (!loading && !isAuthenticated && location.pathname !== '/login' && location.pathname !== '/register') {
         return <Navigate to="/login" replace />;
     }
 
@@ -53,6 +54,8 @@ function AppLayout() {
         switch (pathname) {
             case '/login':
                 return '登入';
+            case '/register':
+                return '註冊';
             case '/dashboard':
                 return 'Dashboard';
             case '/nas-analytics':
@@ -81,11 +84,12 @@ function AppLayout() {
         return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>載入中...</div>;
     }
 
-    // 登入頁面（獨立布局）
-    if (location.pathname === '/login') {
+    // 登入/註冊頁面（獨立布局）
+    if (location.pathname === '/login' || location.pathname === '/register') {
         return (
             <Routes>
                 <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
             </Routes>
         );
     }

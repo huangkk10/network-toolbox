@@ -76,6 +76,15 @@ const LoginPage = () => {
                             登入
                         </Button>
                     </Form.Item>
+
+                    <div style={{ textAlign: 'center' }}>
+                        <Button
+                            type="link"
+                            onClick={() => navigate('/register')}
+                        >
+                            還沒有帳號？立即註冊
+                        </Button>
+                    </div>
                 </Form>
             </Card>
         </div>
