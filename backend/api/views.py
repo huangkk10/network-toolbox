@@ -1566,11 +1566,11 @@ class IPXENetworkQualityViewSet(viewsets.ModelViewSet):
                 
                 quality_trends.append({
                     'time': time_label,
-                    'ping_latency': round(avg_ping, 2) if avg_ping else None,
-                    'http_response_time': round(avg_http, 2) if avg_http else None,
-                    'ssh_response_time': round(avg_ssh, 2) if avg_ssh else None,
-                    'download_speed': round(avg_dl_speed, 2) if avg_dl_speed else None,
-                    'packet_loss': round(avg_loss, 2) if avg_loss else None,
+                    'ping_latency': round(avg_ping, 2) if avg_ping is not None else None,
+                    'http_response_time': round(avg_http, 2) if avg_http is not None else None,
+                    'ssh_response_time': round(avg_ssh, 2) if avg_ssh is not None else None,
+                    'download_speed': round(avg_dl_speed, 2) if avg_dl_speed is not None else None,
+                    'packet_loss': round(avg_loss, 2) if avg_loss is not None else None,
                 })
             
             # 最新狀態

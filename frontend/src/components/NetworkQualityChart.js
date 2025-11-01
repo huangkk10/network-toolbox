@@ -54,10 +54,10 @@ const NetworkQualityChart = ({ data, metricType = 'ping', title, unit = 'ms' }) 
             poor: { min: 500, color: '#ff4d4f', label: '不良' },
         },
         packet_loss: {
-            excellent: { max: 0, color: '#52c41a', label: '優秀' },
-            good: { min: 0, max: 1, color: '#73d13d', label: '良好' },
-            acceptable: { min: 1, max: 3, color: '#faad14', label: '尚可' },
-            warning: { min: 3, max: 10, color: '#ff7a45', label: '警告' },
+            excellent: { max: 0.5, color: '#52c41a', label: '優秀' },
+            good: { min: 0.5, max: 2, color: '#73d13d', label: '良好' },
+            acceptable: { min: 2, max: 5, color: '#faad14', label: '尚可' },
+            warning: { min: 5, max: 10, color: '#ff7a45', label: '警告' },
             poor: { min: 10, color: '#ff4d4f', label: '不良' },
         },
         download_speed: {
@@ -76,6 +76,18 @@ const NetworkQualityChart = ({ data, metricType = 'ping', title, unit = 'ms' }) 
         if (!data || data.length === 0) return 100;
         const maxValue = Math.max(...data.map(d => d.value));
         
+        // 特殊處理：丟包率圖表
+        if (metricType === 'packet_loss') {
+            // 如果最大值很小（接近0），使用固定範圍以便觀察
+            if (maxValue <= 1) {
+                return 5;  // 固定顯示 0-5% 範圍
+            } else if (maxValue <= 5) {
+                return 10;  // 顯示 0-10% 範圍
+            } else {
+                return Math.ceil(maxValue * 1.2);
+            }
+        }
+        
         // 根據最大值智能設定 Y 軸上限
         if (maxValue <= ranges.excellent.max * 2) {
             return ranges.acceptable.max || ranges.good.max || 50;
@@ -87,15 +99,41 @@ const NetworkQualityChart = ({ data, metricType = 'ping', title, unit = 'ms' }) 
     };
 
     const yAxisMax = getYAxisMax();
+    
+    // 調試信息
+    if (metricType === 'packet_loss' && data && data.length > 0) {
+        console.log('丟包率圖表配置:', {
+            metricType,
+            dataLength: data.length,
+            maxValue: Math.max(...data.map(d => d.value)),
+            yAxisMax,
+            ranges: ranges
+        });
+    }
 
     // 根據當前值獲取品質等級
     const getQualityLevel = (value) => {
         if (value === null || value === undefined) return null;
         
-        if (ranges.excellent.max && value <= ranges.excellent.max) return 'excellent';
-        if (ranges.good.min && value > ranges.good.min && value <= ranges.good.max) return 'good';
-        if (ranges.acceptable.min && value > ranges.acceptable.min && value <= ranges.acceptable.max) return 'acceptable';
-        if (ranges.warning.min && value > ranges.warning.min && value <= ranges.warning.max) return 'warning';
+        // 優秀（最小區間）
+        if (ranges.excellent.max !== undefined && value <= ranges.excellent.max) return 'excellent';
+        
+        // 良好
+        if (ranges.good.min !== undefined && ranges.good.max !== undefined) {
+            if (value > ranges.good.min && value <= ranges.good.max) return 'good';
+        }
+        
+        // 尚可
+        if (ranges.acceptable.min !== undefined && ranges.acceptable.max !== undefined) {
+            if (value > ranges.acceptable.min && value <= ranges.acceptable.max) return 'acceptable';
+        }
+        
+        // 警告
+        if (ranges.warning.min !== undefined && ranges.warning.max !== undefined) {
+            if (value > ranges.warning.min && value <= ranges.warning.max) return 'warning';
+        }
+        
+        // 不良（超過所有範圍）
         return 'poor';
     };
 
@@ -181,7 +219,12 @@ const NetworkQualityChart = ({ data, metricType = 'ping', title, unit = 'ms' }) 
                         textAnchor="end"
                         height={80}
                     />
-                    <YAxis label={{ value: `${title} (${unit})`, angle: -90, position: 'insideLeft' }} domain={[0, yAxisMax]} />
+                    <YAxis 
+                        label={{ value: `${title} (${unit})`, angle: -90, position: 'insideLeft' }} 
+                        domain={[0, yAxisMax]} 
+                        allowDataOverflow={false}
+                        type="number"
+                    />
                     <RechartsTooltip content={<CustomTooltip />} />
                     <Legend />
 
