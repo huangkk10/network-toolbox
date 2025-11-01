@@ -79,9 +79,10 @@ const NetworkQualityTab = ({ serverId }) => {
             const statsResponse = await axios.get(`/api/ipxe-network-quality/statistics/?days=${timeRange}&server_id=${ipxeServer.id}`);
             setStatistics(statsResponse.data);
 
-            // 獲取記錄列表
+            // 獲取記錄列表（處理分頁格式）
             const logsResponse = await axios.get(`/api/ipxe-network-quality/?days=${timeRange}&server_id=${ipxeServer.id}`);
-            setLogs(logsResponse.data);
+            const logsData = logsResponse.data.results || logsResponse.data;
+            setLogs(Array.isArray(logsData) ? logsData : []);
         } catch (error) {
             console.error('Error fetching IPXE network quality data:', error);
             message.error('載入 IPXE 網路品質數據失敗：' + error.message);
@@ -335,10 +336,10 @@ const NetworkQualityTab = ({ serverId }) => {
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
                             data={statistics.quality_trends
-                                .filter(item => item.ping_latency !== null && item.ping_latency !== undefined)
+                                .filter(item => item.avg_ping_latency !== null && item.avg_ping_latency !== undefined)
                                 .map(item => ({
-                                    timestamp: item.time,
-                                    value: item.ping_latency,
+                                    timestamp: item.timestamp,
+                                    value: item.avg_ping_latency,
                                 }))}
                             metricType="ping"
                             title="Ping 延遲"
@@ -354,10 +355,10 @@ const NetworkQualityTab = ({ serverId }) => {
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
                             data={statistics.quality_trends
-                                .filter(item => item.http_response_time !== null && item.http_response_time !== undefined)
+                                .filter(item => item.avg_http_response_time !== null && item.avg_http_response_time !== undefined)
                                 .map(item => ({
-                                    timestamp: item.time,
-                                    value: item.http_response_time,
+                                    timestamp: item.timestamp,
+                                    value: item.avg_http_response_time,
                                 }))}
                             metricType="http"
                             title="HTTP 響應時間"
@@ -373,10 +374,10 @@ const NetworkQualityTab = ({ serverId }) => {
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
                             data={statistics.quality_trends
-                                .filter(item => item.ssh_response_time !== null && item.ssh_response_time !== undefined)
+                                .filter(item => item.avg_ssh_response_time !== null && item.avg_ssh_response_time !== undefined)
                                 .map(item => ({
-                                    timestamp: item.time,
-                                    value: item.ssh_response_time,
+                                    timestamp: item.timestamp,
+                                    value: item.avg_ssh_response_time,
                                 }))}
                             metricType="ssh"
                             title="SSH 響應時間"
@@ -392,10 +393,10 @@ const NetworkQualityTab = ({ serverId }) => {
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
                             data={statistics.quality_trends
-                                .filter(item => item.packet_loss !== null && item.packet_loss !== undefined)
+                                .filter(item => item.avg_packet_loss !== null && item.avg_packet_loss !== undefined)
                                 .map(item => ({
-                                    timestamp: item.time,
-                                    value: item.packet_loss,
+                                    timestamp: item.timestamp,
+                                    value: item.avg_packet_loss,
                                 }))}
                             metricType="packet_loss"
                             title="丟包率"
@@ -411,10 +412,10 @@ const NetworkQualityTab = ({ serverId }) => {
                     {statistics.quality_trends && statistics.quality_trends.length > 0 ? (
                         <NetworkQualityChart
                             data={statistics.quality_trends
-                                .filter(item => item.download_speed !== null && item.download_speed !== undefined)
+                                .filter(item => item.avg_download_speed !== null && item.avg_download_speed !== undefined)
                                 .map(item => ({
-                                    timestamp: item.time,
-                                    value: item.download_speed,
+                                    timestamp: item.timestamp,
+                                    value: item.avg_download_speed,
                                 }))}
                             metricType="download_speed"
                             title="下載速度"

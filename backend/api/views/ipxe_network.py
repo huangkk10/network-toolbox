@@ -245,12 +245,19 @@ class IPXENetworkQualityViewSet(viewsets.ModelViewSet):
             
             logger.info(f'成功獲取 IPXE 網路品質統計: days={days}, total_checks={total_checks}')
             
+            # 計算成功率（online / total）
+            success_rate = 0
+            if total_checks > 0:
+                success_rate = (online_count / total_checks) * 100
+            
             return Response({
                 'summary': {
                     'total_checks': total_checks,
+                    'total_records': total_checks,  # 前端期望的欄位名稱
                     'online_count': online_count,
                     'offline_count': offline_count,
                     'warning_count': warning_count,
+                    'success_rate': round(success_rate, 2),  # 前端期望的成功率
                     'avg_ping_latency': round(avg_stats['avg_ping'] or 0, 2),
                     'avg_http_response_time': round(avg_stats['avg_http'] or 0, 2),
                     'avg_ssh_response_time': round(avg_stats['avg_ssh'] or 0, 2),
