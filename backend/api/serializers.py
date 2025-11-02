@@ -1,6 +1,10 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from .models import DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality
+from .models import (
+    DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, 
+    IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality,
+    NetworkSwitch, SwitchPort
+)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -122,4 +126,62 @@ class IPXENetworkQualitySerializer(serializers.ModelSerializer):
         model = IPXENetworkQuality
         fields = '__all__'
         read_only_fields = ('created_at',)
+
+
+class SwitchPortSerializer(serializers.ModelSerializer):
+    """Switch 端口序列化器"""
+    
+    switch_name = serializers.CharField(source='switch.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    
+    class Meta:
+        model = SwitchPort
+        fields = '__all__'
+        read_only_fields = ('first_seen', 'last_seen', 'created_at', 'updated_at')
+
+
+class NetworkSwitchSerializer(serializers.ModelSerializer):
+    """網路交換器序列化器"""
+    
+    dhcp_server_name = serializers.CharField(source='dhcp_server.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    ports_count = serializers.SerializerMethodField()
+    
+    def get_ports_count(self, obj):
+        """獲取端口數量"""
+        return obj.ports.count()
+    
+    class Meta:
+        model = NetworkSwitch
+        fields = '__all__'
+        read_only_fields = ('first_seen', 'last_seen', 'created_at', 'updated_at')
+
+
+class NetworkSwitchDetailSerializer(serializers.ModelSerializer):
+    """網路交換器詳細資訊序列化器（包含端口列表）"""
+    
+    dhcp_server_name = serializers.CharField(source='dhcp_server.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    ports = SwitchPortSerializer(many=True, read_only=True)
+    
+    # 統計資訊
+    recent_devices = serializers.SerializerMethodField()
+    
+    def get_recent_devices(self, obj):
+        """獲取最近 24 小時連接的設備列表"""
+        from datetime import datetime, timedelta
+        recent_time = datetime.now() - timedelta(hours=24)
+        
+        leases = DHCPLease.objects.filter(
+            remote_id=obj.remote_id,
+            is_active=True,
+            updated_at__gte=recent_time
+        ).select_related('server')
+        
+        return DHCPLeaseSerializer(leases, many=True).data
+    
+    class Meta:
+        model = NetworkSwitch
+        fields = '__all__'
+        read_only_fields = ('first_seen', 'last_seen', 'created_at', 'updated_at')
 

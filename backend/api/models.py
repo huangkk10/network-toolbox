@@ -71,6 +71,11 @@ class DHCPLease(models.Model):
     lease_end = models.DateTimeField(verbose_name='租約結束時間')
     is_active = models.BooleanField(default=True, verbose_name='是否活動')
     
+    # DHCP Option 82 (Relay Agent Information) 欄位
+    relay_agent_info = models.TextField(blank=True, verbose_name='Relay Agent Info (Option 82)')
+    circuit_id = models.CharField(max_length=255, blank=True, verbose_name='Circuit ID (Switch Port)')
+    remote_id = models.CharField(max_length=255, blank=True, verbose_name='Remote ID (Switch MAC/ID)')
+    
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
     
@@ -78,6 +83,11 @@ class DHCPLease(models.Model):
         verbose_name = 'DHCP 租約'
         verbose_name_plural = 'DHCP 租約'
         ordering = ['-lease_start']
+        indexes = [
+            models.Index(fields=['server', 'is_active'], name='idx_lease_server_active'),
+            models.Index(fields=['remote_id'], name='idx_lease_remote_id'),
+            models.Index(fields=['circuit_id'], name='idx_lease_circuit_id'),
+        ]
     
     def __str__(self):
         return f"{self.ip_address} - {self.mac_address}"
@@ -181,6 +191,11 @@ class DHCPLog(models.Model):
     vendor_class = models.CharField(max_length=500, blank=True, verbose_name='Vendor Class (Option 60)')
     user_class = models.CharField(max_length=200, blank=True, verbose_name='User Class (Option 77)')
     
+    # DHCP Option 82 (Relay Agent Information) 欄位
+    relay_agent_info = models.TextField(blank=True, verbose_name='Relay Agent Info (Option 82)')
+    circuit_id = models.CharField(max_length=255, blank=True, verbose_name='Circuit ID (Switch Port)')
+    remote_id = models.CharField(max_length=255, blank=True, verbose_name='Remote ID (Switch MAC/ID)')
+    
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
     
     class Meta:
@@ -191,6 +206,8 @@ class DHCPLog(models.Model):
             models.Index(fields=['server', '-timestamp'], name='idx_server_time'),
             models.Index(fields=['-timestamp'], name='idx_timestamp'),
             models.Index(fields=['level'], name='idx_level'),
+            models.Index(fields=['remote_id'], name='idx_log_remote_id'),
+            models.Index(fields=['circuit_id'], name='idx_log_circuit_id'),
         ]
     
     def __str__(self):
@@ -475,3 +492,168 @@ class IPXENetworkQuality(models.Model):
     
     def __str__(self):
         return f"[{self.status}] {self.timestamp} - {self.server.name} (Ping: {self.ping_latency}ms)"
+
+
+class NetworkSwitch(models.Model):
+    """網路交換器模型 - 從 DHCP Option 82 識別"""
+    
+    STATUS_CHOICES = [
+        ('active', '活躍'),
+        ('inactive', '非活躍'),
+        ('unknown', '未知'),
+    ]
+    
+    # 基本資訊（從 Option 82 Remote ID 提取）
+    remote_id = models.CharField(max_length=255, unique=True, verbose_name='Remote ID (識別碼)')
+    name = models.CharField(max_length=200, blank=True, verbose_name='Switch 名稱')
+    mac_address = models.CharField(max_length=17, blank=True, verbose_name='Switch MAC 地址')
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name='Switch IP 地址')
+    
+    # 位置資訊
+    location = models.CharField(max_length=255, blank=True, verbose_name='實體位置')
+    building = models.CharField(max_length=100, blank=True, verbose_name='建築物')
+    floor = models.CharField(max_length=50, blank=True, verbose_name='樓層')
+    
+    # 狀態資訊
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='unknown',
+        verbose_name='狀態'
+    )
+    
+    # 統計資訊
+    total_ports = models.IntegerField(default=0, verbose_name='總端口數')
+    active_ports = models.IntegerField(default=0, verbose_name='活動端口數')
+    connected_devices = models.IntegerField(default=0, verbose_name='連接設備數')
+    
+    # 關聯的 DHCP Server
+    dhcp_server = models.ForeignKey(
+        DHCPServer,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='switches',
+        verbose_name='所屬 DHCP Server'
+    )
+    
+    # 元數據
+    first_seen = models.DateTimeField(auto_now_add=True, verbose_name='首次發現時間')
+    last_seen = models.DateTimeField(auto_now=True, verbose_name='最後活動時間')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    
+    class Meta:
+        verbose_name = '網路交換器'
+        verbose_name_plural = '網路交換器'
+        ordering = ['-last_seen']
+        indexes = [
+            models.Index(fields=['remote_id'], name='idx_switch_remote_id'),
+            models.Index(fields=['mac_address'], name='idx_switch_mac'),
+            models.Index(fields=['status'], name='idx_switch_status'),
+            models.Index(fields=['dhcp_server'], name='idx_switch_server'),
+        ]
+    
+    def __str__(self):
+        if self.name:
+            return f"{self.name} ({self.remote_id})"
+        return f"Switch {self.remote_id}"
+    
+    def update_statistics(self):
+        """更新 Switch 統計資訊"""
+        from django.db.models import Count, Q
+        from datetime import datetime, timedelta
+        
+        # 計算最近 24 小時內活躍的設備
+        recent_time = datetime.now() - timedelta(hours=24)
+        
+        # 統計活躍租約
+        active_leases = DHCPLease.objects.filter(
+            remote_id=self.remote_id,
+            is_active=True,
+            updated_at__gte=recent_time
+        )
+        
+        self.connected_devices = active_leases.count()
+        
+        # 統計不同的 circuit_id（端口）
+        active_circuits = active_leases.values('circuit_id').distinct().count()
+        self.active_ports = active_circuits
+        
+        # 如果狀態是 unknown，根據活動更新狀態
+        if self.status == 'unknown':
+            self.status = 'active' if self.connected_devices > 0 else 'inactive'
+        
+        self.save()
+
+
+class SwitchPort(models.Model):
+    """Switch 端口模型 - 從 DHCP Option 82 Circuit ID 識別"""
+    
+    STATUS_CHOICES = [
+        ('up', '啟用'),
+        ('down', '停用'),
+        ('unknown', '未知'),
+    ]
+    
+    switch = models.ForeignKey(
+        NetworkSwitch,
+        on_delete=models.CASCADE,
+        related_name='ports',
+        verbose_name='所屬 Switch'
+    )
+    
+    # 端口資訊（從 Circuit ID 提取）
+    circuit_id = models.CharField(max_length=255, verbose_name='Circuit ID (端口識別碼)')
+    port_number = models.CharField(max_length=50, blank=True, verbose_name='端口號')
+    port_name = models.CharField(max_length=100, blank=True, verbose_name='端口名稱')
+    
+    # 狀態
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='unknown',
+        verbose_name='狀態'
+    )
+    
+    # 統計
+    connected_devices = models.IntegerField(default=0, verbose_name='連接設備數')
+    
+    # 元數據
+    first_seen = models.DateTimeField(auto_now_add=True, verbose_name='首次發現時間')
+    last_seen = models.DateTimeField(auto_now=True, verbose_name='最後活動時間')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    
+    class Meta:
+        verbose_name = 'Switch 端口'
+        verbose_name_plural = 'Switch 端口'
+        unique_together = ['switch', 'circuit_id']
+        ordering = ['switch', 'port_number']
+        indexes = [
+            models.Index(fields=['switch', 'circuit_id'], name='idx_port_switch_circuit'),
+            models.Index(fields=['status'], name='idx_port_status'),
+        ]
+    
+    def __str__(self):
+        if self.port_name:
+            return f"{self.switch.name} - {self.port_name}"
+        return f"{self.switch.name} - {self.circuit_id}"
+    
+    def update_statistics(self):
+        """更新端口統計資訊"""
+        from datetime import datetime, timedelta
+        
+        recent_time = datetime.now() - timedelta(hours=24)
+        
+        # 統計此端口下活躍的設備
+        active_count = DHCPLease.objects.filter(
+            remote_id=self.switch.remote_id,
+            circuit_id=self.circuit_id,
+            is_active=True,
+            updated_at__gte=recent_time
+        ).count()
+        
+        self.connected_devices = active_count
+        self.status = 'up' if active_count > 0 else 'down'
+        self.save()

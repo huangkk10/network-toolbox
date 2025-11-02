@@ -42,6 +42,9 @@ from .ipxe_analytics import (
     ipxe_analytics_statistics,
 )
 
+# Network Switch Views
+from .network_switches import NetworkSwitchViewSet, SwitchPortViewSet
+
 # System Views
 from .system import (
     dashboard_stats,
@@ -80,6 +83,10 @@ __all__ = [
     'ipxe_sync_logs',
     'ipxe_analytics_overview',
     'ipxe_analytics_statistics',
+    
+    # Network Switches
+    'NetworkSwitchViewSet',
+    'SwitchPortViewSet',
     
     # System
     'dashboard_stats',

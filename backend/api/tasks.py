@@ -1135,3 +1135,150 @@ def check_all_ipxe_network_quality_task(self):
                 'error_message': str(exc),
                 'timestamp': timezone.now().isoformat()
             }
+
+
+# ==================== Switch 管理相關任務 ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.auto_identify_switches_task',
+    max_retries=2,
+    default_retry_delay=120,  # 失敗後 2 分鐘重試
+    time_limit=600,  # 硬限制 10 分鐘
+    soft_time_limit=540  # 軟限制 9 分鐘
+)
+def auto_identify_switches_task(self, server_id=None):
+    """
+    自動識別 Switch 設備（根據製造商）
+    
+    Args:
+        server_id: DHCP Server ID（可選，None 表示所有 Server）
+        
+    Returns:
+        dict: 執行結果統計
+    """
+    try:
+        from api.models import DHCPServer, DHCPLease, NetworkSwitch
+        from api.serializers import DHCPLeaseSerializer
+        
+        logger.info(f'[Celery] 開始自動識別 Switch - Server ID: {server_id if server_id else "All"}')
+        
+        # Switch 製造商關鍵字
+        SWITCH_VENDOR_KEYWORDS = [
+            'cisco', 'juniper', 'arista', 'extreme', 'huawei', 'h3c',
+            'hewlett packard', 'hpe', 'dell', 'brocade', 'netgear',
+            'd-link', 'tp-link', 'ubiquiti', 'mikrotik', 'zyxel',
+            'switch', 'switching', 'ruijie', 'planet', 'edimax',
+        ]
+        
+        def is_switch_vendor(vendor):
+            """判斷製造商是否為 Switch 廠商"""
+            if not vendor:
+                return False
+            
+            vendor_lower = vendor.lower()
+            exclude_keywords = ['intel', 'realtek', 'broadcom', 'microsoft', 'apple', 
+                               'samsung', 'lenovo', 'acer', 'gigabyte', 'msi']
+            
+            for exclude in exclude_keywords:
+                if exclude in vendor_lower:
+                    return False
+            
+            for keyword in SWITCH_VENDOR_KEYWORDS:
+                if keyword in vendor_lower:
+                    return True
+            
+            return False
+        
+        # 獲取要處理的 Server
+        if server_id:
+            servers = DHCPServer.objects.filter(id=server_id)
+        else:
+            servers = DHCPServer.objects.all()
+        
+        if not servers.exists():
+            error_msg = f'找不到 DHCP Server (ID: {server_id})'
+            logger.error(f'[Celery] {error_msg}')
+            return {'success': False, 'error_message': error_msg}
+        
+        # 處理每個 Server
+        results = []
+        total_created = 0
+        total_updated = 0
+        
+        for server in servers:
+            try:
+                leases = DHCPLease.objects.filter(server=server, is_active=True)
+                switch_devices = []
+                
+                for lease in leases:
+                    serializer = DHCPLeaseSerializer(lease)
+                    vendor = serializer.data.get('vendor', '')
+                    if is_switch_vendor(vendor):
+                        switch_devices.append({'lease': lease, 'vendor': vendor})
+                
+                created_count = 0
+                updated_count = 0
+                
+                for device in switch_devices:
+                    lease = device['lease']
+                    remote_id = lease.mac_address
+                    switch_name = lease.hostname if lease.hostname else f"Switch-{lease.ip_address.replace('.', '-')}"
+                    
+                    switch, created = NetworkSwitch.objects.update_or_create(
+                        remote_id=remote_id,
+                        defaults={
+                            'name': switch_name,
+                            'mac_address': lease.mac_address,
+                            'ip_address': lease.ip_address,
+                            'status': 'active',
+                            'dhcp_server': server,
+                        }
+                    )
+                    
+                    if created:
+                        created_count += 1
+                    else:
+                        updated_count += 1
+                    
+                    lease.remote_id = remote_id
+                    lease.relay_agent_info = f"VendorBased,RemoteID={remote_id}"
+                    lease.save()
+                    switch.update_statistics()
+                
+                total_created += created_count
+                total_updated += updated_count
+                
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'switches_found': len(switch_devices),
+                    'switches_created': created_count,
+                    'switches_updated': updated_count,
+                    'success': True
+                })
+                
+                logger.info(f'[Celery] Server {server.name} 完成 - 創建: {created_count}, 更新: {updated_count}')
+                
+            except Exception as e:
+                logger.error(f'[Celery] Server {server.name} 處理失敗: {e}', exc_info=True)
+                results.append({'server_id': server.id, 'server_name': server.name, 'success': False, 'error_message': str(e)})
+        
+        logger.info(f'[Celery] Switch 自動識別完成 - 處理: {len(results)} | 創建: {total_created} | 更新: {total_updated}')
+        
+        return {
+            'success': True,
+            'servers_processed': len(results),
+            'total_switches_created': total_created,
+            'total_switches_updated': total_updated,
+            'results': results,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as exc:
+        logger.error('[Celery] Switch 自動識別失敗', exc_info=True)
+        try:
+            raise self.retry(exc=exc, countdown=120)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] Switch 自動識別重試次數已達上限')
+            return {'success': False, 'error_message': str(exc), 'timestamp': timezone.now().isoformat()}

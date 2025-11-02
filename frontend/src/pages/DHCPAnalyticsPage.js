@@ -9,6 +9,7 @@ import {
     GlobalOutlined,
     ReloadOutlined,
     HomeOutlined,
+    ApartmentOutlined,
 } from '@ant-design/icons';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import axios from 'axios';
@@ -19,6 +20,7 @@ import LeasesTab from '../components/dhcp-analytics/LeasesTab';
 import LogsTab from '../components/dhcp-analytics/LogsTab';
 import StatisticsTab from '../components/dhcp-analytics/StatisticsTab';
 import ConfigTab from '../components/dhcp-analytics/ConfigTab';
+import SwitchTab from '../components/dhcp-analytics/SwitchTab';
 
 const { Title } = Typography;
 
@@ -67,6 +69,7 @@ const DHCPAnalyticsPage = () => {
             'logs': '日誌查看',
             'leases': '租約管理',
             'statistics': '統計分析',
+            'switches': 'Switch 管理',
             'config': 'Server 設定',
         }[activeTab] || '概覽';
         
@@ -157,6 +160,11 @@ const DHCPAnalyticsPage = () => {
             children: <StatisticsTab serverId={selectedServer} />,
         },
         {
+            key: 'switches',
+            label: <span><ApartmentOutlined /> Switch 管理</span>,
+            children: <SwitchTab serverId={selectedServer} />,
+        },
+        {
             key: 'config',
             label: <span><SettingOutlined /> Server 設定</span>,
             children: <ConfigTab serverId={selectedServer} />,
@@ -175,6 +183,7 @@ const DHCPAnalyticsPage = () => {
             'logs': '日誌查看',
             'leases': '租約管理',
             'statistics': '統計分析',
+            'switches': 'Switch 管理',
             'config': 'Server 設定',
         }[activeTab] || '概覽';
         

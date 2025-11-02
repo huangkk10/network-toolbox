@@ -276,6 +276,88 @@ class WindowsDHCPLogParser:
             return None
     
     @classmethod
+    def parse_option_82(cls, relay_agent_info: str) -> Dict[str, str]:
+        """
+        解析 DHCP Option 82 (Relay Agent Information)
+        
+        Args:
+            relay_agent_info: Option 82 原始字串
+        
+        Returns:
+            dict: 包含 circuit_id 和 remote_id
+        """
+        result = {
+            'relay_agent_info': relay_agent_info,
+            'circuit_id': '',
+            'remote_id': '',
+        }
+        
+        if not relay_agent_info:
+            return result
+        
+        try:
+            # Option 82 格式通常是 hex 編碼
+            # Sub-option 1: Circuit ID (通常是 switch port)
+            # Sub-option 2: Remote ID (通常是 switch MAC 或 ID)
+            
+            # 嘗試解析常見格式
+            # 格式 1: "0x01066769302f302f3102060019e88a4660"
+            # 格式 2: "CircuitID=gi0/0/1,RemoteID=00:19:e8:8a:46:60"
+            
+            if 'CircuitID=' in relay_agent_info or 'RemoteID=' in relay_agent_info:
+                # 格式 2: 已解析的格式
+                parts = relay_agent_info.split(',')
+                for part in parts:
+                    if 'CircuitID=' in part:
+                        result['circuit_id'] = part.split('=', 1)[1].strip()
+                    elif 'RemoteID=' in part:
+                        result['remote_id'] = part.split('=', 1)[1].strip()
+            elif relay_agent_info.startswith('0x'):
+                # 格式 1: Hex 編碼，需要解析
+                hex_str = relay_agent_info[2:]  # 移除 '0x' 前綴
+                
+                # 簡化處理：嘗試提取可見字元
+                try:
+                    bytes_data = bytes.fromhex(hex_str)
+                    # 嘗試解析 sub-options
+                    i = 0
+                    while i < len(bytes_data) - 1:
+                        sub_type = bytes_data[i]
+                        sub_len = bytes_data[i + 1]
+                        i += 2
+                        
+                        if i + sub_len > len(bytes_data):
+                            break
+                        
+                        sub_data = bytes_data[i:i + sub_len]
+                        
+                        if sub_type == 1:  # Circuit ID
+                            try:
+                                result['circuit_id'] = sub_data.decode('ascii', errors='ignore')
+                            except:
+                                result['circuit_id'] = sub_data.hex()
+                        elif sub_type == 2:  # Remote ID
+                            # Remote ID 通常是 MAC 地址
+                            if sub_len == 6:
+                                result['remote_id'] = ':'.join(f'{b:02x}' for b in sub_data)
+                            else:
+                                try:
+                                    result['remote_id'] = sub_data.decode('ascii', errors='ignore')
+                                except:
+                                    result['remote_id'] = sub_data.hex()
+                        
+                        i += sub_len
+                except Exception as e:
+                    logger.debug(f'解析 Option 82 Hex 失敗: {e}')
+            
+            logger.debug(f'[Option 82 Parsed] Circuit ID: {result["circuit_id"]}, Remote ID: {result["remote_id"]}')
+        
+        except Exception as e:
+            logger.warning(f'解析 Option 82 失敗: {relay_agent_info[:50]}... - {e}')
+        
+        return result
+    
+    @classmethod
     def identify_client_type(cls, fields: List[str]) -> Dict[str, str]:
         """
         識別客戶端類型（iPXE, PXE, WinPE, OS）
@@ -284,7 +366,7 @@ class WindowsDHCPLogParser:
             fields: 日誌欄位列表
         
         Returns:
-            dict: 包含 client_type, boot_stage, vendor_class, user_class
+            dict: 包含 client_type, boot_stage, vendor_class, user_class, 以及 Option 82 資訊
         """
         # 提取關鍵欄位
         hostname = fields[5].strip() if len(fields) > 5 else ''
@@ -293,10 +375,14 @@ class WindowsDHCPLogParser:
         vendor_class_ascii = fields[14].strip() if len(fields) > 14 else ''
         user_class_hex = fields[15].strip() if len(fields) > 15 else ''
         user_class_ascii = fields[16].strip() if len(fields) > 16 else ''
+        relay_agent_info = fields[17].strip() if len(fields) > 17 else ''
         
         # 合併 Vendor Class（取 ASCII 版本，若不存在則用 Hex）
         vendor_class = vendor_class_ascii if vendor_class_ascii else vendor_class_hex
         user_class = user_class_ascii if user_class_ascii else user_class_hex
+        
+        # 解析 Option 82
+        option_82 = cls.parse_option_82(relay_agent_info)
         
         # 記錄詳細的識別資訊
         logger.debug(f'[Client Type Detection] MAC: {mac_address}')
@@ -345,12 +431,17 @@ class WindowsDHCPLogParser:
         
         logger.debug(f'  → Result: client_type={client_type}, boot_stage={boot_stage}')
         
-        return {
+        result = {
             'client_type': client_type,
             'boot_stage': boot_stage,
             'vendor_class': vendor_class,
             'user_class': user_class,
         }
+        
+        # 合併 Option 82 資訊
+        result.update(option_82)
+        
+        return result
     
     @classmethod
     def _format_mac_address(cls, mac: str) -> str:

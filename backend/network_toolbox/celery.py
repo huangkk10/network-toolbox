@@ -95,6 +95,18 @@ app.conf.beat_schedule = {
             'expires': 810,    # 任務超時 13.5 分鐘（避免與下次重疊）
         }
     },
+    
+    # 任務 8：Switch 自動識別與更新（每小時，所有 DHCP Server）
+    'auto-identify-switches-hourly': {
+        'task': 'api.tasks.auto_identify_switches_task',
+        'schedule': crontab(minute=0),  # 每小時整點執行
+        'kwargs': {
+            'server_id': None  # None 表示處理所有 Server
+        },
+        'options': {
+            'expires': 540,    # 任務超時 9 分鐘
+        }
+    },
 }
 
 
