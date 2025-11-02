@@ -12,6 +12,7 @@ import {
     ExperimentOutlined,
     CloudServerOutlined,
     DashboardOutlined,
+    GitlabOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
@@ -51,6 +52,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
         if (pathname.startsWith('/nas-analytics')) {
             return 'nas-analytics';
         }
+        if (pathname.startsWith('/gitlab-analytics')) {
+            return 'gitlab-analytics';
+        }
         if (pathname.startsWith('/system-monitor')) {
             return 'system-monitor';
         }
@@ -76,6 +80,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                 break;
             case 'nas-analytics':
                 navigate('/nas-analytics');
+                break;
+            case 'gitlab-analytics':
+                navigate('/gitlab-analytics');
                 break;
             case 'ipxe-analytics':
                 navigate('/ipxe-analytics');
@@ -112,6 +119,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             key: 'nas-analytics',
             icon: <CloudServerOutlined />,
             label: 'NAS 分析',
+        },
+        {
+            key: 'gitlab-analytics',
+            icon: <GitlabOutlined />,
+            label: 'GitLab 分析',
         },
         {
             key: 'ipxe-analytics',

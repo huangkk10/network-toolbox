@@ -32,6 +32,9 @@ from .dhcp_logs import (
 # NAS Views
 from .nas import NASConnectionLogViewSet
 
+# GitLab Views
+from .gitlab import GitLabConnectionViewSet
+
 # IPXE Views
 from .ipxe_servers import IPXEServerViewSet
 from .ipxe_logs import IPXELogViewSet
@@ -75,6 +78,9 @@ __all__ = [
     
     # NAS
     'NASConnectionLogViewSet',
+    
+    # GitLab
+    'GitLabConnectionViewSet',
     
     # IPXE
     'IPXEServerViewSet',

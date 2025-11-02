@@ -657,3 +657,51 @@ class SwitchPort(models.Model):
         self.connected_devices = active_count
         self.status = 'up' if active_count > 0 else 'down'
         self.save()
+
+
+class GitLabConnection(models.Model):
+    """GitLab 伺服器連線品質監控記錄"""
+    
+    STATUS_CHOICES = [
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+        ('timeout', 'Timeout'),
+    ]
+    
+    # GitLab 伺服器資訊
+    gitlab_url = models.CharField(max_length=200, verbose_name='GitLab 網址')
+    gitlab_name = models.CharField(max_length=100, default='GitLab Server', verbose_name='伺服器名稱')
+    
+    # 網路連線指標
+    ping_latency = models.FloatField(null=True, blank=True, verbose_name='Ping 延遲 (ms)')
+    http_response_time = models.FloatField(null=True, blank=True, verbose_name='HTTP 回應時間 (秒)')
+    http_status_code = models.IntegerField(null=True, blank=True, verbose_name='HTTP 狀態碼')
+    
+    # 連線狀態
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='failed',
+        verbose_name='連線狀態'
+    )
+    is_reachable = models.BooleanField(default=False, verbose_name='是否可達')
+    packet_loss = models.FloatField(default=0, verbose_name='封包遺失率 (%)')
+    
+    # 錯誤資訊
+    error_message = models.TextField(blank=True, verbose_name='錯誤訊息')
+    
+    # 時間戳記
+    checked_at = models.DateTimeField(auto_now_add=True, db_index=True, verbose_name='檢查時間')
+    
+    class Meta:
+        verbose_name = 'GitLab 連線記錄'
+        verbose_name_plural = 'GitLab 連線記錄'
+        ordering = ['-checked_at']
+        indexes = [
+            models.Index(fields=['-checked_at'], name='idx_gitlab_checked'),
+            models.Index(fields=['gitlab_url', '-checked_at'], name='idx_gitlab_url_time'),
+            models.Index(fields=['status'], name='idx_gitlab_status'),
+        ]
+    
+    def __str__(self):
+        return f"{self.gitlab_name} - {self.status} @ {self.checked_at.strftime('%Y-%m-%d %H:%M')}"

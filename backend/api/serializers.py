@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from .models import (
     DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, 
     IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality,
-    NetworkSwitch, SwitchPort
+    NetworkSwitch, SwitchPort, GitLabConnection
 )
 
 
@@ -185,3 +185,12 @@ class NetworkSwitchDetailSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ('first_seen', 'last_seen', 'created_at', 'updated_at')
 
+
+
+class GitLabConnectionSerializer(serializers.ModelSerializer):
+    """GitLab 連線品質記錄序列化器"""
+    
+    class Meta:
+        model = GitLabConnection
+        fields = '__all__'
+        read_only_fields = ('checked_at',)

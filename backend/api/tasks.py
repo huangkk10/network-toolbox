@@ -1282,3 +1282,83 @@ def auto_identify_switches_task(self, server_id=None):
         except self.MaxRetriesExceededError:
             logger.error('[Celery] Switch 自動識別重試次數已達上限')
             return {'success': False, 'error_message': str(exc), 'timestamp': timezone.now().isoformat()}
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.check_gitlab_connection_task',
+    max_retries=2,
+    default_retry_delay=30,
+    time_limit=30,  # 硬限制 30 秒
+    soft_time_limit=25  # 軟限制 25 秒
+)
+def check_gitlab_connection_task(self):
+    """
+    定時檢查 GitLab 連線品質
+    
+    每 5 分鐘執行一次，測試 GitLab 伺服器的連線品質並記錄到資料庫
+    
+    Returns:
+        dict: 測試結果
+    """
+    try:
+        from .models import GitLabConnection
+        import sys
+        
+        # 導入 library 中的服務（使用容器內的絕對路徑）
+        if '/app/library' not in sys.path:
+            sys.path.insert(0, '/app/library')
+        from services.gitlab_service import test_gitlab_connection
+        
+        logger.info('[Celery] 開始 GitLab 連線品質檢查')
+        
+        # GitLab 伺服器配置
+        GITLAB_URL = 'http://10.252.170.11/'
+        GITLAB_NAME = 'CW1 GitLab Server'
+        
+        # 執行連線測試
+        result = test_gitlab_connection(GITLAB_URL, GITLAB_NAME)
+        
+        # 儲存到資料庫
+        connection_log = GitLabConnection.objects.create(
+            gitlab_url=result['gitlab_url'],
+            gitlab_name=result['gitlab_name'],
+            ping_latency=result['ping_latency'],
+            http_response_time=result['http_response_time'],
+            http_status_code=result['http_status_code'],
+            status=result['status'],
+            is_reachable=result['is_reachable'],
+            packet_loss=result['packet_loss'],
+            error_message=result['error_message']
+        )
+        
+        logger.info(
+            f'[Celery] GitLab 連線檢查完成 - '
+            f'Status: {result["status"]} | '
+            f'Ping: {result["ping_latency"]}ms | '
+            f'HTTP: {result["http_response_time"]}s'
+        )
+        
+        return {
+            'success': True,
+            'status': result['status'],
+            'is_reachable': result['is_reachable'],
+            'ping_latency': result['ping_latency'],
+            'http_response_time': result['http_response_time'],
+            'record_id': connection_log.id,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as exc:
+        logger.error('[Celery] GitLab 連線檢查失敗', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=30)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] GitLab 連線檢查重試次數已達上限')
+            return {
+                'success': False,
+                'error_message': str(exc),
+                'timestamp': timezone.now().isoformat()
+            }
