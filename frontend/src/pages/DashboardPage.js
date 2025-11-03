@@ -417,8 +417,8 @@ const DashboardPage = () => {
                 )}
             </Card>
 
-            {/* 系統通知與告警 */}
-            <Card title="系統通知與告警" extra={<Button type="link">查看全部 →</Button>} style={{ marginTop: 16 }}>
+            {/* 系統通知與警告 */}
+            <Card title="系統通知與警告" extra={<Button type="link">查看全部 →</Button>} style={{ marginTop: 16 }}>
                 <Space direction="vertical" style={{ width: '100%' }} size="middle">
                     {recentAlerts.map((alert) => (
                         <Alert

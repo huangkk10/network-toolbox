@@ -111,15 +111,20 @@ class GitLabConnectionViewSet(viewsets.ModelViewSet):
                 day_success = day_logs.filter(status='success').count()
                 day_failed = day_logs.filter(status='failed').count()
                 
-                day_avg_latency = day_logs.filter(
-                    status='success',
-                    ping_latency__isnull=False
-                ).aggregate(Avg('ping_latency'))['ping_latency__avg'] or 0
+                # 只有有數據時才計算平均值，否則返回 None
+                day_avg_latency = None
+                day_avg_http = None
                 
-                day_avg_http = day_logs.filter(
-                    status='success',
-                    http_response_time__isnull=False
-                ).aggregate(Avg('http_response_time'))['http_response_time__avg'] or 0
+                if day_total > 0:
+                    success_logs = day_logs.filter(status='success', ping_latency__isnull=False)
+                    if success_logs.exists():
+                        day_avg_latency = success_logs.aggregate(Avg('ping_latency'))['ping_latency__avg']
+                        day_avg_latency = round(day_avg_latency, 2) if day_avg_latency else None
+                    
+                    http_logs = day_logs.filter(status='success', http_response_time__isnull=False)
+                    if http_logs.exists():
+                        day_avg_http = http_logs.aggregate(Avg('http_response_time'))['http_response_time__avg']
+                        day_avg_http = round(day_avg_http, 3) if day_avg_http else None
                 
                 daily_trends.append({
                     'date': day_start.strftime('%Y-%m-%d'),
@@ -127,13 +132,14 @@ class GitLabConnectionViewSet(viewsets.ModelViewSet):
                     'success_count': day_success,
                     'failed_count': day_failed,
                     'success_rate': (day_success / day_total * 100) if day_total > 0 else 0,
-                    'avg_latency': round(day_avg_latency, 2),
-                    'avg_http_response': round(day_avg_http, 3),
+                    'avg_latency': day_avg_latency,  # None 代表無數據
+                    'avg_http_response': day_avg_http,  # None 代表無數據
                 })
             
-            # 每小時趨勢（最近24小時）
+            # 每小時趨勢（根據 days 參數返回對應的小時數）
             hourly_trends = []
-            for i in range(23, -1, -1):
+            hours_to_show = days * 24  # 將天數轉換為小時數
+            for i in range(hours_to_show - 1, -1, -1):
                 hour_start = timezone.now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=i)
                 hour_end = hour_start + timedelta(hours=1)
                 
@@ -141,16 +147,27 @@ class GitLabConnectionViewSet(viewsets.ModelViewSet):
                 hour_total = hour_logs.count()
                 hour_success = hour_logs.filter(status='success').count()
                 
-                hour_avg_latency = hour_logs.filter(
-                    status='success',
-                    ping_latency__isnull=False
-                ).aggregate(Avg('ping_latency'))['ping_latency__avg'] or 0
+                # 只有有數據時才計算平均值，否則返回 None
+                hour_avg_latency = None
+                hour_avg_http = None
+                
+                if hour_total > 0:
+                    success_logs = hour_logs.filter(status='success', ping_latency__isnull=False)
+                    if success_logs.exists():
+                        hour_avg_latency = success_logs.aggregate(Avg('ping_latency'))['ping_latency__avg']
+                        hour_avg_latency = round(hour_avg_latency, 2) if hour_avg_latency else None
+                    
+                    http_logs = hour_logs.filter(status='success', http_response_time__isnull=False)
+                    if http_logs.exists():
+                        hour_avg_http = http_logs.aggregate(Avg('http_response_time'))['http_response_time__avg']
+                        hour_avg_http = round(hour_avg_http, 3) if hour_avg_http else None
                 
                 hourly_trends.append({
                     'hour': hour_start.strftime('%Y-%m-%d %H:00'),
                     'total_checks': hour_total,
                     'success_count': hour_success,
-                    'avg_latency': round(hour_avg_latency, 2),
+                    'avg_latency': hour_avg_latency,  # None 代表無數據
+                    'avg_http_response': hour_avg_http,  # None 代表無數據
                 })
             
             # HTTP 狀態碼分佈

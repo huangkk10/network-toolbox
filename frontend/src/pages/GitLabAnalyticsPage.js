@@ -61,7 +61,7 @@ const GitLabAnalyticsPage = () => {
         // 設置自動刷新（每30秒）
         const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
-    }, [timeRange, latencyChartRange]);
+    }, [timeRange]);  // 移除 latencyChartRange，它只用於前端過濾
 
     const fetchData = async () => {
         setLoading(true);
@@ -102,21 +102,29 @@ const GitLabAnalyticsPage = () => {
     // 計算 Y 軸的最大值（用於動態調整顏色區塊）
     const getMaxLatency = () => {
         const data = getFilteredLatencyData();
-        if (data.length === 0) return 5;
+        if (data.length === 0) {
+            return 2;
+        }
         
-        const maxPing = Math.max(...data.map(d => d.avg_latency || 0));
-        const maxHttp = Math.max(...data.map(d => (d.avg_http_response || 0) * 1000));
-        const max = Math.max(maxPing, maxHttp);
+        // 只使用 Ping 延遲來計算 Y 軸範圍（HTTP 響應時間量級差異太大，不適合同軸）
+        const validPingData = data.map(d => d.avg_latency).filter(v => v != null && v > 0);
         
-        // 根據最大值決定合適的 Y 軸範圍（針對低延遲環境優化）
-        if (max <= 1) return 2;
-        if (max <= 2) return 3;
-        if (max <= 5) return 8;
-        if (max <= 10) return 15;
-        if (max <= 20) return 30;
-        if (max <= 50) return 60;
-        if (max <= 100) return 120;
-        return Math.ceil(max * 1.2);
+        // 如果沒有有效的 Ping 數據，返回預設範圍
+        if (validPingData.length === 0) {
+            return 2;
+        }
+        
+        const maxPing = Math.max(...validPingData);
+        
+        // 根據最大 Ping 延遲決定合適的 Y 軸範圍（針對低延遲環境優化）
+        if (maxPing <= 1) return 2;
+        if (maxPing <= 2) return 3;
+        if (maxPing <= 5) return 8;
+        if (maxPing <= 10) return 15;
+        if (maxPing <= 20) return 30;
+        if (maxPing <= 50) return 60;
+        if (maxPing <= 100) return 120;
+        return Math.ceil(maxPing * 1.5);
     };
 
     // 表格列定義
@@ -503,13 +511,20 @@ const GitLabAnalyticsPage = () => {
                                         tick={{ fontSize: 11 }}
                                     />
                                     <YAxis 
+                                        yAxisId="left"
                                         label={{ value: 'Ping 延遲 (ms)', angle: -90, position: 'insideLeft' }}
                                         domain={[0, getMaxLatency()]}
+                                    />
+                                    <YAxis 
+                                        yAxisId="right"
+                                        orientation="right"
+                                        label={{ value: 'HTTP 響應 (ms)', angle: 90, position: 'insideRight' }}
+                                        domain={[0, 'auto']}
                                     />
                                     <Tooltip 
                                         contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
                                         formatter={(value, name) => {
-                                            if (name === '平均延遲') return [`${value?.toFixed(2) || 'N/A'} ms`, name];
+                                            if (name === 'Ping 延遲') return [`${value?.toFixed(2) || 'N/A'} ms`, name];
                                             if (name === 'HTTP 響應') return [`${(value * 1000)?.toFixed(0) || 'N/A'} ms`, name];
                                             return [value, name];
                                         }}
@@ -545,16 +560,18 @@ const GitLabAnalyticsPage = () => {
                                         }}
                                     />
                                     <Line
+                                        yAxisId="left"
                                         type="monotone"
                                         dataKey="avg_latency"
                                         stroke="#1890ff"
                                         strokeWidth={2}
-                                        name="平均延遲"
+                                        name="Ping 延遲"
                                         dot={{ r: 2 }}
                                         activeDot={{ r: 5 }}
                                         connectNulls
                                     />
                                     <Line
+                                        yAxisId="right"
                                         type="monotone"
                                         dataKey="avg_http_response"
                                         stroke="#722ed1"
