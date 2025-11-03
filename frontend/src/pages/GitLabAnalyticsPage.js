@@ -38,10 +38,12 @@ import {
     Tooltip,
     Legend,
     ResponsiveContainer,
+    Scatter,
     PieChart,
     Pie,
     Cell,
     ReferenceArea,
+    ReferenceDot,
 } from 'recharts';
 
 const { Title, Text } = Typography;
@@ -97,6 +99,26 @@ const GitLabAnalyticsPage = () => {
         // 只顯示最近 N 小時的數據
         const allData = [...statistics.hourly_trends];
         return allData.slice(-hoursToShow);
+    };
+
+    // 獲取包含失敗標記的 Ping 數據
+    const getPingDataWithFailureMarker = () => {
+        const data = getFilteredLatencyData();
+        const maxLatency = getMaxLatency();
+        return data.map(entry => ({
+            ...entry,
+            failure_marker: entry.failed_count > 0 ? maxLatency * 0.92 : null
+        }));
+    };
+
+    // 獲取包含失敗標記的 HTTP 數據
+    const getHttpDataWithFailureMarker = () => {
+        const data = getFilteredLatencyData();
+        const maxHttp = Math.max(...data.map(d => d.avg_http_response || 0).filter(v => v > 0), 0.1);
+        return data.map(entry => ({
+            ...entry,
+            failure_marker: entry.failed_count > 0 ? maxHttp * 0.92 : null
+        }));
     };
 
     // 計算 Y 軸的最大值（用於動態調整顏色區塊）
@@ -488,7 +510,7 @@ const GitLabAnalyticsPage = () => {
                         {statistics?.hourly_trends && statistics.hourly_trends.length > 0 ? (
                             getFilteredLatencyData().length > 0 ? (
                                 <ResponsiveContainer width="100%" height={400}>
-                                    <LineChart data={getFilteredLatencyData()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
+                                    <LineChart data={getPingDataWithFailureMarker()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
                                         {/* 背景顏色區塊 - Ping 品質等級 */}
                                         <ReferenceArea y1={0} y2={0.5} fill="#52c41a" fillOpacity={0.2} />
                                         <ReferenceArea y1={0.5} y2={1} fill="#95de64" fillOpacity={0.18} />
@@ -511,7 +533,19 @@ const GitLabAnalyticsPage = () => {
                                         />
                                         <Tooltip 
                                             contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
-                                            formatter={(value) => [`${value?.toFixed(2) || 'N/A'} ms`, 'Ping 延遲']}
+                                            formatter={(value, name, props) => {
+                                                if (name === 'Ping 延遲') {
+                                                    return [`${value?.toFixed(2) || 'N/A'} ms`, 'Ping 延遲'];
+                                                }
+                                                if (name === '連線失敗') {
+                                                    const { payload } = props;
+                                                    return [
+                                                        `失敗 ${payload.failed_count || 0} 次 (${payload.failure_rate || 0}%)`,
+                                                        '連線異常'
+                                                    ];
+                                                }
+                                                return [value, name];
+                                            }}
                                         />
                                         <Legend 
                                             wrapperStyle={{ paddingTop: '10px' }}
@@ -527,6 +561,17 @@ const GitLabAnalyticsPage = () => {
                                                             verticalAlign: 'middle'
                                                         }}></span>
                                                         Ping 延遲
+                                                        <span style={{ 
+                                                            display: 'inline-block', 
+                                                            width: '10px', 
+                                                            height: '10px', 
+                                                            backgroundColor: '#ff4d4f',
+                                                            marginLeft: '15px',
+                                                            marginRight: '5px',
+                                                            borderRadius: '50%',
+                                                            verticalAlign: 'middle'
+                                                        }}></span>
+                                                        連線失敗
                                                     </div>
                                                     <div style={{ color: '#8c8c8c', fontSize: '11px' }}>
                                                         <span style={{ marginRight: '12px' }}>🟢 優秀 (0-0.5ms)</span>
@@ -547,6 +592,20 @@ const GitLabAnalyticsPage = () => {
                                             dot={{ r: 2 }}
                                             activeDot={{ r: 5 }}
                                             connectNulls
+                                        />
+                                        {/* 失敗標記 - 使用額外的 Line 在圖表頂部顯示紅點 */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="failure_marker"
+                                            stroke="none"
+                                            dot={{ 
+                                                fill: '#ff4d4f', 
+                                                r: 8, 
+                                                strokeWidth: 2, 
+                                                stroke: '#fff' 
+                                            }}
+                                            name="連線失敗"
+                                            isAnimationActive={false}
                                         />
                                     </LineChart>
                                 </ResponsiveContainer>
@@ -583,7 +642,7 @@ const GitLabAnalyticsPage = () => {
                         {statistics?.hourly_trends && statistics.hourly_trends.length > 0 ? (
                             getFilteredLatencyData().length > 0 ? (
                                 <ResponsiveContainer width="100%" height={400}>
-                                    <LineChart data={getFilteredLatencyData()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
+                                    <LineChart data={getHttpDataWithFailureMarker()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
                                         {/* 背景顏色區塊 - HTTP 響應品質等級 */}
                                         <ReferenceArea y1={0} y2={0.2} fill="#52c41a" fillOpacity={0.2} />
                                         <ReferenceArea y1={0.2} y2={0.5} fill="#95de64" fillOpacity={0.18} />
@@ -606,10 +665,22 @@ const GitLabAnalyticsPage = () => {
                                         />
                                         <Tooltip 
                                             contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
-                                            formatter={(value) => [
-                                                `${(value * 1000)?.toFixed(0) || 'N/A'} ms (${value?.toFixed(3) || 'N/A'}s)`, 
-                                                'HTTP 響應時間'
-                                            ]}
+                                            formatter={(value, name, props) => {
+                                                if (name === 'HTTP 響應時間') {
+                                                    return [
+                                                        `${(value * 1000)?.toFixed(0) || 'N/A'} ms (${value?.toFixed(3) || 'N/A'}s)`, 
+                                                        'HTTP 響應時間'
+                                                    ];
+                                                }
+                                                if (name === '連線失敗') {
+                                                    const { payload } = props;
+                                                    return [
+                                                        `失敗 ${payload.failed_count || 0} 次 (${payload.failure_rate || 0}%)`,
+                                                        '連線異常'
+                                                    ];
+                                                }
+                                                return [value, name];
+                                            }}
                                         />
                                         <Legend 
                                             wrapperStyle={{ paddingTop: '10px' }}
@@ -625,6 +696,17 @@ const GitLabAnalyticsPage = () => {
                                                             verticalAlign: 'middle'
                                                         }}></span>
                                                         HTTP 響應時間
+                                                        <span style={{ 
+                                                            display: 'inline-block', 
+                                                            width: '10px', 
+                                                            height: '10px', 
+                                                            backgroundColor: '#ff4d4f',
+                                                            marginLeft: '15px',
+                                                            marginRight: '5px',
+                                                            borderRadius: '50%',
+                                                            verticalAlign: 'middle'
+                                                        }}></span>
+                                                        連線失敗
                                                     </div>
                                                     <div style={{ color: '#8c8c8c', fontSize: '11px' }}>
                                                         <span style={{ marginRight: '12px' }}>🟢 優秀 (0-200ms)</span>
@@ -645,6 +727,20 @@ const GitLabAnalyticsPage = () => {
                                             dot={{ r: 2 }}
                                             activeDot={{ r: 5 }}
                                             connectNulls
+                                        />
+                                        {/* 失敗標記 - 使用額外的 Line 在圖表頂部顯示紅點 */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="failure_marker"
+                                            stroke="none"
+                                            dot={{ 
+                                                fill: '#ff4d4f', 
+                                                r: 8, 
+                                                strokeWidth: 2, 
+                                                stroke: '#fff' 
+                                            }}
+                                            name="連線失敗"
+                                            isAnimationActive={false}
                                         />
                                     </LineChart>
                                 </ResponsiveContainer>

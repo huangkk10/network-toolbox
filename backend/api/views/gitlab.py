@@ -162,10 +162,16 @@ class GitLabConnectionViewSet(viewsets.ModelViewSet):
                         hour_avg_http = http_logs.aggregate(Avg('http_response_time'))['http_response_time__avg']
                         hour_avg_http = round(hour_avg_http, 3) if hour_avg_http else None
                 
+                # 計算失敗率（包含 failed 和 timeout）
+                hour_failed = hour_logs.exclude(status='success').count()
+                failure_rate = (hour_failed / hour_total * 100) if hour_total > 0 else 0
+                
                 hourly_trends.append({
                     'hour': hour_start.strftime('%Y-%m-%d %H:00'),
                     'total_checks': hour_total,
                     'success_count': hour_success,
+                    'failed_count': hour_failed,
+                    'failure_rate': round(failure_rate, 1),  # 失敗率百分比
                     'avg_latency': hour_avg_latency,  # None 代表無數據
                     'avg_http_response': hour_avg_http,  # None 代表無數據
                 })
