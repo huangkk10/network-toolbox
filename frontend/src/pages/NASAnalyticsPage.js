@@ -41,6 +41,7 @@ import {
     PieChart,
     Pie,
     Cell,
+    ReferenceArea,
 } from 'recharts';
 import './NASAnalyticsPage.css';
 
@@ -121,6 +122,25 @@ const NASAnalyticsPage = () => {
                 return true; // 如果解析失敗，保留該數據點
             }
         });
+    };
+
+    // 計算 Y 軸的最大值（用於動態調整顏色區塊）
+    const getMaxSpeed = () => {
+        const data = getFilteredSpeedData();
+        if (data.length === 0) return 100;
+        
+        const maxUpload = Math.max(...data.map(d => d.upload_speed || 0));
+        const maxDownload = Math.max(...data.map(d => d.download_speed || 0));
+        const max = Math.max(maxUpload, maxDownload);
+        
+        // 根據最大值決定合適的 Y 軸範圍
+        if (max <= 20) return 25;
+        if (max <= 40) return 50;
+        if (max <= 60) return 80;
+        if (max <= 80) return 100;
+        if (max <= 100) return 120;
+        if (max <= 150) return 180;
+        return Math.ceil(max * 1.2);
     };
 
     // 表格列定義
@@ -394,32 +414,75 @@ const NASAnalyticsPage = () => {
                     >
                         {statistics?.speed_trends && statistics.speed_trends.length > 0 ? (
                             getFilteredSpeedData().length > 0 ? (
-                                <ResponsiveContainer width="100%" height={350}>
-                                    <LineChart data={getFilteredSpeedData()}>
-                                        <CartesianGrid strokeDasharray="3 3" />
+                                <ResponsiveContainer width="100%" height={400}>
+                                    <LineChart data={getFilteredSpeedData()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
+                                        {/* 背景顏色區塊 - 傳輸品質等級 */}
+                                        {/* 差 (0-20 MB/s) - 紅色 */}
+                                        <ReferenceArea y1={0} y2={20} fill="#ff4d4f" fillOpacity={0.12} />
+                                        {/* 稍差 (20-40 MB/s) - 橙色 */}
+                                        <ReferenceArea y1={20} y2={40} fill="#ff7a45" fillOpacity={0.1} />
+                                        {/* 一般 (40-60 MB/s) - 黃色 */}
+                                        <ReferenceArea y1={40} y2={60} fill="#faad14" fillOpacity={0.1} />
+                                        {/* 良好 (60-80 MB/s) - 淺綠 */}
+                                        <ReferenceArea y1={60} y2={80} fill="#95de64" fillOpacity={0.12} />
+                                        {/* 優秀 (80+ MB/s) - 綠色 */}
+                                        <ReferenceArea y1={80} y2={getMaxSpeed()} fill="#52c41a" fillOpacity={0.15} />
+                                        
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                                         <XAxis 
                                             dataKey="time" 
                                             angle={-45} 
                                             textAnchor="end" 
                                             height={80}
-                                            style={{ fontSize: '12px' }}
+                                            tick={{ fontSize: 11 }}
+                                            interval="preserveStartEnd"
                                         />
                                         <YAxis 
                                             label={{ value: '速度 (MB/s)', angle: -90, position: 'insideLeft' }}
-                                            domain={[0, 'auto']}
+                                            domain={[0, getMaxSpeed()]}
                                         />
                                         <Tooltip 
+                                            contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
                                             formatter={(value) => value ? `${value.toFixed(2)} MB/s` : 'N/A'}
                                             labelFormatter={(label) => `時間: ${label}`}
                                         />
-                                        <Legend />
+                                        <Legend 
+                                            wrapperStyle={{ paddingTop: '10px' }}
+                                            content={(props) => {
+                                                const { payload } = props;
+                                                return (
+                                                    <div style={{ textAlign: 'center', fontSize: '12px' }}>
+                                                        {payload.map((entry, index) => (
+                                                            <span key={index} style={{ marginRight: '20px', color: entry.color }}>
+                                                                <span style={{ 
+                                                                    display: 'inline-block', 
+                                                                    width: '12px', 
+                                                                    height: '12px', 
+                                                                    backgroundColor: entry.color,
+                                                                    marginRight: '5px',
+                                                                    borderRadius: '2px'
+                                                                }}></span>
+                                                                {entry.value}
+                                                            </span>
+                                                        ))}
+                                                        <div style={{ marginTop: '8px', color: '#8c8c8c', fontSize: '11px' }}>
+                                                            <span style={{ marginRight: '12px' }}>🔴 差 (0-20)</span>
+                                                            <span style={{ marginRight: '12px' }}>🟠 稍差 (20-40)</span>
+                                                            <span style={{ marginRight: '12px' }}>🟡 一般 (40-60)</span>
+                                                            <span style={{ marginRight: '12px' }}>🟢 良好 (60-80)</span>
+                                                            <span>🟢 優秀 (80+ MB/s)</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }}
+                                        />
                                         <Line 
                                             type="monotone" 
                                             dataKey="upload_speed" 
                                             stroke="#1890ff" 
-                                            strokeWidth={2.5}
+                                            strokeWidth={2}
                                             name="上傳速度" 
-                                            dot={{ r: 3 }}
+                                            dot={{ r: 2 }}
                                             activeDot={{ r: 5 }}
                                             connectNulls
                                         />
@@ -427,9 +490,9 @@ const NASAnalyticsPage = () => {
                                             type="monotone" 
                                             dataKey="download_speed" 
                                             stroke="#722ed1" 
-                                            strokeWidth={2.5}
+                                            strokeWidth={2}
                                             name="下載速度" 
-                                            dot={{ r: 3 }}
+                                            dot={{ r: 2 }}
                                             activeDot={{ r: 5 }}
                                             connectNulls
                                         />

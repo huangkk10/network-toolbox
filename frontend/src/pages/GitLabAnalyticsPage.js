@@ -41,6 +41,7 @@ import {
     PieChart,
     Pie,
     Cell,
+    ReferenceArea,
 } from 'recharts';
 
 const { Title, Text } = Typography;
@@ -53,13 +54,14 @@ const GitLabAnalyticsPage = () => {
     const [logs, setLogs] = useState([]);
     const [currentStatus, setCurrentStatus] = useState(null);
     const [timeRange, setTimeRange] = useState(7); // 默認7天
+    const [latencyChartRange, setLatencyChartRange] = useState(7); // 網路延遲趨勢圖的時間範圍
 
     useEffect(() => {
         fetchData();
         // 設置自動刷新（每30秒）
         const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
-    }, [timeRange]);
+    }, [timeRange, latencyChartRange]);
 
     const fetchData = async () => {
         setLoading(true);
@@ -81,6 +83,40 @@ const GitLabAnalyticsPage = () => {
         } finally {
             setLoading(false);
         }
+    };
+
+    // 根據選擇的時間範圍過濾網路延遲趨勢數據（使用小時數據）
+    const getFilteredLatencyData = () => {
+        if (!statistics?.hourly_trends || statistics.hourly_trends.length === 0) {
+            return [];
+        }
+
+        // 計算要顯示的小時數
+        const hoursToShow = latencyChartRange * 24;
+        
+        // 只顯示最近 N 小時的數據
+        const allData = [...statistics.hourly_trends];
+        return allData.slice(-hoursToShow);
+    };
+
+    // 計算 Y 軸的最大值（用於動態調整顏色區塊）
+    const getMaxLatency = () => {
+        const data = getFilteredLatencyData();
+        if (data.length === 0) return 5;
+        
+        const maxPing = Math.max(...data.map(d => d.avg_latency || 0));
+        const maxHttp = Math.max(...data.map(d => (d.avg_http_response || 0) * 1000));
+        const max = Math.max(maxPing, maxHttp);
+        
+        // 根據最大值決定合適的 Y 軸範圍（針對低延遲環境優化）
+        if (max <= 1) return 2;
+        if (max <= 2) return 3;
+        if (max <= 5) return 8;
+        if (max <= 10) return 15;
+        if (max <= 20) return 30;
+        if (max <= 50) return 60;
+        if (max <= 100) return 120;
+        return Math.ceil(max * 1.2);
     };
 
     // 表格列定義
@@ -422,35 +458,117 @@ const GitLabAnalyticsPage = () => {
 
                 {/* 網路延遲趨勢 */}
                 <Col xs={24}>
-                    <Card title="網路延遲趨勢" extra={<Text type="secondary">Ping 延遲 (ms)</Text>}>
-                        {statistics?.daily_trends && statistics.daily_trends.length > 0 ? (
-                            <ResponsiveContainer width="100%" height={300}>
-                                <LineChart data={statistics.daily_trends}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="date" />
-                                    <YAxis />
-                                    <Tooltip />
-                                    <Legend />
+                    <Card 
+                        title="網路延遲趨勢" 
+                        extra={
+                            <Space>
+                                <Text type="secondary">時間範圍：</Text>
+                                <Select 
+                                    value={latencyChartRange} 
+                                    onChange={setLatencyChartRange} 
+                                    style={{ width: 100 }}
+                                    size="small"
+                                >
+                                    <Option value={1}>1 天</Option>
+                                    <Option value={3}>3 天</Option>
+                                    <Option value={7}>1 週</Option>
+                                    <Option value={14}>2 週</Option>
+                                </Select>
+                            </Space>
+                        }
+                    >
+                        {statistics?.hourly_trends && statistics.hourly_trends.length > 0 ? (
+                            getFilteredLatencyData().length > 0 ? (
+                                <ResponsiveContainer width="100%" height={400}>
+                                    <LineChart data={getFilteredLatencyData()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
+                                    {/* 背景顏色區塊 - 品質等級（針對低延遲網路優化） */}
+                                    {/* 優秀 (0-0.5ms) - 深綠色 */}
+                                    <ReferenceArea y1={0} y2={0.5} fill="#52c41a" fillOpacity={0.2} />
+                                    {/* 良好 (0.5-1ms) - 綠色 */}
+                                    <ReferenceArea y1={0.5} y2={1} fill="#95de64" fillOpacity={0.18} />
+                                    {/* 一般 (1-2ms) - 黃綠 */}
+                                    <ReferenceArea y1={1} y2={2} fill="#d3f261" fillOpacity={0.15} />
+                                    {/* 稍差 (2-5ms) - 黃色 */}
+                                    <ReferenceArea y1={2} y2={5} fill="#faad14" fillOpacity={0.15} />
+                                    {/* 差 (5ms+) - 橙紅色 */}
+                                    <ReferenceArea y1={5} y2={getMaxLatency()} fill="#ff7a45" fillOpacity={0.15} />
+                                    
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                    <XAxis 
+                                        dataKey="hour" 
+                                        angle={-45} 
+                                        textAnchor="end" 
+                                        height={80}
+                                        interval="preserveStartEnd"
+                                        tick={{ fontSize: 11 }}
+                                    />
+                                    <YAxis 
+                                        label={{ value: 'Ping 延遲 (ms)', angle: -90, position: 'insideLeft' }}
+                                        domain={[0, getMaxLatency()]}
+                                    />
+                                    <Tooltip 
+                                        contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
+                                        formatter={(value, name) => {
+                                            if (name === '平均延遲') return [`${value?.toFixed(2) || 'N/A'} ms`, name];
+                                            if (name === 'HTTP 響應') return [`${(value * 1000)?.toFixed(0) || 'N/A'} ms`, name];
+                                            return [value, name];
+                                        }}
+                                    />
+                                    <Legend 
+                                        wrapperStyle={{ paddingTop: '10px' }}
+                                        content={(props) => {
+                                            const { payload } = props;
+                                            return (
+                                                <div style={{ textAlign: 'center', fontSize: '12px' }}>
+                                                    {payload.map((entry, index) => (
+                                                        <span key={index} style={{ marginRight: '20px', color: entry.color }}>
+                                                            <span style={{ 
+                                                                display: 'inline-block', 
+                                                                width: '12px', 
+                                                                height: '12px', 
+                                                                backgroundColor: entry.color,
+                                                                marginRight: '5px',
+                                                                borderRadius: '2px'
+                                                            }}></span>
+                                                            {entry.value}
+                                                        </span>
+                                                    ))}
+                                                    <div style={{ marginTop: '8px', color: '#8c8c8c', fontSize: '11px' }}>
+                                                        <span style={{ marginRight: '12px' }}>🟢 優秀 (0-0.5ms)</span>
+                                                        <span style={{ marginRight: '12px' }}>� 良好 (0.5-1ms)</span>
+                                                        <span style={{ marginRight: '12px' }}>🟡 一般 (1-2ms)</span>
+                                                        <span style={{ marginRight: '12px' }}>🟠 稍差 (2-5ms)</span>
+                                                        <span>🔴 較差 (5ms+)</span>
+                                                    </div>
+                                                </div>
+                                            );
+                                        }}
+                                    />
                                     <Line
                                         type="monotone"
                                         dataKey="avg_latency"
                                         stroke="#1890ff"
-                                        strokeWidth={2.5}
+                                        strokeWidth={2}
                                         name="平均延遲"
-                                        dot={{ r: 4 }}
-                                        activeDot={{ r: 6 }}
+                                        dot={{ r: 2 }}
+                                        activeDot={{ r: 5 }}
+                                        connectNulls
                                     />
                                     <Line
                                         type="monotone"
                                         dataKey="avg_http_response"
                                         stroke="#722ed1"
-                                        strokeWidth={2}
-                                        name="HTTP 響應 (×100ms)"
-                                        dot={{ r: 3 }}
+                                        strokeWidth={1.5}
+                                        name="HTTP 響應"
+                                        dot={false}
                                         strokeDasharray="5 5"
+                                        connectNulls
                                     />
                                 </LineChart>
                             </ResponsiveContainer>
+                            ) : (
+                                <Empty description={`選定時間範圍內暫無數據，請選擇較長的時間範圍`} />
+                            )
                         ) : (
                             <Empty description="暫無延遲數據" />
                         )}
