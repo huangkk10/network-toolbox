@@ -464,10 +464,10 @@ const GitLabAnalyticsPage = () => {
                     </Card>
                 </Col>
 
-                {/* 網路延遲趨勢 */}
+                {/* Ping 延遲趨勢 */}
                 <Col xs={24}>
                     <Card 
-                        title="網路延遲趨勢" 
+                        title="Ping 延遲趨勢" 
                         extra={
                             <Space>
                                 <Text type="secondary">時間範圍：</Text>
@@ -489,105 +489,170 @@ const GitLabAnalyticsPage = () => {
                             getFilteredLatencyData().length > 0 ? (
                                 <ResponsiveContainer width="100%" height={400}>
                                     <LineChart data={getFilteredLatencyData()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
-                                    {/* 背景顏色區塊 - 品質等級（針對低延遲網路優化） */}
-                                    {/* 優秀 (0-0.5ms) - 深綠色 */}
-                                    <ReferenceArea y1={0} y2={0.5} fill="#52c41a" fillOpacity={0.2} />
-                                    {/* 良好 (0.5-1ms) - 綠色 */}
-                                    <ReferenceArea y1={0.5} y2={1} fill="#95de64" fillOpacity={0.18} />
-                                    {/* 一般 (1-2ms) - 黃綠 */}
-                                    <ReferenceArea y1={1} y2={2} fill="#d3f261" fillOpacity={0.15} />
-                                    {/* 稍差 (2-5ms) - 黃色 */}
-                                    <ReferenceArea y1={2} y2={5} fill="#faad14" fillOpacity={0.15} />
-                                    {/* 差 (5ms+) - 橙紅色 */}
-                                    <ReferenceArea y1={5} y2={getMaxLatency()} fill="#ff7a45" fillOpacity={0.15} />
-                                    
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                                    <XAxis 
-                                        dataKey="hour" 
-                                        angle={-45} 
-                                        textAnchor="end" 
-                                        height={80}
-                                        interval="preserveStartEnd"
-                                        tick={{ fontSize: 11 }}
-                                    />
-                                    <YAxis 
-                                        yAxisId="left"
-                                        label={{ value: 'Ping 延遲 (ms)', angle: -90, position: 'insideLeft' }}
-                                        domain={[0, getMaxLatency()]}
-                                    />
-                                    <YAxis 
-                                        yAxisId="right"
-                                        orientation="right"
-                                        label={{ value: 'HTTP 響應 (ms)', angle: 90, position: 'insideRight' }}
-                                        domain={[0, 'auto']}
-                                    />
-                                    <Tooltip 
-                                        contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
-                                        formatter={(value, name) => {
-                                            if (name === 'Ping 延遲') return [`${value?.toFixed(2) || 'N/A'} ms`, name];
-                                            if (name === 'HTTP 響應') return [`${(value * 1000)?.toFixed(0) || 'N/A'} ms`, name];
-                                            return [value, name];
-                                        }}
-                                    />
-                                    <Legend 
-                                        wrapperStyle={{ paddingTop: '10px' }}
-                                        content={(props) => {
-                                            const { payload } = props;
-                                            return (
+                                        {/* 背景顏色區塊 - Ping 品質等級 */}
+                                        <ReferenceArea y1={0} y2={0.5} fill="#52c41a" fillOpacity={0.2} />
+                                        <ReferenceArea y1={0.5} y2={1} fill="#95de64" fillOpacity={0.18} />
+                                        <ReferenceArea y1={1} y2={2} fill="#d3f261" fillOpacity={0.15} />
+                                        <ReferenceArea y1={2} y2={5} fill="#faad14" fillOpacity={0.15} />
+                                        <ReferenceArea y1={5} y2={getMaxLatency()} fill="#ff7a45" fillOpacity={0.15} />
+                                        
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                        <XAxis 
+                                            dataKey="hour" 
+                                            angle={-45} 
+                                            textAnchor="end" 
+                                            height={80}
+                                            interval="preserveStartEnd"
+                                            tick={{ fontSize: 11 }}
+                                        />
+                                        <YAxis 
+                                            label={{ value: 'Ping 延遲 (ms)', angle: -90, position: 'insideLeft' }}
+                                            domain={[0, getMaxLatency()]}
+                                        />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
+                                            formatter={(value) => [`${value?.toFixed(2) || 'N/A'} ms`, 'Ping 延遲']}
+                                        />
+                                        <Legend 
+                                            wrapperStyle={{ paddingTop: '10px' }}
+                                            content={() => (
                                                 <div style={{ textAlign: 'center', fontSize: '12px' }}>
-                                                    {payload.map((entry, index) => (
-                                                        <span key={index} style={{ marginRight: '20px', color: entry.color }}>
-                                                            <span style={{ 
-                                                                display: 'inline-block', 
-                                                                width: '12px', 
-                                                                height: '12px', 
-                                                                backgroundColor: entry.color,
-                                                                marginRight: '5px',
-                                                                borderRadius: '2px'
-                                                            }}></span>
-                                                            {entry.value}
-                                                        </span>
-                                                    ))}
-                                                    <div style={{ marginTop: '8px', color: '#8c8c8c', fontSize: '11px' }}>
+                                                    <div style={{ marginBottom: '8px', color: '#262626' }}>
+                                                        <span style={{ 
+                                                            display: 'inline-block', 
+                                                            width: '30px', 
+                                                            height: '3px', 
+                                                            backgroundColor: '#1890ff',
+                                                            marginRight: '5px',
+                                                            verticalAlign: 'middle'
+                                                        }}></span>
+                                                        Ping 延遲
+                                                    </div>
+                                                    <div style={{ color: '#8c8c8c', fontSize: '11px' }}>
                                                         <span style={{ marginRight: '12px' }}>🟢 優秀 (0-0.5ms)</span>
-                                                        <span style={{ marginRight: '12px' }}>� 良好 (0.5-1ms)</span>
+                                                        <span style={{ marginRight: '12px' }}>🟢 良好 (0.5-1ms)</span>
                                                         <span style={{ marginRight: '12px' }}>🟡 一般 (1-2ms)</span>
                                                         <span style={{ marginRight: '12px' }}>🟠 稍差 (2-5ms)</span>
                                                         <span>🔴 較差 (5ms+)</span>
                                                     </div>
                                                 </div>
-                                            );
-                                        }}
-                                    />
-                                    <Line
-                                        yAxisId="left"
-                                        type="monotone"
-                                        dataKey="avg_latency"
-                                        stroke="#1890ff"
-                                        strokeWidth={2}
-                                        name="Ping 延遲"
-                                        dot={{ r: 2 }}
-                                        activeDot={{ r: 5 }}
-                                        connectNulls
-                                    />
-                                    <Line
-                                        yAxisId="right"
-                                        type="monotone"
-                                        dataKey="avg_http_response"
-                                        stroke="#722ed1"
-                                        strokeWidth={1.5}
-                                        name="HTTP 響應"
-                                        dot={false}
-                                        strokeDasharray="5 5"
-                                        connectNulls
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
+                                            )}
+                                        />
+                                        <Line
+                                            type="monotone"
+                                            dataKey="avg_latency"
+                                            stroke="#1890ff"
+                                            strokeWidth={2.5}
+                                            name="Ping 延遲"
+                                            dot={{ r: 2 }}
+                                            activeDot={{ r: 5 }}
+                                            connectNulls
+                                        />
+                                    </LineChart>
+                                </ResponsiveContainer>
                             ) : (
                                 <Empty description={`選定時間範圍內暫無數據，請選擇較長的時間範圍`} />
                             )
                         ) : (
                             <Empty description="暫無延遲數據" />
+                        )}
+                    </Card>
+                </Col>
+
+                {/* HTTP 響應時間趨勢 */}
+                <Col xs={24}>
+                    <Card 
+                        title="HTTP 響應時間趨勢" 
+                        extra={
+                            <Space>
+                                <Text type="secondary">時間範圍：</Text>
+                                <Select 
+                                    value={latencyChartRange} 
+                                    onChange={setLatencyChartRange} 
+                                    style={{ width: 100 }}
+                                    size="small"
+                                >
+                                    <Option value={1}>1 天</Option>
+                                    <Option value={3}>3 天</Option>
+                                    <Option value={7}>1 週</Option>
+                                    <Option value={14}>2 週</Option>
+                                </Select>
+                            </Space>
+                        }
+                    >
+                        {statistics?.hourly_trends && statistics.hourly_trends.length > 0 ? (
+                            getFilteredLatencyData().length > 0 ? (
+                                <ResponsiveContainer width="100%" height={400}>
+                                    <LineChart data={getFilteredLatencyData()} margin={{ top: 5, right: 30, left: 20, bottom: 50 }}>
+                                        {/* 背景顏色區塊 - HTTP 響應品質等級 */}
+                                        <ReferenceArea y1={0} y2={0.2} fill="#52c41a" fillOpacity={0.2} />
+                                        <ReferenceArea y1={0.2} y2={0.5} fill="#95de64" fillOpacity={0.18} />
+                                        <ReferenceArea y1={0.5} y2={1} fill="#d3f261" fillOpacity={0.15} />
+                                        <ReferenceArea y1={1} y2={2} fill="#faad14" fillOpacity={0.15} />
+                                        <ReferenceArea y1={2} y2={'dataMax'} fill="#ff4d4f" fillOpacity={0.15} />
+                                        
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                                        <XAxis 
+                                            dataKey="hour" 
+                                            angle={-45} 
+                                            textAnchor="end" 
+                                            height={80}
+                                            interval="preserveStartEnd"
+                                            tick={{ fontSize: 11 }}
+                                        />
+                                        <YAxis 
+                                            label={{ value: 'HTTP 響應時間 (秒)', angle: -90, position: 'insideLeft' }}
+                                            domain={[0, 'auto']}
+                                        />
+                                        <Tooltip 
+                                            contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #d9d9d9' }}
+                                            formatter={(value) => [
+                                                `${(value * 1000)?.toFixed(0) || 'N/A'} ms (${value?.toFixed(3) || 'N/A'}s)`, 
+                                                'HTTP 響應時間'
+                                            ]}
+                                        />
+                                        <Legend 
+                                            wrapperStyle={{ paddingTop: '10px' }}
+                                            content={() => (
+                                                <div style={{ textAlign: 'center', fontSize: '12px' }}>
+                                                    <div style={{ marginBottom: '8px', color: '#262626' }}>
+                                                        <span style={{ 
+                                                            display: 'inline-block', 
+                                                            width: '30px', 
+                                                            height: '3px', 
+                                                            backgroundColor: '#722ed1',
+                                                            marginRight: '5px',
+                                                            verticalAlign: 'middle'
+                                                        }}></span>
+                                                        HTTP 響應時間
+                                                    </div>
+                                                    <div style={{ color: '#8c8c8c', fontSize: '11px' }}>
+                                                        <span style={{ marginRight: '12px' }}>🟢 優秀 (0-200ms)</span>
+                                                        <span style={{ marginRight: '12px' }}>🟢 良好 (200-500ms)</span>
+                                                        <span style={{ marginRight: '12px' }}>🟡 一般 (0.5-1s)</span>
+                                                        <span style={{ marginRight: '12px' }}>🟠 稍差 (1-2s)</span>
+                                                        <span>🔴 較差 (2s+)</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                        />
+                                        <Line
+                                            type="monotone"
+                                            dataKey="avg_http_response"
+                                            stroke="#722ed1"
+                                            strokeWidth={2.5}
+                                            name="HTTP 響應時間"
+                                            dot={{ r: 2 }}
+                                            activeDot={{ r: 5 }}
+                                            connectNulls
+                                        />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <Empty description={`選定時間範圍內暫無數據，請選擇較長的時間範圍`} />
+                            )
+                        ) : (
+                            <Empty description="暫無響應時間數據" />
                         )}
                     </Card>
                 </Col>
