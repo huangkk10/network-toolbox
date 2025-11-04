@@ -315,38 +315,87 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def builds(self, request, pk=None):
         """
-        獲取 Job 的所有 Build
+        獲取 Job 的所有 Build（從 Jenkins 實時獲取）
         
         GET /api/jenkins-jobs/{id}/builds/
         支援參數：
-        - limit: 限制返回數量（預設 50）
+        - limit: 限制返回數量（預設 10）
         - status: 按狀態過濾
         """
         job = self.get_object()
         
-        # 獲取 Build 列表
-        builds = job.builds.all().order_by('-build_number')
-        
-        # 狀態過濾
-        status_filter = request.query_params.get('status')
-        if status_filter:
-            builds = builds.filter(status=status_filter)
-        
         # 限制數量
-        limit = request.query_params.get('limit', 50)
+        limit = request.query_params.get('limit', 10)
         try:
             limit = int(limit)
-            builds = builds[:limit]
         except ValueError:
-            pass
+            limit = 10
         
-        serializer = JenkinsBuildSerializer(builds, many=True)
-        return Response({
-            'job_id': job.id,
-            'job_name': job.name,
-            'total_builds': job.builds.count(),
-            'builds': serializer.data
-        })
+        client = None
+        try:
+            # 從 Jenkins 實時獲取 Builds
+            client = JenkinsClient(
+                base_url=job.server.url,
+                username=job.server.username,
+                api_token=job.server.api_token
+            )
+            
+            jenkins_builds = client.get_job_builds(job.name, limit=limit)
+            
+            # 轉換為前端需要的格式
+            builds_data = []
+            for build in jenkins_builds:
+                # 格式化時間戳
+                timestamp = build.get('timestamp', 0) / 1000  # Jenkins 返回毫秒
+                from datetime import datetime
+                build_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else 'N/A'
+                
+                # 格式化持續時間
+                duration = build.get('duration', 0) / 1000  # 轉換為秒
+                if duration > 3600:
+                    duration_str = f"{int(duration / 3600)} 小時 {int((duration % 3600) / 60)} 分"
+                elif duration > 60:
+                    duration_str = f"{int(duration / 60)} 分 {int(duration % 60)} 秒"
+                else:
+                    duration_str = f"{int(duration)} 秒"
+                
+                builds_data.append({
+                    'id': f"jenkins-{job.id}-{build.get('number')}",  # 臨時 ID
+                    'build_number': build.get('number'),
+                    'result': build.get('result') or ('RUNNING' if build.get('building') else 'UNKNOWN'),
+                    'build_timestamp': build_time,
+                    'duration': duration,
+                    'duration_formatted': duration_str,
+                    'url': build.get('url'),
+                    'building': build.get('building', False),
+                })
+            
+            # 狀態過濾（在前端數據上過濾）
+            status_filter = request.query_params.get('status')
+            if status_filter:
+                builds_data = [b for b in builds_data if b['result'] == status_filter]
+            
+            logger.info(f"從 Jenkins 獲取 Job '{job.name}' 的 Builds: {len(builds_data)} 個")
+            
+            return Response({
+                'job_id': job.id,
+                'job_name': job.name,
+                'total_builds': len(jenkins_builds),
+                'builds': builds_data
+            })
+            
+        except Exception as e:
+            logger.error(f"獲取 Jenkins Builds 失敗: {e}", exc_info=True)
+            return Response({
+                'job_id': job.id,
+                'job_name': job.name,
+                'total_builds': 0,
+                'builds': [],
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            if client:
+                client.close()
     
     @action(detail=True, methods=['get'])
     def latest_build(self, request, pk=None):

@@ -218,13 +218,14 @@ const RVTAnalysisPage = () => {
                 );
                 
                 const builds = response.data.builds.map(build => ({
-                    key: `build-${build.id}`,
+                    key: `build-${build.build_number}`,
                     type: 'build',
                     build_id: build.id,
                     build_number: build.build_number,
                     result: build.result || build.status,  // 兼容兩種命名
                     build_timestamp: build.build_timestamp,
                     duration: build.duration_formatted || `${build.duration}s`,
+                    url: build.url,  // Jenkins Build URL
                     job_id: record.job_id,
                     job_name: record.name,
                 }));
@@ -249,60 +250,25 @@ const RVTAnalysisPage = () => {
         }
     };
     
-    // 查看 Console Log
-    const handleViewLog = async (record) => {
-        setConsoleLogModal({
-            visible: true,
-            loading: true,
-            content: '',
-            buildInfo: record,
-        });
-        
-        try {
-            const response = await axios.get(
-                `/api/jenkins-builds/${record.build_id}/console_log/`
-            );
-            
-            setConsoleLogModal(prev => ({
-                ...prev,
-                loading: false,
-                content: response.data.log_content,
-            }));
-        } catch (error) {
-            console.error('獲取 Console Log 失敗:', error);
-            message.error('獲取 Console Log 失敗');
-            setConsoleLogModal(prev => ({
-                ...prev,
-                loading: false,
-                content: '載入失敗',
-            }));
+    // 查看 Console Log（直接打開 Jenkins 頁面）
+    const handleViewLog = (record) => {
+        if (record.url) {
+            // 打開 Jenkins Build Console 頁面
+            window.open(`${record.url}console`, '_blank');
+            message.success('已在新視窗中打開 Console Log');
+        } else {
+            message.error('Build URL 不可用');
         }
     };
     
-    // 查看 Build 詳情
-    const handleViewDetail = async (record) => {
-        setBuildDetailDrawer({
-            visible: true,
-            loading: true,
-            data: null,
-        });
-        
-        try {
-            const response = await axios.get(`/api/jenkins-builds/${record.build_id}/`);
-            
-            setBuildDetailDrawer({
-                visible: true,
-                loading: false,
-                data: response.data,
-            });
-        } catch (error) {
-            console.error('獲取 Build 詳情失敗:', error);
-            message.error('獲取 Build 詳情失敗');
-            setBuildDetailDrawer({
-                visible: false,
-                loading: false,
-                data: null,
-            });
+    // 查看 Build 詳情（直接打開 Jenkins 頁面）
+    const handleViewDetail = (record) => {
+        if (record.url) {
+            // 打開 Jenkins Build 詳情頁面
+            window.open(record.url, '_blank');
+            message.success('已在新視窗中打開 Build 詳情');
+        } else {
+            message.error('Build URL 不可用');
         }
     };
     

@@ -159,6 +159,26 @@ class JenkinsClient:
         logger.info(f"獲取 View '{view_name}' 的 Job: 共 {len(jobs)} 個")
         return jobs
     
+    def get_job_builds(self, job_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        獲取指定 Job 的 Builds
+        
+        Args:
+            job_name: Job 名稱
+            limit: 返回的 Build 數量限制
+            
+        Returns:
+            list: Build 列表
+        """
+        # 使用 tree 參數只獲取需要的字段，提高效率
+        url = f"{self.base_url}/job/{job_name}/api/json?tree=builds[number,url,result,timestamp,duration,building]{{0,{limit}}}"
+        response = self._make_request('GET', url)
+        data = response.json()
+        builds = data.get('builds', [])
+        
+        logger.info(f"獲取 Job '{job_name}' 的 Builds: 共 {len(builds)} 個")
+        return builds
+    
     def close(self):
         """關閉 Session"""
         self.session.close()
