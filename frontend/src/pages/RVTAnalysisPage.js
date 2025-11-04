@@ -522,6 +522,35 @@ const RVTAnalysisPage = () => {
                 </Space>
             </div>
 
+            {/* Jenkins Server 選擇器（置頂） */}
+            <Card style={{ marginBottom: 16 }}>
+                <Row gutter={16} align="middle">
+                    <Col span={4}>
+                        <label style={{ fontWeight: 500, fontSize: 14 }}>選擇 Jenkins Server：</label>
+                    </Col>
+                    <Col span={20}>
+                        <Select
+                            placeholder="請選擇 Jenkins Server（全部顯示所有 Server 的 Jobs）"
+                            style={{ width: '100%' }}
+                            allowClear
+                            value={filters.server_id}
+                            onChange={(value) => setFilters({ ...filters, server_id: value })}
+                            size="large"
+                        >
+                            {servers.map(server => (
+                                <Option key={server.id} value={server.id}>
+                                    <CloudServerOutlined style={{ marginRight: 8 }} />
+                                    {server.name} 
+                                    <span style={{ color: '#999', marginLeft: 8 }}>
+                                        ({server.url})
+                                    </span>
+                                </Option>
+                            ))}
+                        </Select>
+                    </Col>
+                </Row>
+            </Card>
+
             {/* 統計卡片 */}
             <Row gutter={16} style={{ marginBottom: 24 }}>
                 <Col span={6}>
@@ -570,22 +599,7 @@ const RVTAnalysisPage = () => {
             {/* 篩選區域 */}
             <Card style={{ marginBottom: 16 }}>
                 <Row gutter={16}>
-                    <Col span={6}>
-                        <Select
-                            placeholder="選擇 Jenkins"
-                            style={{ width: '100%' }}
-                            allowClear
-                            onChange={(value) => setFilters({ ...filters, server_id: value })}
-                        >
-                            {servers.map(server => (
-                                <Option key={server.id} value={server.id}>
-                                    {server.name}
-                                </Option>
-                            ))}
-                        </Select>
-                    </Col>
-                    
-                    <Col span={6}>
+                    <Col span={8}>
                         <Select
                             placeholder="篩選狀態"
                             style={{ width: '100%' }}
@@ -599,7 +613,7 @@ const RVTAnalysisPage = () => {
                         </Select>
                     </Col>
                     
-                    <Col span={6}>
+                    <Col span={8}>
                         <RangePicker
                             style={{ width: '100%' }}
                             onChange={(dates) => setFilters({ ...filters, date_range: dates })}
@@ -607,7 +621,7 @@ const RVTAnalysisPage = () => {
                         />
                     </Col>
                     
-                    <Col span={6}>
+                    <Col span={8}>
                         <Input.Search
                             placeholder="搜尋 Job 名稱..."
                             allowClear
