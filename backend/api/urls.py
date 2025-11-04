@@ -14,6 +14,11 @@ router.register(r'ipxe-network-quality', views.IPXENetworkQualityViewSet)
 router.register(r'switches', views.NetworkSwitchViewSet)
 router.register(r'switch-ports', views.SwitchPortViewSet)
 
+# Jenkins API
+router.register(r'jenkins-servers', views.JenkinsServerViewSet)
+router.register(r'jenkins-jobs', views.JenkinsJobViewSet)
+router.register(r'jenkins-builds', views.JenkinsBuildViewSet)
+
 urlpatterns = [
     path('', views.api_root, name='api_root'),
     path('dashboard/stats/', views.dashboard_stats, name='dashboard_stats'),

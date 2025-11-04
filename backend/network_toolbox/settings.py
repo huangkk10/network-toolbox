@@ -109,11 +109,39 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-# ==================== Celery 配置 ====================
+# ==================== Redis 緩存配置 ====================
 # Redis 連接設置
 REDIS_HOST = config('REDIS_HOST', default='redis')
 REDIS_PORT = config('REDIS_PORT', default='6379')
+REDIS_DB = config('REDIS_DB', default='0')
 
+# Django Cache 配置（使用 Redis）
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': f'redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 50,
+                'retry_on_timeout': True,
+            },
+            'SOCKET_CONNECT_TIMEOUT': 5,
+            'SOCKET_TIMEOUT': 5,
+            'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+            'IGNORE_EXCEPTIONS': True,  # 緩存失敗不影響主要功能
+        },
+        'KEY_PREFIX': 'nt',  # Network Toolbox 緩存鍵前綴
+        'TIMEOUT': 3600,  # 默認 1 小時過期
+    }
+}
+
+# Session 使用 Redis 儲存
+SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+SESSION_CACHE_ALIAS = 'default'
+
+
+# ==================== Celery 配置 ====================
 # Celery Broker（消息隊列）
 CELERY_BROKER_URL = f'redis://{REDIS_HOST}:{REDIS_PORT}/1'
 
@@ -308,3 +336,20 @@ LOGGING = {
         },
     },
 }
+
+
+# ==================== Jenkins 整合配置 ====================
+# NAS 掛載路徑配置
+NAS_MOUNT_PATH = config('NAS_MOUNT_PATH', default='/mnt/mdt')
+
+# Jenkins 存儲路徑結構：{NAS_MOUNT_PATH}/{jenkins_ip}/{job_name}/{build_number}/
+JENKINS_STORAGE_BASE_PATH = os.path.join(NAS_MOUNT_PATH, 'jenkins_test_storage')
+
+# Jenkins 配置緩存時間（秒）
+JENKINS_CONFIG_CACHE_TTL = 1800  # 30 分鐘
+JENKINS_LOG_CACHE_TTL = 3600  # 1 小時
+JENKINS_DB_QUERY_CACHE_TTL = 300  # 5 分鐘
+
+# Jenkins API 請求超時設置
+JENKINS_API_TIMEOUT = 30  # 30 秒
+JENKINS_API_RETRY_TIMES = 3  # 重試次數

@@ -14,3 +14,10 @@ redis==5.0.1
 django-celery-beat==2.5.0
 django-celery-results==2.5.1
 flower==2.0.1
+
+# Django Redis 緩存
+django-redis>=5.4.0
+
+# Jenkins 整合相關
+beautifulsoup4>=4.12.0  # 用於解析 HTML
+lxml>=4.9.0  # XML/HTML 解析器

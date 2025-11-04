@@ -19,6 +19,7 @@ import IPXEManagementPage from './pages/IPXEManagementPage';
 import UserManagementPage from './pages/UserManagementPage';
 import SettingsPage from './pages/SettingsPage';
 import SystemMonitorPage from './pages/SystemMonitorPage';
+import RVTAnalysisPage from './pages/RVTAnalysisPage';
 
 const { Content } = Layout;
 
@@ -55,6 +56,11 @@ function AppLayout() {
         // 處理 iPXE Analytics 子路由
         if (pathname.startsWith('/ipxe-analytics')) {
             return 'iPXE 分析';
+        }
+        
+        // 處理 RVT Analytics 子路由
+        if (pathname.startsWith('/rvt-analytics')) {
+            return 'RVT 分析';
         }
         
         switch (pathname) {
@@ -137,6 +143,10 @@ function AppLayout() {
                         <Route path="/ipxe-analytics" element={<IPXEAnalyticsPage />} />
                         <Route path="/ipxe-analytics/:tab" element={<IPXEAnalyticsPage />} />
                         <Route path="/ipxe-analytics/server/:serverId/:tab" element={<IPXEAnalyticsPage />} />
+                        
+                        {/* RVT Analytics 路由 - 僅 Admin 可訪問 */}
+                        <Route path="/rvt-analytics" element={<RVTAnalysisPage />} />
+                        
                         <Route path="/system-monitor" element={<SystemMonitorPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />
                         <Route path="/admin/ipxe-server-management" element={<IPXEManagementPage />} />

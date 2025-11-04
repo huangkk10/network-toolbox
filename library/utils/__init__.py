@@ -35,6 +35,20 @@ from .log_parser import (
     parse_ipxe_log,
 )
 
+# 緩存裝飾器
+from .cache_decorators import (
+    cached,
+    cache_result,
+    cache_model_method,
+    invalidate_cache,
+    CachedProperty,
+    cache_jenkins_api,
+    cache_jenkins_config,
+    cache_jenkins_log,
+    get_cache_stats,
+    warm_cache,
+)
+
 __all__ = [
     # MAC 工具
     'parse_windows_client_id',
@@ -55,4 +69,15 @@ __all__ = [
     'parse_dhcp_log',
     'parse_windows_dhcp_log',
     'parse_ipxe_log',
+    # 緩存裝飾器
+    'cached',
+    'cache_result',
+    'cache_model_method',
+    'invalidate_cache',
+    'CachedProperty',
+    'cache_jenkins_api',
+    'cache_jenkins_config',
+    'cache_jenkins_log',
+    'get_cache_stats',
+    'warm_cache',
 ]

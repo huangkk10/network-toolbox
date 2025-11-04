@@ -48,12 +48,18 @@ services:
       - DB_NAME=network_toolbox
       - DB_USER=postgres
       - DB_PASSWORD=postgres123
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - NAS_MOUNT_PATH=/mnt/mdt  # NAS 掛載路徑
     volumes:
       - ./backend:/app
       - ./library:/app/library
       - ./logs:/app/logs # 日誌目錄掛載
       - static_files:/app/static
       - media_files:/app/media
+      # NAS 掛載（如果 /mnt/mdt 存在的話）- 唯讀模式
+      # - /mnt/mdt:/mnt/mdt:ro
     ports:
       - "8000:8000"
     depends_on:

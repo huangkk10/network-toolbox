@@ -13,6 +13,7 @@ import {
     CloudServerOutlined,
     DashboardOutlined,
     GitlabOutlined,
+    RocketOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
@@ -37,6 +38,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
         // 處理 iPXE Analytics 子路由
         if (pathname.startsWith('/ipxe-analytics')) {
             return 'ipxe-analytics';
+        }
+        
+        // 處理 RVT Analytics 子路由
+        if (pathname.startsWith('/rvt-analytics')) {
+            return 'rvt-analytics';
         }
         
         // 處理其他路由
@@ -87,6 +93,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             case 'ipxe-analytics':
                 navigate('/ipxe-analytics');
                 break;
+            case 'rvt-analytics':
+                navigate('/rvt-analytics');
+                break;
             case 'system-monitor':
                 navigate('/system-monitor');
                 break;
@@ -131,6 +140,13 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             label: 'IPXE 分析',
         },
     ];
+    
+    // RVT 分析菜單項（僅 Admin 可見）
+    const rvtMenuItem = {
+        key: 'rvt-analytics',
+        icon: <RocketOutlined />,
+        label: 'RVT 分析',
+    };
 
     // 管理功能選單
     const adminMenuItems = [
@@ -175,6 +191,8 @@ const Sidebar = ({ collapsed, onCollapse }) => {
     // 根據用戶權限組合選單項目
     const allMenuItems = [
         ...mainMenuItems,
+        // RVT 分析（僅 Admin 可見）
+        ...(isAuthenticated && user?.is_staff ? [rvtMenuItem] : []),
         // 只有已登入且是 admin 的用戶才能看到管理功能和系統設定
         ...(isAuthenticated && user?.is_staff ? adminMenuItems : []),
         ...(isAuthenticated && user?.is_staff ? systemMenuItems : []),

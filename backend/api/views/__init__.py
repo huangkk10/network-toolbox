@@ -48,6 +48,13 @@ from .ipxe_analytics import (
 # Network Switch Views
 from .network_switches import NetworkSwitchViewSet, SwitchPortViewSet
 
+# Jenkins Views
+from .jenkins import (
+    JenkinsServerViewSet,
+    JenkinsJobViewSet,
+    JenkinsBuildViewSet,
+)
+
 # System Views
 from .system import (
     dashboard_stats,
@@ -93,6 +100,11 @@ __all__ = [
     # Network Switches
     'NetworkSwitchViewSet',
     'SwitchPortViewSet',
+    
+    # Jenkins
+    'JenkinsServerViewSet',
+    'JenkinsJobViewSet',
+    'JenkinsBuildViewSet',
     
     # System
     'dashboard_stats',

@@ -705,3 +705,174 @@ class GitLabConnection(models.Model):
     
     def __str__(self):
         return f"{self.gitlab_name} - {self.status} @ {self.checked_at.strftime('%Y-%m-%d %H:%M')}"
+
+
+# ==================== Jenkins 整合模型 ====================
+
+class JenkinsServer(models.Model):
+    """Jenkins 伺服器模型"""
+    
+    STATUS_CHOICES = [
+        ('online', 'Online'),
+        ('offline', 'Offline'),
+        ('unreachable', 'Unreachable'),
+    ]
+    
+    # 基本資訊
+    name = models.CharField(max_length=200, unique=True, verbose_name='伺服器名稱')
+    url = models.URLField(max_length=500, verbose_name='Jenkins URL')
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name='IP 位址')
+    description = models.TextField(blank=True, verbose_name='描述')
+    
+    # 認證資訊
+    username = models.CharField(max_length=100, blank=True, verbose_name='使用者名稱')
+    api_token = models.CharField(max_length=500, blank=True, verbose_name='API Token')
+    
+    # 狀態
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='offline',
+        verbose_name='狀態'
+    )
+    is_active = models.BooleanField(default=True, verbose_name='是否啟用')
+    
+    # 統計資訊
+    total_jobs = models.IntegerField(default=0, verbose_name='Job 總數')
+    total_builds = models.IntegerField(default=0, verbose_name='Build 總數')
+    
+    # 時間戳記
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='上次同步時間')
+    
+    class Meta:
+        verbose_name = 'Jenkins 伺服器'
+        verbose_name_plural = 'Jenkins 伺服器'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status'], name='idx_jenkins_server_status'),
+            models.Index(fields=['is_active'], name='idx_jenkins_server_active'),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} ({self.url})"
+
+
+class JenkinsJob(models.Model):
+    """Jenkins Job 模型"""
+    
+    # 關聯
+    server = models.ForeignKey(
+        JenkinsServer,
+        on_delete=models.CASCADE,
+        related_name='jobs',
+        verbose_name='所屬伺服器'
+    )
+    
+    # Job 資訊
+    name = models.CharField(max_length=500, verbose_name='Job 名稱')
+    full_name = models.CharField(max_length=1000, verbose_name='Job 完整路徑')
+    url = models.URLField(max_length=1000, verbose_name='Job URL')
+    description = models.TextField(blank=True, verbose_name='描述')
+    view_name = models.CharField(max_length=200, blank=True, default='', verbose_name='所屬 View')
+    
+    # 狀態
+    is_buildable = models.BooleanField(default=True, verbose_name='是否可構建')
+    is_disabled = models.BooleanField(default=False, verbose_name='是否禁用')
+    
+    # 最後構建資訊
+    last_build_number = models.IntegerField(null=True, blank=True, verbose_name='最後 Build 編號')
+    last_build_status = models.CharField(max_length=50, blank=True, verbose_name='最後 Build 狀態')
+    last_build_time = models.DateTimeField(null=True, blank=True, verbose_name='最後 Build 時間')
+    
+    # 統計
+    total_builds = models.IntegerField(default=0, verbose_name='Build 總數')
+    success_rate = models.FloatField(default=0.0, verbose_name='成功率 (%)')
+    
+    # 時間戳記
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='上次同步時間')
+    
+    class Meta:
+        verbose_name = 'Jenkins Job'
+        verbose_name_plural = 'Jenkins Jobs'
+        ordering = ['-last_build_time']
+        unique_together = [['server', 'full_name']]
+        indexes = [
+            models.Index(fields=['server', 'name'], name='idx_jenkins_job_server_name'),
+            models.Index(fields=['last_build_time'], name='idx_jenkins_job_build_time'),
+        ]
+    
+    def __str__(self):
+        return f"{self.server.name} - {self.name}"
+
+
+class JenkinsBuild(models.Model):
+    """Jenkins Build 記錄模型"""
+    
+    RESULT_CHOICES = [
+        ('SUCCESS', 'Success'),
+        ('FAILURE', 'Failure'),
+        ('UNSTABLE', 'Unstable'),
+        ('ABORTED', 'Aborted'),
+        ('NOT_BUILT', 'Not Built'),
+        ('BUILDING', 'Building'),
+    ]
+    
+    # 關聯
+    job = models.ForeignKey(
+        JenkinsJob,
+        on_delete=models.CASCADE,
+        related_name='builds',
+        verbose_name='所屬 Job'
+    )
+    
+    # Build 資訊
+    build_number = models.IntegerField(verbose_name='Build 編號')
+    display_name = models.CharField(max_length=200, verbose_name='顯示名稱')
+    url = models.URLField(max_length=1000, verbose_name='Build URL')
+    
+    # 狀態
+    result = models.CharField(
+        max_length=20,
+        choices=RESULT_CHOICES,
+        default='BUILDING',
+        verbose_name='構建結果'
+    )
+    is_building = models.BooleanField(default=False, verbose_name='是否正在構建')
+    duration = models.BigIntegerField(default=0, verbose_name='構建時長 (ms)')
+    
+    # Build 參數和配置（使用 JSONField 儲存）
+    parameters = models.JSONField(default=dict, blank=True, verbose_name='Build 參數')
+    ansible_config = models.JSONField(default=dict, blank=True, verbose_name='Ansible 配置')
+    environment_vars = models.JSONField(default=dict, blank=True, verbose_name='環境變數')
+    
+    # 文件路徑（NAS 上的路徑）
+    config_file_path = models.CharField(max_length=1000, blank=True, verbose_name='配置文件路徑')
+    log_file_path = models.CharField(max_length=1000, blank=True, verbose_name='日誌文件路徑')
+    
+    # 時間戳記
+    build_timestamp = models.DateTimeField(verbose_name='構建時間')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='記錄建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='記錄更新時間')
+    
+    class Meta:
+        verbose_name = 'Jenkins Build'
+        verbose_name_plural = 'Jenkins Builds'
+        ordering = ['-build_timestamp']
+        unique_together = [['job', 'build_number']]
+        indexes = [
+            models.Index(fields=['job', '-build_number'], name='idx_jenkins_build_job_num'),
+            models.Index(fields=['result'], name='idx_jenkins_build_result'),
+            models.Index(fields=['-build_timestamp'], name='idx_jenkins_build_time'),
+        ]
+    
+    def __str__(self):
+        return f"{self.job.name} #{self.build_number} - {self.result}"
+    
+    @property
+    def duration_seconds(self):
+        """獲取構建時長（秒）"""
+        return self.duration / 1000 if self.duration else 0
