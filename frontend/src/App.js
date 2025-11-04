@@ -20,6 +20,7 @@ import UserManagementPage from './pages/UserManagementPage';
 import SettingsPage from './pages/SettingsPage';
 import SystemMonitorPage from './pages/SystemMonitorPage';
 import RVTAnalysisPage from './pages/RVTAnalysisPage';
+import RVTManagementPage from './pages/RVTManagementPage';
 
 const { Content } = Layout;
 
@@ -80,6 +81,8 @@ function AppLayout() {
                 return 'DHCP Server 管理';
             case '/admin/ipxe-server-management':
                 return 'IPXE Server 管理';
+            case '/admin/rvt-management':
+                return 'RVT 管理';
             case '/admin/user-management':
                 return '用戶管理';
             case '/settings':
@@ -150,6 +153,7 @@ function AppLayout() {
                         <Route path="/system-monitor" element={<SystemMonitorPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />
                         <Route path="/admin/ipxe-server-management" element={<IPXEManagementPage />} />
+                        <Route path="/admin/rvt-management" element={<RVTManagementPage />} />
                         <Route path="/admin/user-management" element={<UserManagementPage />} />
                         <Route path="/settings" element={<SettingsPage />} />
                     </Routes>

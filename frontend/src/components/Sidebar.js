@@ -52,6 +52,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
         if (pathname.startsWith('/admin/ipxe-server-management')) {
             return 'ipxe-server-management';
         }
+        if (pathname.startsWith('/admin/rvt-management')) {
+            return 'rvt-management';
+        }
         if (pathname.startsWith('/admin/user-management')) {
             return 'user-management';
         }
@@ -104,6 +107,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                 break;
             case 'ipxe-server-management':
                 navigate('/admin/ipxe-server-management');
+                break;
+            case 'rvt-management':
+                navigate('/admin/rvt-management');
                 break;
             case 'user-management':
                 navigate('/admin/user-management');
@@ -164,6 +170,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                     key: 'ipxe-server-management',
                     icon: <ExperimentOutlined />,
                     label: 'IPXE Server 管理',
+                },
+                {
+                    key: 'rvt-management',
+                    icon: <RocketOutlined />,
+                    label: 'RVT 管理',
                 },
                 {
                     key: 'user-management',
