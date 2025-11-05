@@ -73,6 +73,18 @@ const RVTAnalysisPage = () => {
     };
     const activeTab = getActiveTab();
     
+    // 從 URL 參數讀取篩選條件
+    const getFiltersFromURL = () => {
+        const params = new URLSearchParams(location.search);
+        return {
+            server_id: params.get('server_id') ? parseInt(params.get('server_id')) : null,
+            view_name: params.get('view_name') || null,
+            status: params.get('status') || null,
+            date_range: null,
+            search: params.get('search') || '',
+        };
+    };
+    
     const [loading, setLoading] = useState(false);
     const [statistics, setStatistics] = useState({
         total_servers: 0,
@@ -85,17 +97,44 @@ const RVTAnalysisPage = () => {
     const [treeData, setTreeData] = useState([]);
     const [expandedRowKeys, setExpandedRowKeys] = useState([]);
     
-    // 篩選條件
-    const [filters, setFilters] = useState({
-        server_id: null,
-        view_name: null,  // 新增：View 篩選
-        status: null,
-        date_range: null,
-        search: '',
-    });
+    // 篩選條件（從 URL 初始化）
+    const [filters, setFilters] = useState(getFiltersFromURL());
     
     // View 列表（從 Jobs 中提取唯一的 view_name）
     const [availableViews, setAvailableViews] = useState([]);
+    
+    // 更新 URL 參數（保持篩選條件持久化）
+    const updateURLParams = (newFilters) => {
+        const params = new URLSearchParams(location.search);
+        
+        // 更新篩選參數
+        if (newFilters.server_id) {
+            params.set('server_id', newFilters.server_id);
+        } else {
+            params.delete('server_id');
+        }
+        
+        if (newFilters.view_name) {
+            params.set('view_name', newFilters.view_name);
+        } else {
+            params.delete('view_name');
+        }
+        
+        if (newFilters.status) {
+            params.set('status', newFilters.status);
+        } else {
+            params.delete('status');
+        }
+        
+        if (newFilters.search) {
+            params.set('search', newFilters.search);
+        } else {
+            params.delete('search');
+        }
+        
+        // 導航到新的 URL（不會重新載入頁面）
+        navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    };
     
     // Modal & Drawer
     const [consoleLogModal, setConsoleLogModal] = useState({
@@ -554,14 +593,16 @@ const RVTAnalysisPage = () => {
     // ========== 初始化 ==========
     useEffect(() => {
         fetchStatistics();
-        fetchJobs();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     
+    // 當 URL 參數變化時，更新 filters 並重新載入數據
     useEffect(() => {
+        const urlFilters = getFiltersFromURL();
+        setFilters(urlFilters);
         fetchJobs();
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filters]);
+    }, [location.search]);
 
     // ========== 渲染 ==========
     return (
@@ -630,7 +671,11 @@ const RVTAnalysisPage = () => {
                                     style={{ width: '100%' }}
                                     allowClear
                                     value={filters.server_id}
-                                    onChange={(value) => setFilters({ ...filters, server_id: value })}
+                                    onChange={(value) => {
+                                        const newFilters = { ...filters, server_id: value };
+                                        setFilters(newFilters);
+                                        updateURLParams(newFilters);
+                                    }}
                                     size="large"
                                 >
                                     {servers.map(server => (
@@ -653,7 +698,11 @@ const RVTAnalysisPage = () => {
                                     style={{ width: '100%' }}
                                     allowClear
                                     value={filters.view_name}
-                                    onChange={(value) => setFilters({ ...filters, view_name: value })}
+                                    onChange={(value) => {
+                                        const newFilters = { ...filters, view_name: value };
+                                        setFilters(newFilters);
+                                        updateURLParams(newFilters);
+                                    }}
                                     size="large"
                                     showSearch
                                     filterOption={(input, option) =>
@@ -680,7 +729,11 @@ const RVTAnalysisPage = () => {
                                     style={{ width: '100%' }}
                                     allowClear
                                     value={filters.status}
-                                    onChange={(value) => setFilters({ ...filters, status: value })}
+                                    onChange={(value) => {
+                                        const newFilters = { ...filters, status: value };
+                                        setFilters(newFilters);
+                                        updateURLParams(newFilters);
+                                    }}
                                 >
                                     <Option value="SUCCESS">Success</Option>
                                     <Option value="FAILURE">Failure</Option>
@@ -691,7 +744,11 @@ const RVTAnalysisPage = () => {
                             <Col span={8}>
                                 <RangePicker
                                     style={{ width: '100%' }}
-                                    onChange={(dates) => setFilters({ ...filters, date_range: dates })}
+                                    onChange={(dates) => {
+                                        const newFilters = { ...filters, date_range: dates };
+                                        setFilters(newFilters);
+                                        // date_range 不需要存到 URL（因為是 moment 對象）
+                                    }}
                                     placeholder={['開始日期', '結束日期']}
                                 />
                             </Col>
@@ -700,7 +757,16 @@ const RVTAnalysisPage = () => {
                                 <Input.Search
                                     placeholder="搜尋 Job 名稱..."
                                     allowClear
-                                    onSearch={(value) => setFilters({ ...filters, search: value })}
+                                    value={filters.search}
+                                    onSearch={(value) => {
+                                        const newFilters = { ...filters, search: value };
+                                        setFilters(newFilters);
+                                        updateURLParams(newFilters);
+                                    }}
+                                    onChange={(e) => {
+                                        // 實時更新搜尋框內容（但不觸發查詢）
+                                        setFilters({ ...filters, search: e.target.value });
+                                    }}
                                     enterButton
                                 />
                             </Col>
