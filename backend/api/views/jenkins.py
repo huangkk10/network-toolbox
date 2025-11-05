@@ -22,7 +22,7 @@ from api.serializers import (
     JenkinsBuildDetailSerializer,
 )
 from library.services.jenkins_client import JenkinsClient
-# from library.services.jenkins_storage_service import JenkinsStorageService  # Phase 4 功能，暫時註釋
+from library.services.jenkins_storage_service import JenkinsStorageService
 from library.utils import cache_jenkins_api, get_cache_stats
 
 logger = logging.getLogger(__name__)
@@ -573,6 +573,124 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
             return Response({
                 'success': False,
                 'message': f'獲取日誌失敗: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'])
+    def store_workspace(self, request, pk=None):
+        """
+        存儲 Build Workspace 到 NAS
+        
+        POST /api/jenkins-builds/{id}/store_workspace/
+        
+        將 Jenkins Build 的 Workspace 下載並存儲到 NAS 上。
+        存儲路徑：{NAS_BASE}/jenkins_test_storage/{jenkins_ip}/{job_name}/{build_number}/workspace/
+        
+        Returns:
+            {
+                'success': bool,
+                'message': str,
+                'workspace_path': str,
+                'workspace_size': int (bytes),
+                'files_count': int,
+                'stored_at': str (ISO 時間),
+                'error': str (如果失敗)
+            }
+        """
+        build = self.get_object()
+        
+        # 檢查是否已經存儲
+        if build.is_workspace_stored:
+            return Response({
+                'success': True,
+                'message': 'Workspace 已經存儲過了',
+                'workspace_path': build.workspace_path,
+                'workspace_size': build.workspace_size,
+                'stored_at': build.workspace_stored_at.isoformat() if build.workspace_stored_at else None,
+                'already_stored': True
+            })
+        
+        try:
+            # 解析 Jenkins Server IP
+            jenkins_url = build.job.server.url
+            import re
+            match = re.search(r'https?://([^:/]+)', jenkins_url)
+            if not match:
+                return Response({
+                    'success': False,
+                    'error': '無法解析 Jenkins Server IP'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            jenkins_ip = match.group(1)
+            
+            # 構建 Workspace URL
+            # 例如：http://10.252.170.187:8080/job/SAF3201_KVM02/4/ws/
+            workspace_url = f"{build.url}ws/"
+            
+            logger.info(f"開始存儲 Build #{build.build_number} Workspace")
+            logger.info(f"  - Jenkins IP: {jenkins_ip}")
+            logger.info(f"  - Job: {build.job.name}")
+            logger.info(f"  - Workspace URL: {workspace_url}")
+            
+            # 創建存儲服務
+            storage = JenkinsStorageService(
+                jenkins_server_ip=jenkins_ip,
+                job_name=build.job.name,
+                build_number=build.build_number
+            )
+            
+            # 檢查 NAS 路徑是否可訪問
+            path_check = storage.check_storage_path_accessible()
+            if not path_check['accessible']:
+                return Response({
+                    'success': False,
+                    'error': f"NAS 路徑不可訪問: {path_check.get('error', 'Unknown error')}"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            if not path_check['writable']:
+                return Response({
+                    'success': False,
+                    'error': 'NAS 路徑不可寫'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # 存儲 Workspace
+            result = storage.store_workspace(
+                workspace_url=workspace_url,
+                username=build.job.server.username,
+                api_token=build.job.server.api_token
+            )
+            
+            if result['success']:
+                # 更新 Build 記錄
+                build.workspace_path = result['workspace_path']
+                build.workspace_size = result['workspace_size']
+                build.workspace_stored_at = timezone.now()
+                build.is_workspace_stored = True
+                build.save()
+                
+                logger.info(f"Build #{build.build_number} Workspace 存儲成功")
+                logger.info(f"  - 路徑: {result['workspace_path']}")
+                logger.info(f"  - 大小: {result['workspace_size'] / (1024**2):.2f} MB")
+                logger.info(f"  - 文件數: {result['files_count']}")
+                
+                return Response({
+                    'success': True,
+                    'message': 'Workspace 存儲成功',
+                    'workspace_path': result['workspace_path'],
+                    'workspace_size': result['workspace_size'],
+                    'files_count': result['files_count'],
+                    'stored_at': result['stored_at'],
+                })
+            else:
+                logger.error(f"Build #{build.build_number} Workspace 存儲失敗: {result.get('error')}")
+                return Response({
+                    'success': False,
+                    'error': result.get('error', 'Unknown error')
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            logger.error(f"存儲 Workspace 失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': f'存儲失敗: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['get'])

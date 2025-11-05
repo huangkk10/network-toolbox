@@ -42,12 +42,11 @@ import {
     FileTextOutlined,
     RightOutlined,
     DownOutlined,
-    ReloadOutlined,
-    SyncOutlined,
+    SaveOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 const { Content } = Layout;
 const { Option } = Select;
@@ -56,6 +55,7 @@ const { RangePicker } = DatePicker;
 const RVTAnalysisPage = () => {
     const { user } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
     
     // 權限檢查：非 Admin 跳轉
     useEffect(() => {
@@ -66,6 +66,13 @@ const RVTAnalysisPage = () => {
     }, [user, navigate]);
 
     // ========== State 管理 ==========
+    // 從 URL 參數讀取當前 Tab
+    const getActiveTab = () => {
+        const params = new URLSearchParams(location.search);
+        return params.get('tab') || 'overview';
+    };
+    const activeTab = getActiveTab();
+    
     const [loading, setLoading] = useState(false);
     const [statistics, setStatistics] = useState({
         total_servers: 0,
@@ -310,30 +317,62 @@ const RVTAnalysisPage = () => {
         });
     };
     
-    // 同步所有伺服器
-    const handleSyncAll = async () => {
-        if (servers.length === 0) {
-            message.warning('沒有可同步的伺服器');
-            return;
-        }
-        
-        setLoading(true);
-        try {
-            const promises = servers.map(server => 
-                axios.post(`/api/jenkins-servers/${server.id}/sync_jobs/`)
-            );
-            
-            await Promise.all(promises);
-            message.success('同步完成');
-            fetchJobs();  // 重新載入 Jobs
-        } catch (error) {
-            console.error('同步失敗:', error);
-            message.error('同步失敗');
-        } finally {
-            setLoading(false);
-        }
+    // 存儲 Workspace 到 NAS
+    const handleStoreWorkspace = async (record) => {
+        Modal.confirm({
+            title: '存儲 Workspace 到 NAS',
+            content: (
+                <div>
+                    <p>確定要將以下 Build 的 Workspace 存儲到 NAS 嗎？</p>
+                    <p><strong>Job:</strong> {record.job_name}</p>
+                    <p><strong>Build:</strong> #{record.build_number}</p>
+                    <p style={{ marginTop: 10, color: '#999', fontSize: 12 }}>
+                        存儲路徑：\\10.250.0.1\mdt\Team\PQ1-3\tool\jenkins_test_storage\{'{jenkins_ip}'}\{'{job_name}'}\{'{build_number}'}
+                    </p>
+                </div>
+            ),
+            okText: '確定存儲',
+            cancelText: '取消',
+            onOk: async () => {
+                try {
+                    message.loading({ content: '正在存儲 Workspace...', key: 'storeWorkspace', duration: 0 });
+                    
+                    const response = await axios.post(
+                        `/api/jenkins-builds/${record.build_id}/store_workspace/`
+                    );
+                    
+                    message.success({
+                        content: (
+                            <div>
+                                <div>Workspace 存儲成功！</div>
+                                <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                                    路徑：{response.data.workspace_path}
+                                </div>
+                                <div style={{ fontSize: 12, color: '#666' }}>
+                                    大小：{(response.data.workspace_size / (1024 * 1024)).toFixed(2)} MB
+                                </div>
+                                <div style={{ fontSize: 12, color: '#666' }}>
+                                    檔案數量：{response.data.files_count}
+                                </div>
+                            </div>
+                        ),
+                        key: 'storeWorkspace',
+                        duration: 5,
+                    });
+                    
+                    // 重新載入數據
+                    fetchJobs();
+                } catch (error) {
+                    console.error('存儲 Workspace 失敗:', error);
+                    message.error({
+                        content: '存儲 Workspace 失敗：' + (error.response?.data?.error || error.message),
+                        key: 'storeWorkspace',
+                        duration: 5,
+                    });
+                }
+            },
+        });
     };
-
     // ========== Table Columns ==========
     const columns = [
         {
@@ -479,6 +518,17 @@ const RVTAnalysisPage = () => {
                                     詳情
                                 </Button>
                             </Tooltip>
+                            <Tooltip title="存儲 Workspace 到 NAS">
+                                <Button 
+                                    size="small"
+                                    type="primary"
+                                    icon={<SaveOutlined />}
+                                    onClick={() => handleStoreWorkspace(record)}
+                                    style={{ background: '#52c41a', borderColor: '#52c41a' }}
+                                >
+                                    Workspace
+                                </Button>
+                            </Tooltip>
                         </Space>
                     );
                 }
@@ -501,174 +551,162 @@ const RVTAnalysisPage = () => {
     // ========== 渲染 ==========
     return (
         <Content style={{ padding: '24px' }}>
-            {/* 頁面標題 */}
-            <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <h1 style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>RVT 分析</h1>
-                <Space>
-                    <Button 
-                        icon={<ReloadOutlined />}
-                        onClick={() => { fetchStatistics(); fetchJobs(); }}
-                    >
-                        刷新
-                    </Button>
-                    <Button 
-                        type="primary"
-                        icon={<SyncOutlined />}
-                        onClick={handleSyncAll}
-                        loading={loading}
-                    >
-                        同步所有伺服器
-                    </Button>
-                </Space>
-            </div>
+            {/* Tab 內容區域（Tab 本身已移到 TopHeader） */}
+            {activeTab === 'overview' && (
+                <>
+                    {/* 統計卡片 */}
+                    <Row gutter={16} style={{ marginBottom: 24 }}>
+                        <Col span={6}>
+                            <Card>
+                                <Statistic
+                                    title="伺服器總數"
+                                    value={statistics.total_servers}
+                                    prefix={<CloudServerOutlined />}
+                                    valueStyle={{ color: '#1890ff' }}
+                                />
+                            </Card>
+                        </Col>
+                        <Col span={6}>
+                            <Card>
+                                <Statistic
+                                    title="Jobs 總數"
+                                    value={statistics.total_jobs}
+                                    prefix={<FolderOutlined />}
+                                    valueStyle={{ color: '#52c41a' }}
+                                />
+                            </Card>
+                        </Col>
+                        <Col span={6}>
+                            <Card>
+                                <Statistic
+                                    title="今日構建數"
+                                    value={statistics.today_builds}
+                                    prefix={<RocketOutlined />}
+                                    valueStyle={{ color: '#faad14' }}
+                                />
+                            </Card>
+                        </Col>
+                        <Col span={6}>
+                            <Card>
+                                <Statistic
+                                    title="成功率（總體）"
+                                    value={statistics.success_rate}
+                                    suffix="%"
+                                    prefix={<CheckCircleOutlined />}
+                                    valueStyle={{ color: '#52c41a' }}
+                                />
+                            </Card>
+                        </Col>
+                    </Row>
+                </>
+            )}
 
-            {/* Jenkins Server 選擇器（置頂） */}
-            <Card style={{ marginBottom: 16 }}>
-                <Row gutter={16} align="middle">
-                    <Col span={4}>
-                        <label style={{ fontWeight: 500, fontSize: 14 }}>選擇 Jenkins Server：</label>
-                    </Col>
-                    <Col span={20}>
-                        <Select
-                            placeholder="請選擇 Jenkins Server（全部顯示所有 Server 的 Jobs）"
-                            style={{ width: '100%' }}
-                            allowClear
-                            value={filters.server_id}
-                            onChange={(value) => setFilters({ ...filters, server_id: value })}
-                            size="large"
-                        >
-                            {servers.map(server => (
-                                <Option key={server.id} value={server.id}>
-                                    <CloudServerOutlined style={{ marginRight: 8 }} />
-                                    {server.name} 
-                                    <span style={{ color: '#999', marginLeft: 8 }}>
-                                        ({server.url})
-                                    </span>
-                                </Option>
-                            ))}
-                        </Select>
-                    </Col>
-                </Row>
-            </Card>
+            {activeTab === 'details' && (
+                <>
+                    {/* Jenkins Server 選擇器 */}
+                    <Card style={{ marginBottom: 16 }}>
+                        <Row gutter={16} align="middle">
+                            <Col span={4}>
+                                <label style={{ fontWeight: 500, fontSize: 14 }}>選擇 Jenkins Server：</label>
+                            </Col>
+                            <Col span={20}>
+                                <Select
+                                    placeholder="請選擇 Jenkins Server（全部顯示所有 Server 的 Jobs）"
+                                    style={{ width: '100%' }}
+                                    allowClear
+                                    value={filters.server_id}
+                                    onChange={(value) => setFilters({ ...filters, server_id: value })}
+                                    size="large"
+                                >
+                                    {servers.map(server => (
+                                        <Option key={server.id} value={server.id}>
+                                            <CloudServerOutlined style={{ marginRight: 8 }} />
+                                            {server.name} 
+                                            <span style={{ color: '#999', marginLeft: 8 }}>
+                                                ({server.url})
+                                            </span>
+                                        </Option>
+                                    ))}
+                                </Select>
+                            </Col>
+                        </Row>
+                    </Card>
 
-            {/* 統計卡片 */}
-            <Row gutter={16} style={{ marginBottom: 24 }}>
-                <Col span={6}>
+                    {/* 篩選區域 */}
+                    <Card style={{ marginBottom: 16 }}>
+                        <Row gutter={16}>
+                            <Col span={8}>
+                                <Select
+                                    placeholder="篩選狀態"
+                                    style={{ width: '100%' }}
+                                    allowClear
+                                    value={filters.status}
+                                    onChange={(value) => setFilters({ ...filters, status: value })}
+                                >
+                                    <Option value="SUCCESS">Success</Option>
+                                    <Option value="FAILURE">Failure</Option>
+                                    <Option value="UNSTABLE">Unstable</Option>
+                                    <Option value="ABORTED">Aborted</Option>
+                                </Select>
+                            </Col>
+                            <Col span={8}>
+                                <RangePicker
+                                    style={{ width: '100%' }}
+                                    onChange={(dates) => setFilters({ ...filters, date_range: dates })}
+                                    placeholder={['開始日期', '結束日期']}
+                                />
+                            </Col>
+                            
+                            <Col span={8}>
+                                <Input.Search
+                                    placeholder="搜尋 Job 名稱..."
+                                    allowClear
+                                    onSearch={(value) => setFilters({ ...filters, search: value })}
+                                    enterButton
+                                />
+                            </Col>
+                        </Row>
+                    </Card>
+
+                    {/* Tree Table */}
                     <Card>
-                        <Statistic
-                            title="伺服器總數"
-                            value={statistics.total_servers}
-                            prefix={<CloudServerOutlined />}
-                            valueStyle={{ color: '#1890ff' }}
+                        <Table
+                            dataSource={treeData}
+                            columns={columns}
+                            rowKey="key"
+                            loading={loading}
+                            expandable={{
+                                expandedRowKeys,
+                                onExpandedRowsChange: setExpandedRowKeys,
+                                onExpand: handleExpand,
+                                indentSize: 0,
+                                expandIcon: ({ expanded, onExpand, record }) => {
+                                    if (record.type === 'job') {
+                                        return (
+                                            <Button
+                                                type="text"
+                                                size="small"
+                                                icon={expanded ? <DownOutlined /> : <RightOutlined />}
+                                                onClick={e => onExpand(record, e)}
+                                            />
+                                        );
+                                    }
+                                    return <span style={{ width: 24, display: 'inline-block' }} />;
+                                },
+                            }}
+                            pagination={{
+                                pageSize: 10,
+                                pageSizeOptions: ['10', '20', '50', '100'],
+                                showSizeChanger: true,
+                                showQuickJumper: true,
+                                showTotal: (total, range) => `${range[0]}-${range[1]} of ${total}`,
+                            }}
+                            scroll={{ x: 1200 }}
+                            size="middle"
                         />
                     </Card>
-                </Col>
-                <Col span={6}>
-                    <Card>
-                        <Statistic
-                            title="Jobs 總數"
-                            value={statistics.total_jobs}
-                            prefix={<FolderOutlined />}
-                            valueStyle={{ color: '#52c41a' }}
-                        />
-                    </Card>
-                </Col>
-                <Col span={6}>
-                    <Card>
-                        <Statistic
-                            title="今日構建數"
-                            value={statistics.today_builds}
-                            prefix={<RocketOutlined />}
-                            valueStyle={{ color: '#faad14' }}
-                        />
-                    </Card>
-                </Col>
-                <Col span={6}>
-                    <Card>
-                        <Statistic
-                            title="成功率（總體）"
-                            value={statistics.success_rate}
-                            suffix="%"
-                            prefix={<CheckCircleOutlined />}
-                            valueStyle={{ color: '#52c41a' }}
-                        />
-                    </Card>
-                </Col>
-            </Row>
-
-            {/* 篩選區域 */}
-            <Card style={{ marginBottom: 16 }}>
-                <Row gutter={16}>
-                    <Col span={8}>
-                        <Select
-                            placeholder="篩選狀態"
-                            style={{ width: '100%' }}
-                            allowClear
-                            onChange={(value) => setFilters({ ...filters, status: value })}
-                        >
-                            <Option value="SUCCESS">✅ Success</Option>
-                            <Option value="FAILURE">❌ Failure</Option>
-                            <Option value="RUNNING">🔄 Running</Option>
-                            <Option value="UNSTABLE">⚠️ Unstable</Option>
-                        </Select>
-                    </Col>
-                    
-                    <Col span={8}>
-                        <RangePicker
-                            style={{ width: '100%' }}
-                            onChange={(dates) => setFilters({ ...filters, date_range: dates })}
-                            placeholder={['開始日期', '結束日期']}
-                        />
-                    </Col>
-                    
-                    <Col span={8}>
-                        <Input.Search
-                            placeholder="搜尋 Job 名稱..."
-                            allowClear
-                            onSearch={(value) => setFilters({ ...filters, search: value })}
-                            enterButton
-                        />
-                    </Col>
-                </Row>
-            </Card>
-
-            {/* Tree Table */}
-            <Card>
-                <Table
-                    dataSource={treeData}
-                    columns={columns}
-                    rowKey="key"
-                    loading={loading}
-                    expandable={{
-                        expandedRowKeys,
-                        onExpandedRowsChange: setExpandedRowKeys,
-                        onExpand: handleExpand,
-                        indentSize: 0,
-                        expandIcon: ({ expanded, onExpand, record }) => {
-                            if (record.type === 'job') {
-                                return (
-                                    <Button
-                                        type="text"
-                                        size="small"
-                                        icon={expanded ? <DownOutlined /> : <RightOutlined />}
-                                        onClick={e => onExpand(record, e)}
-                                    />
-                                );
-                            }
-                            return <span style={{ width: 24, display: 'inline-block' }} />;
-                        },
-                    }}
-                    pagination={{
-                        pageSize: 10,
-                        pageSizeOptions: ['10', '20', '50', '100'],
-                        showSizeChanger: true,
-                        showQuickJumper: true,
-                        showTotal: (total, range) => `${range[0]}-${range[1]} of ${total}`,
-                    }}
-                    scroll={{ x: 1200 }}
-                    size="middle"
-                />
-            </Card>
+                </>
+            )}
 
             {/* Console Log Modal */}
             <Modal

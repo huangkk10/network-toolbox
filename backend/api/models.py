@@ -852,6 +852,12 @@ class JenkinsBuild(models.Model):
     # 文件路徑（NAS 上的路徑）
     config_file_path = models.CharField(max_length=1000, blank=True, verbose_name='配置文件路徑')
     log_file_path = models.CharField(max_length=1000, blank=True, verbose_name='日誌文件路徑')
+    workspace_path = models.CharField(max_length=1000, blank=True, verbose_name='Workspace 存儲路徑')
+    
+    # Workspace 存儲資訊
+    workspace_size = models.BigIntegerField(default=0, verbose_name='Workspace 大小 (bytes)')
+    workspace_stored_at = models.DateTimeField(null=True, blank=True, verbose_name='Workspace 存儲時間')
+    is_workspace_stored = models.BooleanField(default=False, verbose_name='是否已存儲 Workspace')
     
     # 時間戳記
     build_timestamp = models.DateTimeField(verbose_name='構建時間')

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import './App.css';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { Layout } from 'antd';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Layout, Tabs } from 'antd';
+import { BarChartOutlined, FolderOutlined } from '@ant-design/icons';
 import Sidebar from './components/Sidebar';
 import TopHeader from './components/TopHeader';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -37,10 +38,22 @@ function App() {
 function AppLayout() {
     const [collapsed, setCollapsed] = useState(false);
     const location = useLocation();
+    const navigate = useNavigate();
     const { isAuthenticated, loading } = useAuth();
 
     const toggleSidebar = () => {
         setCollapsed(!collapsed);
+    };
+    
+    // 從 URL 獲取當前 Tab（用於 RVT Analytics）
+    const getRVTActiveTab = () => {
+        const params = new URLSearchParams(location.search);
+        return params.get('tab') || 'overview';
+    };
+    
+    // 處理 RVT Tab 切換
+    const handleRVTTabChange = (tab) => {
+        navigate(`/rvt-analytics?tab=${tab}`);
     };
 
     // 未登入且不在登入或註冊頁面，重定向到登入頁
@@ -93,6 +106,88 @@ function AppLayout() {
     };
 
     const currentPageTitle = getPageTitle(location.pathname);
+    
+    // 為 RVT Analytics 頁面準備 Tabs（放在 TopHeader 右側）
+    const rvtAnalyticsTabs = location.pathname.startsWith('/rvt-analytics') ? (
+        <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            height: '64px',
+            position: 'absolute',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            top: 0
+        }}>
+            <Tabs 
+                activeKey={getRVTActiveTab()} 
+                onChange={handleRVTTabChange}
+                size="large"
+                style={{ 
+                    marginBottom: 0,
+                }}
+                className="rvt-header-tabs"
+            >
+                <Tabs.TabPane 
+                    tab={
+                        <span style={{ 
+                            padding: '10px 24px',
+                            display: 'inline-block',
+                            fontWeight: 500,
+                            fontSize: '15px'
+                        }}>
+                            <BarChartOutlined style={{ marginRight: 8, fontSize: '16px' }} />
+                            概觀
+                        </span>
+                    } 
+                    key="overview"
+                />
+                <Tabs.TabPane 
+                    tab={
+                        <span style={{ 
+                            padding: '10px 24px',
+                            display: 'inline-block',
+                            fontWeight: 500,
+                            fontSize: '15px'
+                        }}>
+                            <FolderOutlined style={{ marginRight: 8, fontSize: '16px' }} />
+                            Jenkins 詳細
+                        </span>
+                    } 
+                    key="details"
+                />
+            </Tabs>
+            <style>{`
+                .rvt-header-tabs .ant-tabs-nav {
+                    margin: 0 !important;
+                }
+                .rvt-header-tabs .ant-tabs-tab {
+                    background: transparent;
+                    border: none;
+                    margin: 0 8px;
+                    padding: 6px 0;
+                    color: #666;
+                    transition: all 0.3s ease;
+                }
+                .rvt-header-tabs .ant-tabs-tab:hover {
+                    color: #1890ff;
+                    background: rgba(24, 144, 255, 0.08);
+                    border-radius: 6px;
+                }
+                .rvt-header-tabs .ant-tabs-tab-active {
+                    background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%) !important;
+                    border-radius: 6px !important;
+                    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+                }
+                .rvt-header-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+                    color: #ffffff !important;
+                }
+                .rvt-header-tabs .ant-tabs-ink-bar {
+                    display: none;
+                }
+            `}</style>
+        </div>
+    ) : null;
 
     // 載入中
     if (loading) {
@@ -122,6 +217,7 @@ function AppLayout() {
                     collapsed={collapsed}
                     onToggleSidebar={toggleSidebar}
                     pageTitle={currentPageTitle}
+                    extraActions={rvtAnalyticsTabs}
                 />
 
                 <Content style={{
