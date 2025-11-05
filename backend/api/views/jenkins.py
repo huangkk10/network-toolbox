@@ -300,6 +300,11 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         if server_id:
             queryset = queryset.filter(server_id=server_id)
         
+        # 按 View 名稱過濾
+        view_name = self.request.query_params.get('view_name')
+        if view_name:
+            queryset = queryset.filter(view_name=view_name)
+        
         # 按狀態過濾
         status_filter = self.request.query_params.get('status')
         if status_filter:

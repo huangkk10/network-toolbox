@@ -88,10 +88,14 @@ const RVTAnalysisPage = () => {
     // 篩選條件
     const [filters, setFilters] = useState({
         server_id: null,
+        view_name: null,  // 新增：View 篩選
         status: null,
         date_range: null,
         search: '',
     });
+    
+    // View 列表（從 Jobs 中提取唯一的 view_name）
+    const [availableViews, setAvailableViews] = useState([]);
     
     // Modal & Drawer
     const [consoleLogModal, setConsoleLogModal] = useState({
@@ -176,6 +180,9 @@ const RVTAnalysisPage = () => {
             if (filters.server_id) {
                 params.push(`server_id=${filters.server_id}`);
             }
+            if (filters.view_name) {
+                params.push(`view_name=${encodeURIComponent(filters.view_name)}`);
+            }
             if (filters.status) {
                 params.push(`status=${filters.status}`);
             }
@@ -188,6 +195,14 @@ const RVTAnalysisPage = () => {
             }
             
             const response = await axios.get(url);
+            
+            // 提取唯一的 View 名稱列表
+            const uniqueViews = [...new Set(
+                response.data
+                    .map(job => job.view_name)
+                    .filter(view => view && view !== '')
+            )].sort();
+            setAvailableViews(uniqueViews);
             
             // 轉換為 Tree Table 資料格式
             const jobs = response.data.map(job => ({
@@ -603,13 +618,13 @@ const RVTAnalysisPage = () => {
 
             {activeTab === 'details' && (
                 <>
-                    {/* Jenkins Server 選擇器 */}
+                    {/* Jenkins Server 和 View 選擇器 */}
                     <Card style={{ marginBottom: 16 }}>
                         <Row gutter={16} align="middle">
-                            <Col span={4}>
-                                <label style={{ fontWeight: 500, fontSize: 14 }}>選擇 Jenkins Server：</label>
+                            <Col span={2}>
+                                <label style={{ fontWeight: 500, fontSize: 14 }}>Jenkins Server：</label>
                             </Col>
-                            <Col span={20}>
+                            <Col span={10}>
                                 <Select
                                     placeholder="請選擇 Jenkins Server（全部顯示所有 Server 的 Jobs）"
                                     style={{ width: '100%' }}
@@ -625,6 +640,30 @@ const RVTAnalysisPage = () => {
                                             <span style={{ color: '#999', marginLeft: 8 }}>
                                                 ({server.url})
                                             </span>
+                                        </Option>
+                                    ))}
+                                </Select>
+                            </Col>
+                            <Col span={2}>
+                                <label style={{ fontWeight: 500, fontSize: 14 }}>View 篩選：</label>
+                            </Col>
+                            <Col span={10}>
+                                <Select
+                                    placeholder="請選擇 View（全部顯示所有 View 的 Jobs）"
+                                    style={{ width: '100%' }}
+                                    allowClear
+                                    value={filters.view_name}
+                                    onChange={(value) => setFilters({ ...filters, view_name: value })}
+                                    size="large"
+                                    showSearch
+                                    filterOption={(input, option) =>
+                                        option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+                                    }
+                                >
+                                    {availableViews.map(view => (
+                                        <Option key={view} value={view}>
+                                            <FolderOutlined style={{ marginRight: 8 }} />
+                                            {view}
                                         </Option>
                                     ))}
                                 </Select>
