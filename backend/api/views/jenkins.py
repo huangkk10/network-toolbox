@@ -738,3 +738,46 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'message': f'獲取統計失敗: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def check_nas_status(self, request):
+        """
+        檢查 NAS 存儲狀態
+        
+        GET /api/jenkins-builds/check_nas_status/
+        """
+        try:
+            import os
+            from django.conf import settings
+            
+            # 檢查存儲服務
+            service = JenkinsStorageService('test', 'test', 1)
+            result = service.check_storage_path_accessible()
+            
+            # 額外檢查：列出掛載點內容
+            mount_point = settings.JENKINS_STORAGE_BASE_PATH
+            mount_status = {
+                'mount_point': mount_point,
+                'exists': os.path.exists(mount_point),
+                'is_dir': os.path.isdir(mount_point) if os.path.exists(mount_point) else False,
+                'writable': result.get('writable', False),
+            }
+            
+            # 嘗試列出目錄內容
+            if mount_status['exists'] and mount_status['is_dir']:
+                try:
+                    mount_status['contents'] = os.listdir(mount_point)[:10]  # 最多列出 10 項
+                except Exception as e:
+                    mount_status['list_error'] = str(e)
+            
+            return Response({
+                'success': result.get('accessible', False) and result.get('writable', False),
+                'nas_check': result,
+                'mount_status': mount_status,
+            })
+        except Exception as e:
+            logger.error(f"檢查 NAS 狀態失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

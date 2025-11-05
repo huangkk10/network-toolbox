@@ -1362,3 +1362,298 @@ def check_gitlab_connection_task(self):
                 'error_message': str(exc),
                 'timestamp': timezone.now().isoformat()
             }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.auto_store_workspaces',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=3300,  # 硬限制 55 分鐘
+    soft_time_limit=3000  # 軟限制 50 分鐘
+)
+def auto_store_workspaces(self, dry_run=False, max_builds=10):
+    """
+    自動存儲 Jenkins Workspace 到 NAS
+    
+    根據配置的規則，自動掃描符合條件的 Build 並存儲其 Workspace。
+    
+    規則（從 Django Settings 讀取）：
+    - 只存儲 SUCCESS 的 Build
+    - 只存儲最近 24 小時內的 Build
+    - 至少 30 分鐘前完成的 Build（避免正在執行）
+    - 跳過已存儲的 Build
+    - 每次最多存儲 N 個 Build（預設 10）
+    
+    Args:
+        dry_run: 試運行模式，不實際存儲（預設 False）
+        max_builds: 每次執行最多存儲的 Build 數量（預設 10）
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'total_found': int,        # 找到符合條件的 Build 數量
+            'processed': int,          # 實際處理的數量
+            'stored': int,             # 成功存儲的數量
+            'skipped': int,            # 跳過的數量
+            'failed': int,             # 失敗的數量
+            'details': list,           # 詳細結果
+            'total_size': int,         # 總存儲大小（bytes）
+            'total_files': int,        # 總文件數
+            'duration': float,         # 執行時間（秒）
+        }
+    """
+    from .models import JenkinsBuild
+    from library.services.jenkins_storage_service import JenkinsStorageService
+    import re
+    import time
+    
+    start_time = time.time()
+    
+    try:
+        logger.info('=' * 60)
+        logger.info('[Celery] 開始自動存儲 Jenkins Workspace')
+        logger.info('=' * 60)
+        logger.info(f'[Celery] 模式: {"試運行" if dry_run else "正式執行"}')
+        logger.info(f'[Celery] 每次最多存儲: {max_builds} 個 Build')
+        
+        # 定義存儲規則
+        rules = {
+            'store_success': True,      # 存儲 SUCCESS 的 Build
+            'store_failure': False,     # 不存儲 FAILURE
+            'store_unstable': False,    # 不存儲 UNSTABLE
+            'store_aborted': False,     # 不存儲 ABORTED
+            'max_age_hours': 24,        # 只存儲 24 小時內的 Build
+            'min_age_minutes': 30,      # 至少 30 分鐘前的 Build
+            'skip_already_stored': True, # 跳過已存儲的 Build
+        }
+        
+        logger.info('[Celery] 存儲規則：')
+        logger.info(f'[Celery]   - 存儲狀態: SUCCESS')
+        logger.info(f'[Celery]   - 時間範圍: 最近 {rules["max_age_hours"]} 小時')
+        logger.info(f'[Celery]   - 最小完成時間: {rules["min_age_minutes"]} 分鐘前')
+        logger.info(f'[Celery]   - 跳過已存儲: {rules["skip_already_stored"]}')
+        
+        # 計算時間範圍
+        now = timezone.now()
+        max_age = now - timedelta(hours=rules['max_age_hours'])
+        min_age = now - timedelta(minutes=rules['min_age_minutes'])
+        
+        # 查詢符合條件的 Build
+        queryset = JenkinsBuild.objects.select_related('job', 'job__server').filter(
+            result='SUCCESS',                    # 只處理成功的 Build
+            build_timestamp__gte=max_age,        # 最近 N 小時內
+            build_timestamp__lte=min_age,        # 至少 N 分鐘前完成
+            is_building=False,                   # 確保 Build 已完成
+        )
+        
+        # 跳過已存儲的 Build
+        if rules['skip_already_stored']:
+            queryset = queryset.filter(is_workspace_stored=False)
+        
+        # 排序：優先處理最新的 Build
+        queryset = queryset.order_by('-build_timestamp')[:max_builds]
+        
+        total_found = queryset.count()
+        logger.info(f'[Celery] 找到 {total_found} 個符合條件的 Build')
+        
+        if total_found == 0:
+            logger.info('[Celery] 沒有需要處理的 Build')
+            return {
+                'success': True,
+                'total_found': 0,
+                'processed': 0,
+                'stored': 0,
+                'skipped': 0,
+                'failed': 0,
+                'details': [],
+                'total_size': 0,
+                'total_files': 0,
+                'duration': time.time() - start_time,
+            }
+        
+        # 處理每個 Build
+        results = {
+            'processed': 0,
+            'stored': 0,
+            'skipped': 0,
+            'failed': 0,
+            'details': [],
+            'total_size': 0,
+            'total_files': 0,
+        }
+        
+        for i, build in enumerate(queryset, 1):
+            logger.info(f'[Celery] [{i}/{total_found}] 處理 Build: {build.job.name} #{build.build_number}')
+            
+            try:
+                results['processed'] += 1
+                
+                # 試運行模式：不實際存儲
+                if dry_run:
+                    logger.info(f'[Celery] [試運行] 跳過存儲 Build #{build.build_number}')
+                    results['skipped'] += 1
+                    results['details'].append({
+                        'build_id': build.id,
+                        'job_name': build.job.name,
+                        'build_number': build.build_number,
+                        'status': 'skipped',
+                        'reason': 'dry_run',
+                    })
+                    continue
+                
+                # 解析 Jenkins Server IP
+                jenkins_url = build.job.server.url
+                match = re.search(r'https?://([^:/]+)', jenkins_url)
+                if not match:
+                    logger.error(f'[Celery] 無法解析 Jenkins Server IP: {jenkins_url}')
+                    results['failed'] += 1
+                    results['details'].append({
+                        'build_id': build.id,
+                        'job_name': build.job.name,
+                        'build_number': build.build_number,
+                        'status': 'failed',
+                        'error': '無法解析 Jenkins Server IP',
+                    })
+                    continue
+                
+                jenkins_ip = match.group(1)
+                workspace_url = f"{build.url}ws/"
+                
+                # 創建存儲服務
+                storage = JenkinsStorageService(
+                    jenkins_server_ip=jenkins_ip,
+                    job_name=build.job.name,
+                    build_number=build.build_number
+                )
+                
+                # 檢查 NAS 路徑
+                path_check = storage.check_storage_path_accessible()
+                if not path_check['accessible'] or not path_check['writable']:
+                    logger.error(f'[Celery] NAS 路徑不可訪問或不可寫')
+                    results['failed'] += 1
+                    results['details'].append({
+                        'build_id': build.id,
+                        'job_name': build.job.name,
+                        'build_number': build.build_number,
+                        'status': 'failed',
+                        'error': 'NAS 路徑不可訪問',
+                    })
+                    continue
+                
+                # 存儲 Workspace
+                result = storage.store_workspace(
+                    workspace_url=workspace_url,
+                    username=build.job.server.username,
+                    api_token=build.job.server.api_token
+                )
+                
+                if result['success']:
+                    # 更新 Build 記錄
+                    build.workspace_path = result['workspace_path']
+                    build.workspace_size = result['workspace_size']
+                    build.workspace_stored_at = timezone.now()
+                    build.is_workspace_stored = True
+                    build.save()
+                    
+                    results['stored'] += 1
+                    results['total_size'] += result['workspace_size']
+                    results['total_files'] += result['files_count']
+                    
+                    logger.info(
+                        f'[Celery] ✅ 成功存儲 Build #{build.build_number} | '
+                        f'{result["files_count"]} files, '
+                        f'{result["workspace_size"] / 1024:.1f} KB'
+                    )
+                    
+                    results['details'].append({
+                        'build_id': build.id,
+                        'job_name': build.job.name,
+                        'build_number': build.build_number,
+                        'status': 'success',
+                        'workspace_size': result['workspace_size'],
+                        'files_count': result['files_count'],
+                        'workspace_path': result['workspace_path'],
+                    })
+                else:
+                    results['failed'] += 1
+                    logger.warning(
+                        f'[Celery] ❌ 存儲失敗 Build #{build.build_number}: '
+                        f'{result.get("error", "Unknown error")}'
+                    )
+                    
+                    results['details'].append({
+                        'build_id': build.id,
+                        'job_name': build.job.name,
+                        'build_number': build.build_number,
+                        'status': 'failed',
+                        'error': result.get('error', 'Unknown error'),
+                    })
+                
+            except Exception as e:
+                results['failed'] += 1
+                logger.error(
+                    f'[Celery] ❌ 處理 Build #{build.build_number} 時發生錯誤: {e}',
+                    exc_info=True
+                )
+                results['details'].append({
+                    'build_id': build.id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'status': 'error',
+                    'error': str(e),
+                })
+        
+        # 計算執行時間
+        duration = time.time() - start_time
+        
+        # 記錄最終結果
+        logger.info('=' * 60)
+        logger.info('[Celery] 執行報告')
+        logger.info('=' * 60)
+        logger.info(f'[Celery] 總處理數: {results["processed"]}')
+        logger.info(f'[Celery] 成功: {results["stored"]} ✅')
+        logger.info(f'[Celery] 跳過: {results["skipped"]} ⚠️')
+        logger.info(f'[Celery] 失敗: {results["failed"]} ❌')
+        logger.info(f'[Celery] 總存儲大小: {results["total_size"] / 1024:.1f} KB')
+        logger.info(f'[Celery] 總文件數: {results["total_files"]}')
+        logger.info(f'[Celery] 總耗時: {duration:.1f} 秒')
+        logger.info('=' * 60)
+        logger.info('[Celery] ✅ 自動存儲完成')
+        logger.info('=' * 60)
+        
+        return {
+            'success': True,
+            'total_found': total_found,
+            'processed': results['processed'],
+            'stored': results['stored'],
+            'skipped': results['skipped'],
+            'failed': results['failed'],
+            'details': results['details'],
+            'total_size': results['total_size'],
+            'total_files': results['total_files'],
+            'duration': duration,
+        }
+        
+    except Exception as exc:
+        duration = time.time() - start_time
+        logger.error(f'[Celery] 自動存儲失敗（執行 {duration:.1f} 秒）', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 自動存儲重試次數已達上限')
+            return {
+                'success': False,
+                'total_found': 0,
+                'processed': 0,
+                'stored': 0,
+                'skipped': 0,
+                'failed': 0,
+                'details': [],
+                'total_size': 0,
+                'total_files': 0,
+                'duration': duration,
+                'error_message': str(exc),
+            }

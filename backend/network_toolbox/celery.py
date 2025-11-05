@@ -116,6 +116,16 @@ app.conf.beat_schedule = {
             'expires': 150,    # 任務超時 2.5 分鐘
         }
     },
+    
+    # 任務 10：Jenkins Workspace 自動存儲（每小時）
+    'auto-store-jenkins-workspaces-hourly': {
+        'task': 'api.tasks.auto_store_workspaces',
+        'schedule': crontab(minute=0),  # 每小時整點執行（00:00, 01:00, 02:00...）
+        'options': {
+            'expires': 3300,   # 任務超時 55 分鐘（避免與下次重疊）
+            'queue': 'default',
+        }
+    },
 }
 
 

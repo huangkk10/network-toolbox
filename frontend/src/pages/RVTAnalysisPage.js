@@ -38,7 +38,6 @@ import {
     RocketOutlined,
     CheckCircleOutlined,
     BarChartOutlined,
-    PlayCircleOutlined,
     FileTextOutlined,
     RightOutlined,
     DownOutlined,
@@ -360,17 +359,6 @@ const RVTAnalysisPage = () => {
         }
     };
     
-    // 觸發構建（Placeholder）
-    const handleTriggerBuild = (record) => {
-        Modal.confirm({
-            title: '觸發構建',
-            content: `確定要觸發 ${record.name} 的新構建嗎？`,
-            onOk: () => {
-                message.info('此功能尚未實現');
-            },
-        });
-    };
-    
     // 存儲 Workspace 到 NAS
     const handleStoreWorkspace = async (record) => {
         Modal.confirm({
@@ -538,16 +526,6 @@ const RVTAnalysisPage = () => {
                                     onClick={() => handleViewStats(record)}
                                 >
                                     統計
-                                </Button>
-                            </Tooltip>
-                            <Tooltip title="觸發構建">
-                                <Button 
-                                    size="small" 
-                                    type="primary"
-                                    icon={<PlayCircleOutlined />}
-                                    onClick={() => handleTriggerBuild(record)}
-                                >
-                                    構建
                                 </Button>
                             </Tooltip>
                         </Space>

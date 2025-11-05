@@ -39,7 +39,11 @@ services:
       dockerfile: Dockerfile
     container_name: nt-django
     restart: unless-stopped
-    command: python manage.py runserver 0.0.0.0:8000
+    privileged: true  # 允許容器內掛載 NAS
+    cap_add:
+      - SYS_ADMIN  # 需要 SYS_ADMIN 能力來執行 mount
+    devices:
+      - /dev/fuse  # FUSE 設備（可選，某些掛載方式需要）
     environment:
       - TZ=Asia/Taipei
       - DEBUG=1
@@ -52,14 +56,16 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=0
       - NAS_MOUNT_PATH=/mnt/mdt  # NAS 掛載路徑
+      - NAS_IP=10.250.0.1  # NAS IP 地址
+      - NAS_SHARE=mdt  # NAS 共享名稱
+      - NAS_USER=mdt  # NAS 用戶名
+      - NAS_PASSWORD=p@ssw0rd  # NAS 密碼
     volumes:
       - ./backend:/app
       - ./library:/app/library
       - ./logs:/app/logs # 日誌目錄掛載
       - static_files:/app/static
       - media_files:/app/media
-      # NAS 掛載（如果 /mnt/mdt 存在的話）- 唯讀模式
-      # - /mnt/mdt:/mnt/mdt:ro
     ports:
       - "8000:8000"
     depends_on:
@@ -126,7 +132,12 @@ services:
       dockerfile: Dockerfile
     container_name: nt-celery-beat
     restart: unless-stopped
-    command: celery -A network_toolbox beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    privileged: true  # 允許容器內掛載 NAS
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    command: bash -c "bash /app/mount_nas.sh || true && celery -A network_toolbox beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
     environment:
       - TZ=Asia/Taipei
       - DEBUG=1
@@ -137,6 +148,11 @@ services:
       - DB_PASSWORD=postgres123
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - NAS_MOUNT_PATH=/mnt/mdt
+      - NAS_IP=10.250.0.1
+      - NAS_SHARE=mdt
+      - NAS_USER=mdt
+      - NAS_PASSWORD=p@ssw0rd
     volumes:
       - ./backend:/app
       - ./library:/app/library
@@ -154,7 +170,12 @@ services:
       dockerfile: Dockerfile
     container_name: nt-celery-worker
     restart: unless-stopped
-    command: celery -A network_toolbox worker --loglevel=info --concurrency=2
+    privileged: true  # 允許容器內掛載 NAS
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - /dev/fuse
+    command: bash -c "bash /app/mount_nas.sh || true && celery -A network_toolbox worker --loglevel=info --concurrency=2"
     environment:
       - TZ=Asia/Taipei
       - DEBUG=1
@@ -165,6 +186,11 @@ services:
       - DB_PASSWORD=postgres123
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - NAS_MOUNT_PATH=/mnt/mdt
+      - NAS_IP=10.250.0.1
+      - NAS_SHARE=mdt
+      - NAS_USER=mdt
+      - NAS_PASSWORD=p@ssw0rd
     volumes:
       - ./backend:/app
       - ./library:/app/library

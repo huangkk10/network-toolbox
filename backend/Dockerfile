@@ -7,6 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     iputils-ping \
+    cifs-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # 複製依賴文件
@@ -21,8 +22,11 @@ COPY . /app/
 # 創建日誌目錄
 RUN mkdir -p /app/logs && chmod 777 /app/logs
 
+# 設置啟動腳本權限
+RUN chmod +x /app/entrypoint.sh /app/mount_nas.sh
+
 # 暴露端口
 EXPOSE 8000
 
 # 設定啟動命令
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["/app/entrypoint.sh"]

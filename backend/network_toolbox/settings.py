@@ -342,8 +342,8 @@ LOGGING = {
 # NAS 掛載路徑配置
 NAS_MOUNT_PATH = config('NAS_MOUNT_PATH', default='/mnt/mdt')
 
-# Jenkins 存儲路徑結構：{NAS_MOUNT_PATH}/{jenkins_ip}/{job_name}/{build_number}/
-JENKINS_STORAGE_BASE_PATH = os.path.join(NAS_MOUNT_PATH, 'jenkins_test_storage')
+# Jenkins 存儲路徑結構：{NAS_MOUNT_PATH}/Team/PQ1-3/tool/jenkins_test_storage/{jenkins_ip}/{job_name}/{build_number}/
+JENKINS_STORAGE_BASE_PATH = os.path.join(NAS_MOUNT_PATH, 'Team', 'PQ1-3', 'tool', 'jenkins_test_storage')
 
 # Jenkins 配置緩存時間（秒）
 JENKINS_CONFIG_CACHE_TTL = 1800  # 30 分鐘
