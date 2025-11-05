@@ -5,6 +5,7 @@ Celery 定時任務
 """
 
 import logging
+import time
 from celery import shared_task
 from django.db.models import Count
 from django.utils import timezone
@@ -1423,7 +1424,7 @@ def auto_store_workspaces(self, dry_run=False, max_builds=10):
             'store_failure': False,     # 不存儲 FAILURE
             'store_unstable': False,    # 不存儲 UNSTABLE
             'store_aborted': False,     # 不存儲 ABORTED
-            'max_age_hours': 24,        # 只存儲 24 小時內的 Build
+            'max_age_hours': 72,        # 只存儲 72 小時（3 天）內的 Build
             'min_age_minutes': 30,      # 至少 30 分鐘前的 Build
             'skip_already_stored': True, # 跳過已存儲的 Build
         }
@@ -1441,7 +1442,7 @@ def auto_store_workspaces(self, dry_run=False, max_builds=10):
         
         # 查詢符合條件的 Build
         queryset = JenkinsBuild.objects.select_related('job', 'job__server').filter(
-            result='SUCCESS',                    # 只處理成功的 Build
+            result__in=['SUCCESS', 'FAILURE'],   # 處理成功和失敗的 Build
             build_timestamp__gte=max_age,        # 最近 N 小時內
             build_timestamp__lte=min_age,        # 至少 N 分鐘前完成
             is_building=False,                   # 確保 Build 已完成
@@ -1654,6 +1655,227 @@ def auto_store_workspaces(self, dry_run=False, max_builds=10):
                 'details': [],
                 'total_size': 0,
                 'total_files': 0,
+                'duration': duration,
+                'error_message': str(exc),
+            }
+
+
+# ==================== Jenkins Builds 同步任務 ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_jenkins_builds',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=3600,  # 硬限制 1 小時
+    soft_time_limit=3300  # 軟限制 55 分鐘
+)
+def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_days=3):
+    """
+    同步 Jenkins Builds 到資料庫
+    
+    從 Jenkins API 獲取所有 Jobs 的最新 Builds，並創建/更新資料庫記錄。
+    這個任務是自動存儲 Workspace 的前置步驟。
+    
+    Args:
+        server_id: Jenkins Server ID（可選，None 表示所有 Server）
+        max_builds_per_job: 每個 Job 最多同步幾個 Builds（預設 20）
+        max_age_days: 只同步最近 N 天內的 Builds（預設 3 天）
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'total_servers': int,      # 處理的伺服器數量
+            'total_jobs': int,          # 處理的 Jobs 數量
+            'total_builds_found': int,  # 從 Jenkins 找到的 Builds 數量
+            'builds_created': int,      # 新增的 Builds 數量
+            'builds_updated': int,      # 更新的 Builds 數量
+            'builds_skipped': int,      # 跳過的 Builds 數量（太舊）
+            'errors': int,              # 錯誤數量
+            'duration': float,          # 執行時間（秒）
+        }
+    """
+    from .models import JenkinsServer, JenkinsJob, JenkinsBuild
+    from library.services.jenkins_client import JenkinsClient
+    from datetime import datetime, timedelta
+    from django.utils import timezone as dj_timezone
+    import pytz
+    
+    start_time = time.time()
+    
+    try:
+        logger.info('[Celery] 🔄 開始同步 Jenkins Builds 到資料庫')
+        logger.info(f'[Celery]   - Server ID: {server_id if server_id else "All"}')
+        logger.info(f'[Celery]   - 每個 Job 最多: {max_builds_per_job} 個 Builds')
+        logger.info(f'[Celery]   - 時間範圍: 最近 {max_age_days} 天')
+        
+        # 計算時間範圍（使用 UTC 時區）
+        cutoff_time = datetime.now(pytz.UTC) - timedelta(days=max_age_days)
+        
+        # 獲取要處理的 Server
+        if server_id:
+            servers = JenkinsServer.objects.filter(id=server_id, status='online')
+        else:
+            servers = JenkinsServer.objects.filter(status='online')
+        
+        if not servers.exists():
+            logger.warning('[Celery] ⚠️  沒有找到在線的 Jenkins Server')
+            return {
+                'success': False,
+                'total_servers': 0,
+                'total_jobs': 0,
+                'total_builds_found': 0,
+                'builds_created': 0,
+                'builds_updated': 0,
+                'builds_skipped': 0,
+                'errors': 0,
+                'duration': 0,
+                'error_message': 'No online servers found'
+            }
+        
+        total_servers = servers.count()
+        total_jobs_processed = 0
+        total_builds_found = 0
+        builds_created = 0
+        builds_updated = 0
+        builds_skipped = 0
+        errors = 0
+        
+        logger.info(f'[Celery] 📡 找到 {total_servers} 個在線的 Jenkins Server')
+        
+        for server in servers:
+            logger.info(f'[Celery] 🖥️  處理 Server: {server.name} ({server.url})')
+            
+            # 獲取該 Server 的所有 Jobs
+            jobs = JenkinsJob.objects.filter(server=server)
+            jobs_count = jobs.count()
+            logger.info(f'[Celery]   - 找到 {jobs_count} 個 Jobs')
+            
+            if jobs_count == 0:
+                continue
+            
+            # 創建 Jenkins Client
+            client = None
+            try:
+                client = JenkinsClient(
+                    base_url=server.url,
+                    username=server.username,
+                    api_token=server.api_token
+                )
+                
+                # 處理每個 Job
+                for job in jobs:
+                    try:
+                        # 從 Jenkins API 獲取 Builds
+                        jenkins_builds = client.get_job_builds(
+                            job.name, 
+                            limit=max_builds_per_job
+                        )
+                        
+                        if not jenkins_builds:
+                            continue
+                        
+                        total_builds_found += len(jenkins_builds)
+                        
+                        # 處理每個 Build
+                        for build_data in jenkins_builds:
+                            try:
+                                build_number = build_data.get('number')
+                                result = build_data.get('result')
+                                building = build_data.get('building', False)
+                                duration = build_data.get('duration', 0)
+                                url = build_data.get('url', '')
+                                
+                                # 轉換時間戳
+                                timestamp = build_data.get('timestamp', 0) / 1000
+                                build_timestamp = datetime.fromtimestamp(timestamp, tz=pytz.UTC)
+                                
+                                # 檢查是否在時間範圍內
+                                if build_timestamp < cutoff_time:
+                                    builds_skipped += 1
+                                    continue
+                                
+                                # 創建或更新 Build 記錄
+                                build, created = JenkinsBuild.objects.update_or_create(
+                                    job=job,
+                                    build_number=build_number,
+                                    defaults={
+                                        'display_name': f'#{build_number}',
+                                        'url': url,
+                                        'result': result or 'UNKNOWN',
+                                        'is_building': building,
+                                        'duration': duration,
+                                        'build_timestamp': build_timestamp,
+                                    }
+                                )
+                                
+                                if created:
+                                    builds_created += 1
+                                    logger.debug(f'[Celery]     ✅ 創建 Build: {job.name} #{build_number} ({result})')
+                                else:
+                                    builds_updated += 1
+                                    logger.debug(f'[Celery]     🔄 更新 Build: {job.name} #{build_number} ({result})')
+                                
+                            except Exception as e:
+                                errors += 1
+                                logger.error(f'[Celery]     ❌ 處理 Build 失敗: {job.name} #{build_number} - {e}')
+                        
+                        total_jobs_processed += 1
+                        
+                    except Exception as e:
+                        errors += 1
+                        logger.error(f'[Celery]   ❌ 處理 Job 失敗: {job.name} - {e}')
+                
+            except Exception as e:
+                errors += 1
+                logger.error(f'[Celery] ❌ 連接 Server 失敗: {server.name} - {e}', exc_info=True)
+            finally:
+                if client:
+                    client.close()
+        
+        duration = time.time() - start_time
+        
+        # 記錄結果
+        logger.info('[Celery] ✅ Jenkins Builds 同步完成')
+        logger.info(f'[Celery]   - 處理 Servers: {total_servers} 個')
+        logger.info(f'[Celery]   - 處理 Jobs: {total_jobs_processed} 個')
+        logger.info(f'[Celery]   - 找到 Builds: {total_builds_found} 個')
+        logger.info(f'[Celery]   - 創建 Builds: {builds_created} 個')
+        logger.info(f'[Celery]   - 更新 Builds: {builds_updated} 個')
+        logger.info(f'[Celery]   - 跳過 Builds: {builds_skipped} 個（超過 {max_age_days} 天）')
+        logger.info(f'[Celery]   - 錯誤: {errors} 個')
+        logger.info(f'[Celery]   - 執行時間: {duration:.1f} 秒')
+        
+        return {
+            'success': True,
+            'total_servers': total_servers,
+            'total_jobs': total_jobs_processed,
+            'total_builds_found': total_builds_found,
+            'builds_created': builds_created,
+            'builds_updated': builds_updated,
+            'builds_skipped': builds_skipped,
+            'errors': errors,
+            'duration': duration,
+        }
+        
+    except Exception as exc:
+        duration = time.time() - start_time
+        logger.error(f'[Celery] ❌ 同步 Jenkins Builds 失敗（執行 {duration:.1f} 秒）', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 同步 Jenkins Builds 重試次數已達上限')
+            return {
+                'success': False,
+                'total_servers': 0,
+                'total_jobs': 0,
+                'total_builds_found': 0,
+                'builds_created': 0,
+                'builds_updated': 0,
+                'builds_skipped': 0,
+                'errors': 0,
                 'duration': duration,
                 'error_message': str(exc),
             }

@@ -117,7 +117,22 @@ app.conf.beat_schedule = {
         }
     },
     
-    # 任務 10：Jenkins Workspace 自動存儲（每小時）
+    # 任務 10：Jenkins Builds 同步（每小時，在 Workspace 存儲前 10 分鐘執行）
+    'sync-jenkins-builds-hourly': {
+        'task': 'api.tasks.sync_jenkins_builds',
+        'schedule': crontab(minute=50),  # 每小時第 50 分鐘執行（XX:50）
+        'kwargs': {
+            'server_id': None,           # None 表示處理所有 Server
+            'max_builds_per_job': 20,    # 每個 Job 最多同步 20 個 Builds
+            'max_age_days': 3            # 只同步最近 3 天內的 Builds
+        },
+        'options': {
+            'expires': 540,    # 任務超時 9 分鐘
+            'queue': 'default',
+        }
+    },
+    
+    # 任務 11：Jenkins Workspace 自動存儲（每小時整點）
     'auto-store-jenkins-workspaces-hourly': {
         'task': 'api.tasks.auto_store_workspaces',
         'schedule': crontab(minute=0),  # 每小時整點執行（00:00, 01:00, 02:00...）
