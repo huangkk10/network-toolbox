@@ -261,6 +261,8 @@ class JenkinsBuildSerializer(serializers.ModelSerializer):
     server_name = serializers.CharField(source='job.server.name', read_only=True)
     status = serializers.CharField(source='result', read_only=True)  # 使用 result 字段作為 status
     duration_formatted = serializers.SerializerMethodField()
+    has_pipeline_stages = serializers.SerializerMethodField()
+    failed_stages_count = serializers.SerializerMethodField()
     
     def get_duration_formatted(self, obj):
         """格式化執行時間"""
@@ -278,6 +280,16 @@ class JenkinsBuildSerializer(serializers.ModelSerializer):
             hours = seconds // 3600
             minutes = (seconds % 3600) // 60
             return f"{hours}h {minutes}m"
+    
+    def get_has_pipeline_stages(self, obj):
+        """檢查是否有 Pipeline Stage 資訊"""
+        return bool(obj.pipeline_stages and len(obj.pipeline_stages) > 0)
+    
+    def get_failed_stages_count(self, obj):
+        """計算失敗的 Stage 數量"""
+        if not obj.pipeline_stages:
+            return 0
+        return sum(1 for s in obj.pipeline_stages if s.get('result') in ['FAILURE', 'UNSTABLE', 'ABORTED'])
     
     class Meta:
         model = JenkinsBuild

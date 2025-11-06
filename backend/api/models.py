@@ -849,6 +849,10 @@ class JenkinsBuild(models.Model):
     ansible_config = models.JSONField(default=dict, blank=True, verbose_name='Ansible 配置')
     environment_vars = models.JSONField(default=dict, blank=True, verbose_name='環境變數')
     
+    # Pipeline Stage 資訊（Blue Ocean）
+    pipeline_stages = models.JSONField(default=list, blank=True, verbose_name='Pipeline Stages')
+    failed_stage = models.CharField(max_length=200, blank=True, verbose_name='失敗的 Stage')
+    
     # 文件路徑（NAS 上的路徑）
     config_file_path = models.CharField(max_length=1000, blank=True, verbose_name='配置文件路徑')
     log_file_path = models.CharField(max_length=1000, blank=True, verbose_name='日誌文件路徑')

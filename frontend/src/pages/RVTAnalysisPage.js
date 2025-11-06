@@ -283,6 +283,7 @@ const RVTAnalysisPage = () => {
                     build_id: build.id,
                     build_number: build.build_number,
                     result: build.result || build.status,  // 兼容兩種命名
+                    failed_stage: build.failed_stage || null,  // ← 新增：失敗的 Stage
                     build_timestamp: build.build_timestamp,
                     duration: build.duration_formatted || `${build.duration}s`,
                     url: build.url,  // Jenkins Build URL
@@ -465,7 +466,7 @@ const RVTAnalysisPage = () => {
             title: '狀態',
             dataIndex: 'status',
             key: 'status',
-            width: 150,
+            width: 250,
             render: (text, record) => {
                 if (record.type === 'job') {
                     return text === 'active' 
@@ -480,7 +481,20 @@ const RVTAnalysisPage = () => {
                         'RUNNING': { color: 'processing', text: '🔄 Running' },
                     };
                     const config = statusMap[record.result] || statusMap['SUCCESS'];
-                    return <Tag color={config.color}>{config.text}</Tag>;
+                    
+                    // 如果是失敗且有 failed_stage，顯示在旁邊
+                    return (
+                        <Space>
+                            <Tag color={config.color}>{config.text}</Tag>
+                            {record.result === 'FAILURE' && record.failed_stage && (
+                                <Tooltip title="失敗的 Stage">
+                                    <Tag color="red" style={{ fontSize: 11 }}>
+                                        📍 {record.failed_stage}
+                                    </Tag>
+                                </Tooltip>
+                            )}
+                        </Space>
+                    );
                 }
             },
         },

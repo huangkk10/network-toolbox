@@ -320,7 +320,7 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def builds(self, request, pk=None):
         """
-        獲取 Job 的所有 Build（從 Jenkins 實時獲取）
+        獲取 Job 的所有 Build（從資料庫獲取，包含 failed_stage）
         
         GET /api/jenkins-jobs/{id}/builds/
         支援參數：
@@ -336,27 +336,23 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         except ValueError:
             limit = 10
         
-        client = None
         try:
-            # 從 Jenkins 實時獲取 Builds
-            client = JenkinsClient(
-                base_url=job.server.url,
-                username=job.server.username,
-                api_token=job.server.api_token
-            )
+            # 從資料庫獲取 Builds
+            builds_query = job.builds.all().order_by('-build_number')
             
-            jenkins_builds = client.get_job_builds(job.name, limit=limit)
+            # 狀態過濾
+            status_filter = request.query_params.get('status')
+            if status_filter:
+                builds_query = builds_query.filter(result=status_filter)
+            
+            # 限制數量
+            builds = builds_query[:limit]
             
             # 轉換為前端需要的格式
             builds_data = []
-            for build in jenkins_builds:
-                # 格式化時間戳
-                timestamp = build.get('timestamp', 0) / 1000  # Jenkins 返回毫秒
-                from datetime import datetime
-                build_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S') if timestamp else 'N/A'
-                
+            for build in builds:
                 # 格式化持續時間
-                duration = build.get('duration', 0) / 1000  # 轉換為秒
+                duration = build.duration / 1000 if build.duration else 0  # 轉換為秒
                 if duration > 3600:
                     duration_str = f"{int(duration / 3600)} 小時 {int((duration % 3600) / 60)} 分"
                 elif duration > 60:
@@ -365,32 +361,28 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
                     duration_str = f"{int(duration)} 秒"
                 
                 builds_data.append({
-                    'id': f"jenkins-{job.id}-{build.get('number')}",  # 臨時 ID
-                    'build_number': build.get('number'),
-                    'result': build.get('result') or ('RUNNING' if build.get('building') else 'UNKNOWN'),
-                    'build_timestamp': build_time,
+                    'id': build.id,  # 資料庫 ID
+                    'build_number': build.build_number,
+                    'result': build.result,
+                    'failed_stage': build.failed_stage or None,  # ← 新增：失敗的 Stage
+                    'build_timestamp': build.build_timestamp.strftime('%Y-%m-%d %H:%M:%S') if build.build_timestamp else 'N/A',
                     'duration': duration,
                     'duration_formatted': duration_str,
-                    'url': build.get('url'),
-                    'building': build.get('building', False),
+                    'url': build.url,
+                    'building': build.is_building,
                 })
             
-            # 狀態過濾（在前端數據上過濾）
-            status_filter = request.query_params.get('status')
-            if status_filter:
-                builds_data = [b for b in builds_data if b['result'] == status_filter]
-            
-            logger.info(f"從 Jenkins 獲取 Job '{job.name}' 的 Builds: {len(builds_data)} 個")
+            logger.info(f"從資料庫獲取 Job '{job.name}' 的 Builds: {len(builds_data)} 個")
             
             return Response({
                 'job_id': job.id,
                 'job_name': job.name,
-                'total_builds': len(jenkins_builds),
+                'total_builds': job.builds.count(),
                 'builds': builds_data
             })
             
         except Exception as e:
-            logger.error(f"獲取 Jenkins Builds 失敗: {e}", exc_info=True)
+            logger.error(f"獲取 Builds 失敗: {e}", exc_info=True)
             return Response({
                 'job_id': job.id,
                 'job_name': job.name,
@@ -398,9 +390,6 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
                 'builds': [],
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        finally:
-            if client:
-                client.close()
     
     @action(detail=True, methods=['get'])
     def latest_build(self, request, pk=None):
@@ -738,6 +727,157 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'message': f'獲取統計失敗: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get', 'post'])
+    def pipeline_stages(self, request, pk=None):
+        """
+        獲取或同步 Build 的 Pipeline Stage 資訊（Blue Ocean）
+        
+        GET /api/jenkins-builds/{id}/pipeline_stages/
+        返回已存儲的 Pipeline Stage 資訊
+        
+        POST /api/jenkins-builds/{id}/pipeline_stages/
+        從 Jenkins Blue Ocean API 同步最新的 Pipeline Stage 資訊
+        
+        Returns:
+            {
+                'success': bool,
+                'build_id': int,
+                'build_number': int,
+                'result': str,
+                'failed_stage': str,
+                'pipeline_summary': {
+                    'total_stages': int,
+                    'successful_stages': int,
+                    'failed_stages': int,
+                    'unstable_stages': int,
+                    'aborted_stages': int
+                },
+                'stages': [
+                    {
+                        'name': str,
+                        'result': str,
+                        'duration_ms': int,
+                        'duration_formatted': str,
+                        'error_message': str (可選)
+                    }
+                ],
+                'failed_stages': [...]  # 只包含失敗的 Stage
+            }
+        """
+        build = self.get_object()
+        client = None
+        
+        try:
+            # POST 請求：從 Jenkins 同步資料
+            if request.method == 'POST':
+                server = build.job.server
+                
+                # 創建 Jenkins 客戶端
+                client = JenkinsClient(
+                    base_url=server.url,
+                    username=server.username,
+                    api_token=server.api_token
+                )
+                
+                # 獲取 Pipeline Nodes
+                nodes = client.get_blue_ocean_pipeline_nodes(build.job.name, build.build_number)
+                
+                if not nodes:
+                    return Response({
+                        'success': False,
+                        'message': '無法獲取 Pipeline Stage 資訊（可能不是 Pipeline Job 或 Blue Ocean 未安裝）'
+                    }, status=status.HTTP_404_NOT_FOUND)
+                
+                # 提取 Stage 資訊
+                stages = [
+                    {
+                        'id': node.get('id'),
+                        'name': node.get('displayName'),
+                        'result': node.get('result'),
+                        'state': node.get('state'),
+                        'duration_ms': node.get('durationInMillis', 0),
+                        'start_time': node.get('startTime'),
+                        'type': node.get('type'),
+                        'error': node.get('error')
+                    }
+                    for node in nodes if node.get('type') == 'STAGE'
+                ]
+                
+                # 找出失敗的 Stage
+                failed_stages_list = client.get_failed_stages(build.job.name, build.build_number)
+                failed_stage_name = failed_stages_list[0]['stage_name'] if failed_stages_list else ''
+                
+                # 更新資料庫
+                build.pipeline_stages = stages
+                build.failed_stage = failed_stage_name
+                build.save(update_fields=['pipeline_stages', 'failed_stage'])
+                
+                logger.info(f"同步 Build #{build.build_number} 的 Pipeline Stage 資訊: {len(stages)} 個 Stage, 失敗: {failed_stage_name}")
+            
+            # GET 或 POST 後都返回相同格式的資料
+            stages_data = build.pipeline_stages if isinstance(build.pipeline_stages, list) else []
+            
+            # 統計資訊
+            pipeline_summary = {
+                'total_stages': len(stages_data),
+                'successful_stages': sum(1 for s in stages_data if s.get('result') == 'SUCCESS'),
+                'failed_stages': sum(1 for s in stages_data if s.get('result') == 'FAILURE'),
+                'unstable_stages': sum(1 for s in stages_data if s.get('result') == 'UNSTABLE'),
+                'aborted_stages': sum(1 for s in stages_data if s.get('result') == 'ABORTED'),
+            }
+            
+            # 格式化 Stage 資訊
+            formatted_stages = []
+            failed_stages = []
+            
+            for stage in stages_data:
+                duration_ms = stage.get('duration_ms', 0)
+                duration_sec = duration_ms / 1000 if duration_ms else 0
+                
+                if duration_sec >= 60:
+                    duration_formatted = f"{int(duration_sec / 60)} 分 {int(duration_sec % 60)} 秒"
+                else:
+                    duration_formatted = f"{duration_sec:.1f} 秒"
+                
+                stage_info = {
+                    'name': stage.get('name'),
+                    'result': stage.get('result'),
+                    'duration_ms': duration_ms,
+                    'duration_formatted': duration_formatted,
+                }
+                
+                # 添加錯誤訊息（如果有）
+                if stage.get('error'):
+                    stage_info['error_message'] = stage['error'].get('message', 'Unknown error')
+                
+                formatted_stages.append(stage_info)
+                
+                # 收集失敗的 Stage
+                if stage.get('result') in ['FAILURE', 'UNSTABLE', 'ABORTED']:
+                    failed_stages.append(stage_info)
+            
+            return Response({
+                'success': True,
+                'build_id': build.id,
+                'build_number': build.build_number,
+                'job_name': build.job.name,
+                'result': build.result,
+                'failed_stage': build.failed_stage,
+                'pipeline_summary': pipeline_summary,
+                'stages': formatted_stages,
+                'failed_stages': failed_stages,
+            })
+            
+        except Exception as e:
+            logger.error(f"處理 Pipeline Stage 資訊失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'message': f'處理失敗: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        finally:
+            if client:
+                client.close()
     
     @action(detail=False, methods=['get'])
     def check_nas_status(self, request):

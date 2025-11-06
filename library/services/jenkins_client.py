@@ -179,6 +179,155 @@ class JenkinsClient:
         logger.info(f"獲取 Job '{job_name}' 的 Builds: 共 {len(builds)} 個")
         return builds
     
+    def get_blue_ocean_pipeline_nodes(self, job_name: str, build_number: int) -> List[Dict[str, Any]]:
+        """
+        獲取 Blue Ocean Pipeline 的所有 Stage/Node 資訊
+        
+        Args:
+            job_name: Job 名稱
+            build_number: Build 編號
+            
+        Returns:
+            list: Stage/Node 列表，包含每個 Stage 的狀態和詳細資訊
+            
+        Example:
+            [
+                {
+                    'id': '3',
+                    'displayName': 'Checkout',
+                    'result': 'SUCCESS',
+                    'state': 'FINISHED',
+                    'durationInMillis': 1234,
+                    'startTime': '2025-11-06T10:30:00.000+0000',
+                    'type': 'STAGE'
+                },
+                {
+                    'id': '5',
+                    'displayName': 'Build',
+                    'result': 'FAILURE',
+                    'state': 'FINISHED',
+                    'durationInMillis': 5678,
+                    'startTime': '2025-11-06T10:30:05.000+0000',
+                    'type': 'STAGE',
+                    'error': {'message': 'Build failed'}
+                }
+            ]
+        """
+        try:
+            # Blue Ocean API 端點
+            url = f"{self.base_url}/blue/rest/organizations/jenkins/pipelines/{job_name}/runs/{build_number}/nodes/"
+            response = self._make_request('GET', url)
+            nodes = response.json()
+            
+            logger.info(f"獲取 Blue Ocean Pipeline Nodes: Job='{job_name}', Build={build_number}, Nodes={len(nodes)}")
+            return nodes
+            
+        except Exception as e:
+            logger.error(f"獲取 Blue Ocean Pipeline Nodes 失敗: {e}", exc_info=True)
+            return []
+    
+    def get_failed_stages(self, job_name: str, build_number: int) -> List[Dict[str, Any]]:
+        """
+        獲取 Build 中失敗的 Stage 列表
+        
+        Args:
+            job_name: Job 名稱
+            build_number: Build 編號
+            
+        Returns:
+            list: 失敗的 Stage 列表
+            
+        Example:
+            [
+                {
+                    'stage_name': 'Build',
+                    'result': 'FAILURE',
+                    'duration_ms': 5678,
+                    'duration_formatted': '5.7 秒',
+                    'error_message': 'Build failed'
+                }
+            ]
+        """
+        nodes = self.get_blue_ocean_pipeline_nodes(job_name, build_number)
+        
+        failed_stages = []
+        for node in nodes:
+            # 只處理 STAGE 類型且失敗的節點
+            if node.get('type') == 'STAGE' and node.get('result') in ['FAILURE', 'UNSTABLE', 'ABORTED']:
+                duration_ms = node.get('durationInMillis', 0)
+                duration_sec = duration_ms / 1000 if duration_ms else 0
+                
+                # 格式化執行時間
+                if duration_sec >= 60:
+                    duration_formatted = f"{int(duration_sec / 60)} 分 {int(duration_sec % 60)} 秒"
+                else:
+                    duration_formatted = f"{duration_sec:.1f} 秒"
+                
+                # 提取錯誤訊息
+                error_message = None
+                if 'error' in node and node['error']:
+                    error_message = node['error'].get('message', 'Unknown error')
+                
+                failed_stages.append({
+                    'stage_name': node.get('displayName', 'Unknown Stage'),
+                    'result': node.get('result'),
+                    'duration_ms': duration_ms,
+                    'duration_formatted': duration_formatted,
+                    'error_message': error_message,
+                    'start_time': node.get('startTime'),
+                })
+        
+        logger.info(f"找到 {len(failed_stages)} 個失敗的 Stage")
+        return failed_stages
+    
+    def get_pipeline_summary(self, job_name: str, build_number: int) -> Dict[str, Any]:
+        """
+        獲取 Pipeline 執行摘要
+        
+        Args:
+            job_name: Job 名稱
+            build_number: Build 編號
+            
+        Returns:
+            dict: Pipeline 摘要資訊
+            
+        Example:
+            {
+                'total_stages': 5,
+                'successful_stages': 3,
+                'failed_stages': 1,
+                'aborted_stages': 0,
+                'unstable_stages': 1,
+                'stages': [...]
+            }
+        """
+        nodes = self.get_blue_ocean_pipeline_nodes(job_name, build_number)
+        
+        # 統計各種狀態的 Stage
+        stages = [node for node in nodes if node.get('type') == 'STAGE']
+        
+        summary = {
+            'total_stages': len(stages),
+            'successful_stages': sum(1 for s in stages if s.get('result') == 'SUCCESS'),
+            'failed_stages': sum(1 for s in stages if s.get('result') == 'FAILURE'),
+            'aborted_stages': sum(1 for s in stages if s.get('result') == 'ABORTED'),
+            'unstable_stages': sum(1 for s in stages if s.get('result') == 'UNSTABLE'),
+            'stages': [
+                {
+                    'name': s.get('displayName'),
+                    'result': s.get('result'),
+                    'duration_ms': s.get('durationInMillis', 0),
+                }
+                for s in stages
+            ]
+        }
+        
+        logger.info(f"Pipeline 摘要: 總共 {summary['total_stages']} 個 Stage, "
+                   f"成功 {summary['successful_stages']}, "
+                   f"失敗 {summary['failed_stages']}")
+        
+        return summary
+    
     def close(self):
         """關閉 Session"""
         self.session.close()
