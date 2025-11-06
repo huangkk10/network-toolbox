@@ -550,17 +550,6 @@ const RVTAnalysisPage = () => {
                                     詳情
                                 </Button>
                             </Tooltip>
-                            <Tooltip title="存儲 Workspace 到 NAS">
-                                <Button 
-                                    size="small"
-                                    type="primary"
-                                    icon={<SaveOutlined />}
-                                    onClick={() => handleStoreWorkspace(record)}
-                                    style={{ background: '#52c41a', borderColor: '#52c41a' }}
-                                >
-                                    Workspace
-                                </Button>
-                            </Tooltip>
                         </Space>
                     );
                 }
