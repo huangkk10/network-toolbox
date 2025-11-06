@@ -208,6 +208,26 @@ const RVTAnalysisPage = () => {
         }
     };
     
+    // 載入所有可用的 View 列表（不受篩選條件影響）
+    const fetchAvailableViews = async () => {
+        try {
+            // 獲取所有 Jobs（不帶篩選參數）
+            const response = await axios.get('/api/jenkins-jobs/');
+            
+            // 提取唯一的 View 名稱列表
+            const uniqueViews = [...new Set(
+                response.data
+                    .map(job => job.view_name)
+                    .filter(view => view && view !== '')
+            )].sort();
+            
+            setAvailableViews(uniqueViews);
+        } catch (error) {
+            console.error('載入 View 列表失敗:', error);
+            // 不顯示錯誤訊息，因為這不是關鍵功能
+        }
+    };
+    
     // 載入 Jobs 列表
     const fetchJobs = async () => {
         setLoading(true);
@@ -233,14 +253,6 @@ const RVTAnalysisPage = () => {
             }
             
             const response = await axios.get(url);
-            
-            // 提取唯一的 View 名稱列表
-            const uniqueViews = [...new Set(
-                response.data
-                    .map(job => job.view_name)
-                    .filter(view => view && view !== '')
-            )].sort();
-            setAvailableViews(uniqueViews);
             
             // 轉換為 Tree Table 資料格式
             const jobs = response.data.map(job => ({
@@ -573,7 +585,8 @@ const RVTAnalysisPage = () => {
 
     // ========== 初始化 ==========
     useEffect(() => {
-        fetchStatistics();
+        fetchStatistics();  // 這個函數內部已經包含了 setServers()
+        fetchAvailableViews();  // ← 新增：載入所有可用的 View 列表
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     
