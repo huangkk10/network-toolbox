@@ -1809,6 +1809,30 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                     }
                                 )
                                 
+                                # 🆕 同步 Pipeline Stages（如果是 FAILURE 狀態且尚未同步）
+                                # 檢查 failed_stage 是否為 None 或空字串
+                                if result == 'FAILURE' and (not build.failed_stage or build.failed_stage == ''):
+                                    try:
+                                        # 獲取 Pipeline Stages
+                                        failed_stages = client.get_failed_stages(job.name, build_number)
+                                        if failed_stages:
+                                            # 儲存 failed stages（Django JSONField 會自動處理）
+                                            build.pipeline_stages = failed_stages
+                                            
+                                            # 提取第一個失敗 Stage 的名稱
+                                            first_failed = failed_stages[0]
+                                            build.failed_stage = (
+                                                first_failed.get('stage_name') or 
+                                                first_failed.get('displayName') or 
+                                                first_failed.get('name')
+                                            )
+                                            
+                                            logger.info(f'[Celery]     🎯 發現失敗 Stage: {build.failed_stage}')
+                                            build.save(update_fields=['pipeline_stages', 'failed_stage'])
+                                            logger.info(f'[Celery]     ✅ 已儲存 Failed Stage: {build.failed_stage}')
+                                    except Exception as e:
+                                        logger.error(f'[Celery]     ❌ 無法獲取 Pipeline Stages: {e}', exc_info=True)
+                                
                                 if created:
                                     builds_created += 1
                                     logger.debug(f'[Celery]     ✅ 創建 Build: {job.name} #{build_number} ({result})')

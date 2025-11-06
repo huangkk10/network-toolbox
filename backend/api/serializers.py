@@ -283,13 +283,38 @@ class JenkinsBuildSerializer(serializers.ModelSerializer):
     
     def get_has_pipeline_stages(self, obj):
         """檢查是否有 Pipeline Stage 資訊"""
-        return bool(obj.pipeline_stages and len(obj.pipeline_stages) > 0)
+        stages = self._normalize_pipeline_stages(obj)
+        return bool(stages and len(stages) > 0)
     
     def get_failed_stages_count(self, obj):
         """計算失敗的 Stage 數量"""
-        if not obj.pipeline_stages:
+        stages = self._normalize_pipeline_stages(obj)
+        if not stages:
             return 0
-        return sum(1 for s in obj.pipeline_stages if s.get('result') in ['FAILURE', 'UNSTABLE', 'ABORTED'])
+        return sum(1 for s in stages if s.get('result') in ['FAILURE', 'UNSTABLE', 'ABORTED'])
+    
+    def _normalize_pipeline_stages(self, obj):
+        """
+        將 pipeline_stages 標準化為 list（向後兼容舊資料）
+        
+        舊資料可能是 JSON 字串，需要解析
+        """
+        if not obj.pipeline_stages:
+            return []
+        
+        # 如果是字串，嘗試解析為 JSON
+        if isinstance(obj.pipeline_stages, str):
+            try:
+                import json
+                return json.loads(obj.pipeline_stages)
+            except:
+                return []
+        
+        # 如果已經是 list，直接返回
+        if isinstance(obj.pipeline_stages, list):
+            return obj.pipeline_stages
+        
+        return []
     
     class Meta:
         model = JenkinsBuild
