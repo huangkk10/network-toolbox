@@ -93,9 +93,9 @@ AUTH_PASSWORD_VALIDATORS = [
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'
-TIME_ZONE = config('TZ', default='Asia/Taipei')
+TIME_ZONE = config('TZ', default='Asia/Taipei')  # 顯示時區：台北
 USE_I18N = True
-USE_TZ = False  # 關閉 UTC 時區轉換，直接使用本地時區
+USE_TZ = True  # 啟用時區轉換，資料庫儲存 UTC，顯示時轉換為 TIME_ZONE
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
