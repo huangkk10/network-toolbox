@@ -117,14 +117,14 @@ app.conf.beat_schedule = {
         }
     },
     
-    # 任務 10：Jenkins Builds 同步（每小時，在 Workspace 存儲前 10 分鐘執行）
-    'sync-jenkins-builds-hourly': {
+    # 任務 10：Jenkins Builds 同步（每 10 分鐘執行一次）
+    'sync-jenkins-builds-every-10-minutes': {
         'task': 'api.tasks.sync_jenkins_builds',
-        'schedule': crontab(minute=50),  # 每小時第 50 分鐘執行（XX:50）
+        'schedule': crontab(minute='*/10'),  # 每 10 分鐘執行一次
         'kwargs': {
             'server_id': None,           # None 表示處理所有 Server
             'max_builds_per_job': 20,    # 每個 Job 最多同步 20 個 Builds
-            'max_age_days': 3            # 只同步最近 3 天內的 Builds
+            'max_age_days': 7            # 只同步最近 7 天內的 Builds
         },
         'options': {
             'expires': 540,    # 任務超時 9 分鐘
