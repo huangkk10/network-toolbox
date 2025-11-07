@@ -118,7 +118,21 @@ const IPXEAnalyticsPage = () => {
         ];
 
         if (servers.length > 0) {
-            const serverOptions = servers.map(server => {
+            // 排序 Server：按 IP 地址排序
+            const sortedServers = [...servers].sort((a, b) => {
+                // 將 IP 地址轉換為數字陣列進行比較
+                const ipA = a.ip_address.split('.').map(Number);
+                const ipB = b.ip_address.split('.').map(Number);
+                
+                for (let i = 0; i < 4; i++) {
+                    if (ipA[i] !== ipB[i]) {
+                        return ipA[i] - ipB[i];
+                    }
+                }
+                return 0;
+            });
+
+            const serverOptions = sortedServers.map(server => {
                 // 根據狀態設定圖示
                 const statusIcon = {
                     'online': '🟢',
@@ -129,6 +143,7 @@ const IPXEAnalyticsPage = () => {
                 return {
                     value: server.id.toString(),
                     label: `${statusIcon} ${server.ip_address} (${server.name})`,
+                    server: server, // 保留原始資料供搜尋使用
                 };
             });
 
@@ -210,12 +225,21 @@ const IPXEAnalyticsPage = () => {
                 
                 <Space>
                     <Select
-                        style={{ width: 280 }}
+                        showSearch
+                        style={{ width: 300 }}
                         value={selectedServer}
                         onChange={handleServerChange}
                         placeholder="選擇 IPXE Server"
                         loading={loadingServers}
                         options={getServerOptions()}
+                        filterOption={(input, option) => {
+                            // 支援搜尋 IP 和名稱
+                            if (!option || !option.label) return false;
+                            const searchText = input.toLowerCase();
+                            const labelText = option.label.toLowerCase();
+                            return labelText.includes(searchText);
+                        }}
+                        optionFilterProp="label"
                     />
                     <Button icon={<ReloadOutlined />} onClick={handleRefresh} loading={loading}>
                         重新整理

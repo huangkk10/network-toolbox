@@ -7,7 +7,7 @@ Django Signals - 自動化任務觸發器
 import logging
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from .models import DHCPServer
+from .models import DHCPServer, DHCPLease
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,23 @@ def dhcp_server_post_save(sender, instance, created, **kwargs):
             )
             
             logger.info(f'[Signal] Scope 同步任務已排程 - Server: {instance.name}')
+            
+            # 🆕 新功能：排程 Switch 自動識別任務
+            # 延遲 60 秒後執行（等待租約同步完成）
+            from .tasks import auto_identify_switches_task
+            
+            logger.info(f'[Signal] 排程 Switch 自動識別任務 - Server ID: {instance.id}')
+            auto_identify_switches_task.apply_async(
+                kwargs={'server_id': instance.id},
+                countdown=60,  # 60 秒後執行（給足時間讓租約同步）
+                retry=True,
+                retry_policy={
+                    'max_retries': 2,
+                    'interval_start': 120,  # 首次重試等待 2 分鐘
+                }
+            )
+            
+            logger.info(f'[Signal] Switch 識別任務已排程 - Server: {instance.name}')
         
         else:
             # 更新伺服器 - 檢查狀態變化
@@ -103,3 +120,91 @@ def dhcp_server_post_delete(sender, instance, **kwargs):
         
     except Exception as e:
         logger.error(f'[Signal] DHCP Server post_delete 處理失敗: {str(e)}', exc_info=True)
+
+
+@receiver(post_save, sender=DHCPLease)
+def dhcp_lease_post_save(sender, instance, created, **kwargs):
+    """
+    DHCP Lease 創建或更新後的處理
+    
+    當租約有 Option 82 資訊 (remote_id) 時，自動更新對應 Switch 的統計資訊
+    這確保 Switch 資訊保持最新狀態
+    
+    Args:
+        sender: DHCPLease 模型類別
+        instance: DHCPLease 實例
+        created: 是否為新建
+        **kwargs: 額外參數
+    """
+    try:
+        # 只處理有 remote_id 的租約（表示有 Option 82 資訊）
+        if instance.remote_id and instance.remote_id.strip():
+            from .models import NetworkSwitch
+            
+            # 查找對應的 Switch
+            switch = NetworkSwitch.objects.filter(remote_id=instance.remote_id).first()
+            
+            if switch:
+                # 更新 Switch 統計資訊（避免頻繁更新，使用 Celery 延遲）
+                from .tasks import update_switch_statistics_task
+                
+                # 延遲 30 秒批次更新（避免大量租約同時更新造成性能問題）
+                update_switch_statistics_task.apply_async(
+                    kwargs={'switch_id': switch.id},
+                    countdown=30,
+                    # 使用任務去重，同一個 Switch 30 秒內只更新一次
+                    task_id=f'update_switch_stats_{switch.id}'
+                )
+                
+                logger.debug(f'[Signal] 已排程 Switch 統計更新: {switch.name} (remote_id: {instance.remote_id})')
+            
+            elif created:
+                # 新租約有 remote_id 但找不到對應的 Switch
+                # 可能是新的 Switch 設備，記錄以便後續識別
+                logger.info(
+                    f'[Signal] 發現新的 remote_id 但無對應 Switch: {instance.remote_id} '
+                    f'(IP: {instance.ip_address}, Server: {instance.server.name})'
+                )
+    
+    except Exception as e:
+        logger.error(f'[Signal] DHCP Lease post_save 處理失敗: {str(e)}', exc_info=True)
+
+
+def trigger_switch_identification_for_server(server_id, delay_seconds=5):
+    """
+    手動觸發特定 Server 的 Switch 識別任務
+    
+    可用於：
+    1. 手動補充識別
+    2. 在租約同步後立即識別 Switch
+    3. 故障排查和測試
+    
+    Args:
+        server_id: DHCP Server ID
+        delay_seconds: 延遲執行秒數（預設 5 秒）
+        
+    Returns:
+        str: Celery Task ID，如果失敗則返回 None
+        
+    Example:
+        >>> from api.signals import trigger_switch_identification_for_server
+        >>> task_id = trigger_switch_identification_for_server(server_id=6, delay_seconds=10)
+        >>> print(f"Task ID: {task_id}")
+    """
+    try:
+        from .tasks import auto_identify_switches_task
+        
+        result = auto_identify_switches_task.apply_async(
+            kwargs={'server_id': server_id},
+            countdown=delay_seconds
+        )
+        
+        logger.info(
+            f'[Manual] 已手動觸發 Switch 識別任務 '
+            f'(Server ID: {server_id}, Task ID: {result.id}, Delay: {delay_seconds}s)'
+        )
+        return result.id
+        
+    except Exception as e:
+        logger.error(f'[Manual] 手動觸發 Switch 識別失敗: {e}', exc_info=True)
+        return None

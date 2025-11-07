@@ -1287,6 +1287,51 @@ def auto_identify_switches_task(self, server_id=None):
 
 @shared_task(
     bind=True,
+    name='api.tasks.update_switch_statistics_task',
+    max_retries=1,
+    time_limit=60,
+    soft_time_limit=50
+)
+def update_switch_statistics_task(self, switch_id):
+    """
+    更新單個 Switch 的統計資訊
+    
+    用於在租約變化時異步更新 Switch 統計，避免阻塞主流程
+    
+    Args:
+        switch_id: NetworkSwitch ID
+        
+    Returns:
+        dict: 更新結果
+    """
+    try:
+        from api.models import NetworkSwitch
+        
+        switch = NetworkSwitch.objects.get(id=switch_id)
+        switch.update_statistics()
+        
+        logger.debug(f'[Celery] Switch 統計更新完成: {switch.name}')
+        
+        return {
+            'success': True,
+            'switch_id': switch_id,
+            'switch_name': switch.name,
+            'connected_devices': switch.connected_devices,
+            'active_ports': switch.active_ports,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except NetworkSwitch.DoesNotExist:
+        logger.error(f'[Celery] Switch 不存在 (ID: {switch_id})')
+        return {'success': False, 'error': 'Switch not found'}
+        
+    except Exception as exc:
+        logger.error(f'[Celery] Switch 統計更新失敗: {exc}', exc_info=True)
+        return {'success': False, 'error': str(exc)}
+
+
+@shared_task(
+    bind=True,
     name='api.tasks.check_gitlab_connection_task',
     max_retries=2,
     default_retry_delay=30,
