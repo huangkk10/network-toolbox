@@ -1,6 +1,12 @@
-# Network Toolbox 文檔目錄
-
-## 📚 文檔結構
+# Network Toolbox 文檔目│   ├── auto-switch-sync/               # 自動 Switch 同步功能
+│   │   ├── README.md                   # 完整技術說明
+│   │   ├── QUICKSTART.md               # 快速開始指南
+│   │   ├── TESTING_GUIDE.md            # 測試指南
+│   │   └── SOLUTION_SUMMARY.md         # 問題解決總結
+│   └── server-dropdown-sorting/        # Server 下拉選單排序
+│       └── README.md                   # 功能說明
+└── api/                                # API 文檔
+    └── API_TEST_REPORT.md              # API 測試報告 文檔結構
 
 ```
 docs/
@@ -18,7 +24,12 @@ docs/
 │   ├── LOGS_IMPLEMENTATION_COMPLETE.md # 日誌功能完成報告
 │   ├── DHCP_SSH_INTEGRATION.md         # DHCP SSH 集成文檔
 │   ├── LOGS_TAB_USAGE.md               # LogsTab 使用指南
-│   └── LOG_FILES_EXPLAINED.md          # 日誌文件說明
+│   ├── LOG_FILES_EXPLAINED.md          # 日誌文件說明
+│   └── auto-switch-sync/               # 自動 Switch 同步功能
+│       ├── README.md                   # 完整技術說明
+│       ├── QUICKSTART.md               # 快速開始指南
+│       ├── TESTING_GUIDE.md            # 測試指南
+│       └── SOLUTION_SUMMARY.md         # 問題解決總結
 └── api/                                # API 文檔
     └── API_TEST_REPORT.md              # API 測試報告
 ```
@@ -42,6 +53,8 @@ docs/
 3. **[LogsTab 使用指南](features/LOGS_TAB_USAGE.md)** - LogsTab 頁面使用說明
 4. **[日誌文件說明](features/LOG_FILES_EXPLAINED.md)** - 各日誌文件的用途和配置
 5. **[DHCP SSH 集成](features/DHCP_SSH_INTEGRATION.md)** - DHCP 伺服器 SSH 連接實作
+6. **[自動 Switch 同步](features/auto-switch-sync/QUICKSTART.md)** - 🆕 新增 DHCP Server 後自動識別 Switch
+7. **[Server 下拉選單排序](features/server-dropdown-sorting/README.md)** - 🆕 Server 列表 IP 排序與搜尋
 
 ### API 文檔
 1. **[API 測試報告](api/API_TEST_REPORT.md)** - 所有 API 端點的測試結果
@@ -76,11 +89,15 @@ docs/
 | 如何部署到生產環境？ | [部署指南](deployment/DEPLOYMENT.md) |
 | API 端點有哪些？ | [API 測試報告](api/API_TEST_REPORT.md) |
 | 如何配置 SSH 連接？ | [DHCP SSH 集成](features/DHCP_SSH_INTEGRATION.md) |
+| 新增 DHCP Server 後 Switch 沒有自動出現？ | [自動 Switch 同步](features/auto-switch-sync/QUICKSTART.md) |
+| Server 下拉選單順序混亂？ | [Server 下拉選單排序](features/server-dropdown-sorting/README.md) |
 
 ## 📝 文檔更新記錄
 
 | 日期 | 文檔 | 變更 |
 |------|------|------|
+| 2025-11-07 | server-dropdown-sorting/ | 🆕 新增 Server 下拉選單排序功能 |
+| 2025-11-07 | auto-switch-sync/ | 🆕 新增自動 Switch 同步功能文檔 |
 | 2025-10-27 | 所有文檔 | 重新組織文檔結構，移至 docs/ 目錄 |
 | 2025-10-27 | LOG_FILES_EXPLAINED.md | 新增，說明日誌文件和 Django 日誌混入問題 |
 | 2025-10-27 | LOGS_IMPLEMENTATION_COMPLETE.md | 新增，日誌功能完成總結 |
@@ -90,4 +107,4 @@ docs/
 ---
 
 **維護者**: Network Toolbox Team  
-**最後更新**: 2025-10-27
+**最後更新**: 2025-11-07

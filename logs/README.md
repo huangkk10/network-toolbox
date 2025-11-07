@@ -257,6 +257,37 @@ du -sh logs/
 find logs/ -name "*.log.*" -mtime +30 -delete
 ```
 
+### DateTime 時區錯誤
+**症狀**：出現 `can't compare offset-naive and offset-aware datetimes` 錯誤
+
+**原因**：Django 的 `USE_TZ` 設置與資料庫中的 datetime 格式不匹配
+
+**解決方案**：
+1. 確認 `settings.py` 中 `USE_TZ = True`（已啟用）
+2. 確認 `TIME_ZONE = 'Asia/Taipei'`（台北時區）
+3. Django 會自動處理時區轉換：
+   - 資料庫儲存：UTC 時區
+   - API 返回：台北時區 (+08:00)
+   - 內部比較：自動轉換
+
+**驗證**：
+```bash
+# 檢查設置
+docker exec nt-django python -c "
+from django.conf import settings
+print(f'USE_TZ: {settings.USE_TZ}')
+print(f'TIME_ZONE: {settings.TIME_ZONE}')
+"
+
+# 測試時區
+docker exec nt-django python manage.py shell -c "
+from api.models import JenkinsBuild
+build = JenkinsBuild.objects.first()
+print(f'Timestamp: {build.build_timestamp}')
+print(f'Timezone: {build.build_timestamp.tzinfo}')
+"
+```
+
 ## 💡 最佳實踐
 
 1. **定期檢查錯誤日誌**
