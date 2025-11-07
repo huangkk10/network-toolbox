@@ -45,6 +45,68 @@ class IPXEService:
             self.ssh_client.close()
             self.ssh_client = None
     
+    def test_connection(self) -> bool:
+        """
+        測試 SSH 連接是否可用
+        
+        快速測試方法，用於健康檢查和驗證。
+        不會保持連接，測試完畢後立即關閉。
+        
+        Returns:
+            bool: 連接成功返回 True，失敗返回 False
+        """
+        try:
+            if self.connect_ssh():
+                # 執行簡單命令驗證連接
+                stdin, stdout, stderr = self.ssh_client.exec_command('echo "test"', timeout=5)
+                output = stdout.read().decode('utf-8').strip()
+                self.disconnect_ssh()
+                return output == 'test'
+            return False
+        except Exception as e:
+            logger.error(f'測試 SSH 連接失敗 ({self.server.ip_address}): {e}')
+            self.disconnect_ssh()
+            return False
+    
+    def get_container_names(self) -> list:
+        """
+        獲取 iPXE Docker 容器名稱列表
+        
+        檢查伺服器上是否有 iPXE 相關的 Docker 容器在運行。
+        
+        Returns:
+            list: 容器名稱列表，如 ['ipxe_mac-flask', 'ipxe']
+        """
+        try:
+            if not self.ssh_client:
+                if not self.connect_ssh():
+                    return []
+            
+            # 執行 docker ps 命令獲取運行中的容器
+            command = f"sudo -S docker ps --format '{{{{.Names}}}}'"
+            stdin, stdout, stderr = self.ssh_client.exec_command(command, get_pty=True)
+            stdin.write(self.server.ssh_password + "\n")
+            stdin.flush()
+            
+            output = stdout.read().decode('utf-8')
+            
+            # 過濾結果，只保留 iPXE 相關容器
+            containers = []
+            for line in output.split('\n'):
+                line = line.strip()
+                # 跳過 sudo 提示和空行
+                if line and 'password' not in line.lower() and 'sudo' not in line.lower():
+                    # 檢查是否包含 ipxe 或 mac (不區分大小寫)
+                    if 'ipxe' in line.lower() or 'mac' in line.lower():
+                        containers.append(line)
+            
+            logger.info(f'找到 {len(containers)} 個 iPXE 容器: {containers}')
+            return containers
+            
+        except Exception as e:
+            logger.error(f'獲取容器名稱失敗 ({self.server.ip_address}): {e}', exc_info=True)
+            return []
+    
     def execute_docker_command(self, container_name: str, command: str = "logs --tail 1000") -> str:
         """執行 Docker 命令"""
         try:

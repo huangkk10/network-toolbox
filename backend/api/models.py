@@ -265,6 +265,17 @@ class IPXEServer(models.Model):
         ('online', 'Online'),
         ('offline', 'Offline'),
         ('warning', 'Warning'),
+        ('error', 'Error'),  # 新增：SSH 連接失敗或其他錯誤
+        ('active', 'Active'),  # 新增：伺服器運行正常
+    ]
+    
+    CONNECTION_STATUS_CHOICES = [
+        ('pending', 'Pending'),  # 等待驗證
+        ('verifying', 'Verifying'),  # 驗證中
+        ('connected', 'Connected'),  # 已連接
+        ('failed', 'Failed'),  # 連接失敗
+        ('no_containers', 'No Containers'),  # 無容器
+        ('error', 'Error'),  # 錯誤
     ]
     
     # 基本資訊
@@ -277,6 +288,13 @@ class IPXEServer(models.Model):
         default='offline',
         verbose_name='狀態'
     )
+    connection_status = models.CharField(
+        max_length=20,
+        choices=CONNECTION_STATUS_CHOICES,
+        default='pending',
+        verbose_name='連接狀態'
+    )
+    last_error = models.TextField(blank=True, null=True, verbose_name='最後錯誤訊息')
     
     # 統計資訊
     total_requests_today = models.IntegerField(default=0, verbose_name='今日請求總數')

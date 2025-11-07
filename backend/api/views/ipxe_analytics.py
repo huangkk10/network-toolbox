@@ -27,7 +27,7 @@ def ipxe_analytics_overview(request):
     - days: 統計天數（預設 7）
     - server_id: 指定伺服器 ID（預設全部）
     
-    註：此 API 從 DHCPLog 表讀取 client_type 為 iPXE/PXE/WinPE 的記錄
+    註：此 API 從 IPXELog 表讀取日誌記錄
     """
     try:
         # 獲取參數
@@ -36,11 +36,9 @@ def ipxe_analytics_overview(request):
         
         cutoff_time = timezone.now() - timedelta(days=days)
         
-        # 基礎查詢：從 DHCPLog 表讀取 iPXE 相關的日誌
-        # client_type 包含：'PXE', 'iPXE', 'WinPE'
-        logs_query = DHCPLog.objects.filter(
-            timestamp__gte=cutoff_time,
-            client_type__in=['PXE', 'iPXE', 'WinPE']
+        # 基礎查詢：從 IPXELog 表讀取日誌
+        logs_query = IPXELog.objects.filter(
+            timestamp__gte=cutoff_time
         )
         
         if server_id:
@@ -48,28 +46,23 @@ def ipxe_analytics_overview(request):
         
         # 1. 總體統計
         total_logs = logs_query.count()
-        # MAC 管理請求：根據訊息內容判斷（包含 MAC 地址相關操作）
-        mac_logs_count = logs_query.filter(message__icontains='MAC').count()
-        # BOOT 請求：PXE、iPXE、WinPE 類型的日誌
-        boot_logs_count = logs_query.count()  # 所有 iPXE 相關日誌都視為 BOOT 請求
+        # MAC 管理請求：log_type='MAC'
+        mac_logs_count = logs_query.filter(log_type='MAC').count()
+        # BOOT 請求：log_type='BOOT'
+        boot_logs_count = logs_query.filter(log_type='BOOT').count()
         
-        # 2. MAC 操作統計（從訊息中分析）
-        mac_set_count = logs_query.filter(message__icontains='MAC').filter(
-            Q(message__icontains='set') | Q(message__icontains='add') | Q(message__icontains='register')
-        ).count()
-        mac_get_count = logs_query.filter(message__icontains='MAC').filter(
-            Q(message__icontains='get') | Q(message__icontains='query') | Q(message__icontains='request')
-        ).count()
+        # 2. MAC 操作統計
+        mac_set_count = logs_query.filter(log_type='MAC', action='set_mac').count()
+        mac_get_count = logs_query.filter(log_type='MAC', action='get_mac').count()
         
-        # 3. IPXE 啟動檔案統計（從訊息中提取 BOOT 文件資訊）
-        # 統計不同 client_type 的分佈
-        boot_files_data = logs_query.values('client_type').annotate(
+        # 3. BOOT 啟動檔案統計
+        boot_files_data = logs_query.filter(log_type='BOOT').values('action').annotate(
             count=Count('id')
-        ).order_by('-count')
+        ).order_by('-count')[:10]
         
         # 轉換為前端期望的格式
         boot_logs = [
-            {'file_requested': item['client_type'], 'count': item['count']} 
+            {'file_requested': item['action'], 'count': item['count']} 
             for item in boot_files_data
         ]
         
@@ -81,9 +74,9 @@ def ipxe_analytics_overview(request):
             
             day_logs = logs_query.filter(timestamp__gte=day_start, timestamp__lt=day_end)
             # MAC 相關日誌
-            mac_count = day_logs.filter(message__icontains='MAC').count()
-            # BOOT 相關日誌（所有 iPXE 相關日誌）
-            boot_count = day_logs.count()
+            mac_count = day_logs.filter(log_type='MAC').count()
+            # BOOT 相關日誌
+            boot_count = day_logs.filter(log_type='BOOT').count()
             
             daily_stats.append({
                 'date': day_start.date().isoformat(),
@@ -107,45 +100,55 @@ def ipxe_analytics_overview(request):
             hourly_stats.append({
                 'hour': hour_start.strftime('%Y-%m-%d %H:00'),
                 'total_logs': hour_logs.count(),
-                'mac_logs': hour_logs.filter(message__icontains='MAC').count(),
-                'boot_logs': hour_logs.count(),
+                'mac_logs': hour_logs.filter(log_type='MAC').count(),
+                'boot_logs': hour_logs.filter(log_type='BOOT').count(),
             })
         
         hourly_stats.reverse()  # 從早到晚排序
         
-        # 6. 伺服器統計（使用 DHCP Server，因為資料在 DHCPLog 表）
+        # 6. 伺服器統計（使用 IPXEServer）
         server_stats = []
-        # 獲取唯一的伺服器 ID（使用 set 去重，因為 PostgreSQL 的 DISTINCT 在有 ORDER BY 時會失效）
+        # 獲取唯一的伺服器 ID
         unique_server_ids = set(logs_query.values_list('server__id', flat=True))
         
         for sid in unique_server_ids:
+            if sid is None:
+                continue
+                
             server_logs = logs_query.filter(server_id=sid)
             
             # 獲取伺服器資訊
             try:
-                server = DHCPServer.objects.get(id=sid)
+                server = IPXEServer.objects.get(id=sid)
                 server_name = server.name
                 server_ip = server.ip_address
-            except DHCPServer.DoesNotExist:
+                last_sync = server.last_sync_at.isoformat() if server.last_sync_at else None
+            except IPXEServer.DoesNotExist:
                 server_name = f'Server {sid}'
                 server_ip = 'N/A'
+                last_sync = None
             
             server_stats.append({
                 'server_id': sid,
                 'server_name': server_name,
                 'server_ip': server_ip,
                 'total_logs': server_logs.count(),
-                'mac_logs': server_logs.filter(message__icontains='MAC').count(),
-                'boot_logs': server_logs.count(),
-                'last_sync': None,  # DHCPLog 沒有 last_sync_at 欄位
+                'mac_logs': server_logs.filter(log_type='MAC').count(),
+                'boot_logs': server_logs.filter(log_type='BOOT').count(),
+                'last_sync': last_sync,
             })
         
-        # 7. Top 10 活躍 MAC 地址（從 message 中提取）
-        # 由於 DHCPLog 的 MAC 地址在 message 中，暫時返回空陣列
-        # 未來可以考慮添加專門的 MAC 欄位或使用正則表達式提取
-        top_mac_addresses = []
+        # 7. Top 10 活躍 MAC 地址（從 mac_address 欄位讀取）
+        top_mac_data = logs_query.filter(mac_address__isnull=False).exclude(mac_address='').values('mac_address').annotate(
+            count=Count('id')
+        ).order_by('-count')[:10]
         
-        logger.info(f'成功獲取 IPXE 分析資料: days={days}, total_logs={total_logs}, iPXE={logs_query.filter(client_type="iPXE").count()}, PXE={logs_query.filter(client_type="PXE").count()}, WinPE={logs_query.filter(client_type="WinPE").count()}')
+        top_mac_addresses = [
+            {'mac': item['mac_address'], 'count': item['count']}
+            for item in top_mac_data
+        ]
+        
+        logger.info(f'成功獲取 iPXE 分析資料: days={days}, total_logs={total_logs}, MAC={mac_logs_count}, BOOT={boot_logs_count}')
         
         return Response({
             'summary': {

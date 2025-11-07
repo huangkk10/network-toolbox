@@ -7,7 +7,7 @@ Django Signals - 自動化任務觸發器
 import logging
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from .models import DHCPServer, DHCPLease
+from .models import DHCPServer, DHCPLease, IPXEServer
 
 logger = logging.getLogger(__name__)
 
@@ -207,4 +207,151 @@ def trigger_switch_identification_for_server(server_id, delay_seconds=5):
         
     except Exception as e:
         logger.error(f'[Manual] 手動觸發 Switch 識別失敗: {e}', exc_info=True)
+        return None
+
+
+# ============================================================================
+# iPXE Server 自動化 Signals
+# ============================================================================
+
+@receiver(post_save, sender=IPXEServer)
+def ipxe_server_post_save(sender, instance, created, **kwargs):
+    """
+    iPXE Server 創建或更新後的自動化處理
+    
+    功能：
+    1. 新建伺服器時：
+       - 步驟 1：驗證 SSH 連接（2 秒後）
+       - 步驟 2：執行首次日誌收集（30 秒後，僅當 SSH 驗證成功）
+    2. 確保新伺服器立即開始工作
+    
+    Args:
+        sender: IPXEServer 模型類別
+        instance: IPXEServer 實例
+        created: 是否為新建（True）或更新（False）
+        **kwargs: 額外參數
+    """
+    try:
+        if created:
+            # 新建伺服器 - 執行 SSH 驗證和首次日誌收集
+            logger.info(f'[Signal] 偵測到新建 iPXE Server: {instance.name} ({instance.ip_address})')
+            
+            # 步驟 1：快速驗證 SSH 連接（2 秒後執行）
+            from .tasks import verify_ipxe_server_ssh_task
+            
+            logger.info(f'[Signal] 排程 SSH 連接驗證任務 - Server ID: {instance.id}')
+            verify_task = verify_ipxe_server_ssh_task.apply_async(
+                args=[instance.id],
+                countdown=2,  # 2 秒後快速驗證
+            )
+            
+            logger.info(f'[Signal] SSH 驗證任務已排程 - Task ID: {verify_task.id}')
+            
+            # 步驟 2：延遲執行首次日誌收集（30 秒後）
+            # 僅當 connection_status 為 'connected' 時才會實際收集
+            from .tasks import sync_ipxe_logs_task
+            
+            logger.info(f'[Signal] 排程首次日誌收集任務 - Server ID: {instance.id}')
+            sync_ipxe_logs_task.apply_async(
+                args=[instance.id],
+                kwargs={'limit': 1000},
+                countdown=30,  # 30 秒後執行（給 SSH 驗證足夠時間）
+                retry=True,
+                retry_policy={
+                    'max_retries': 3,
+                    'interval_start': 60,  # 首次重試等待 60 秒
+                    'interval_step': 60,   # 每次增加 60 秒
+                }
+            )
+            
+            logger.info(f'[Signal] SSH 驗證和日誌收集任務已排程 - Server: {instance.name}')
+        
+        else:
+            # 更新伺服器 - 檢查狀態變化
+            # 如果從 offline 變為 online，執行一次日誌收集
+            if instance.status == 'online':
+                from .models import IPXELog
+                
+                log_count = IPXELog.objects.filter(server=instance).count()
+                
+                if log_count == 0:
+                    logger.info(
+                        f'[Signal] Server {instance.name} 已上線但無日誌數據，'
+                        f'排程自動收集'
+                    )
+                    
+                    from .tasks import sync_ipxe_logs_task
+                    
+                    sync_ipxe_logs_task.apply_async(
+                        args=[instance.id],
+                        kwargs={'limit': 1000},
+                        countdown=5,  # 5 秒後執行
+                    )
+    
+    except Exception as e:
+        logger.error(f'[Signal] iPXE Server post_save 處理失敗: {str(e)}', exc_info=True)
+
+
+@receiver(post_delete, sender=IPXEServer)
+def ipxe_server_post_delete(sender, instance, **kwargs):
+    """
+    iPXE Server 刪除後的清理工作
+    
+    注意：相關的 IPXELog 會因為 CASCADE 自動刪除
+    這裡只記錄日誌
+    
+    Args:
+        sender: IPXEServer 模型類別
+        instance: 已刪除的 IPXEServer 實例
+        **kwargs: 額外參數
+    """
+    try:
+        logger.info(f'[Signal] iPXE Server 已刪除: {instance.name} ({instance.ip_address})')
+        
+        # 可以在這裡添加額外的清理邏輯
+        # 例如：通知管理員、備份數據等
+        
+    except Exception as e:
+        logger.error(f'[Signal] iPXE Server post_delete 處理失敗: {str(e)}', exc_info=True)
+
+
+def trigger_ipxe_logs_sync_for_server(server_id, delay_seconds=5, limit=1000):
+    """
+    手動觸發特定 iPXE Server 的日誌收集任務
+    
+    可用於：
+    1. 手動補充收集日誌
+    2. 故障排查和測試
+    3. 立即同步特定伺服器
+    
+    Args:
+        server_id: iPXE Server ID
+        delay_seconds: 延遲執行秒數（預設 5 秒）
+        limit: 每個容器收集的日誌數量（預設 1000）
+        
+    Returns:
+        str: Celery Task ID，如果失敗則返回 None
+        
+    Example:
+        >>> from api.signals import trigger_ipxe_logs_sync_for_server
+        >>> task_id = trigger_ipxe_logs_sync_for_server(server_id=4, delay_seconds=0, limit=2000)
+        >>> print(f"Task ID: {task_id}")
+    """
+    try:
+        from .tasks import sync_ipxe_logs_task
+        
+        result = sync_ipxe_logs_task.apply_async(
+            args=[server_id],
+            kwargs={'limit': limit},
+            countdown=delay_seconds
+        )
+        
+        logger.info(
+            f'[Manual] 已手動觸發 iPXE 日誌收集任務 '
+            f'(Server ID: {server_id}, Task ID: {result.id}, Delay: {delay_seconds}s, Limit: {limit})'
+        )
+        return result.id
+        
+    except Exception as e:
+        logger.error(f'[Manual] 手動觸發 iPXE 日誌收集失敗: {e}', exc_info=True)
         return None

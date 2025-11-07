@@ -1948,3 +1948,687 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                 'duration': duration,
                 'error_message': str(exc),
             }
+
+
+# ============================================================================
+# iPXE 日誌同步任務
+# ============================================================================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.verify_ipxe_ssh_connection_task',
+    max_retries=1,
+    time_limit=30  # SSH 連接驗證最多 30 秒
+)
+def verify_ipxe_ssh_connection_task(self, server_id):
+    """
+    驗證 iPXE Server 的 SSH 連接
+    
+    此任務在 iPXE Server 創建後立即執行（通常在 2 秒後）
+    用於快速檢測 SSH 連接問題，並更新伺服器狀態
+    
+    成功：更新 status = 'online', last_error = None
+    失敗：更新 status = 'error', last_error = 錯誤訊息
+    
+    Args:
+        server_id: IPXEServer ID
+        
+    Returns:
+        dict: {
+            'server_id': int,
+            'server_ip': str,
+            'success': bool,
+            'error_message': str or None
+        }
+    """
+    from api.models import IPXEServer
+    
+    try:
+        logger.info(f'[Celery] 開始驗證 iPXE Server SSH 連接 - Server ID: {server_id}')
+        
+        # 獲取伺服器
+        try:
+            server = IPXEServer.objects.get(id=server_id)
+        except IPXEServer.DoesNotExist:
+            error_msg = f'iPXE Server ID {server_id} 不存在'
+            logger.error(f'[Celery] {error_msg}')
+            return {
+                'server_id': server_id,
+                'server_ip': None,
+                'success': False,
+                'error_message': error_msg
+            }
+        
+        # 檢查是否有 SSH 密碼
+        if not server.ssh_password:
+            error_msg = '缺少 SSH 密碼'
+            logger.warning(f'[Celery] iPXE Server {server.ip_address} - {error_msg}')
+            
+            # 更新伺服器狀態
+            server.status = 'error'
+            server.last_error = error_msg
+            server.save(update_fields=['status', 'last_error'])
+            
+            return {
+                'server_id': server_id,
+                'server_ip': server.ip_address,
+                'success': False,
+                'error_message': error_msg
+            }
+        
+        # 嘗試 SSH 連接
+        from library.services.ssh_service import SSHService
+        
+        ssh = SSHService(
+            host=server.ip_address,
+            username=server.ssh_username or 'root',
+            password=server.ssh_password,
+            port=server.ssh_port or 22
+        )
+        
+        if ssh.connect():
+            # 連接成功
+            ssh.close()
+            
+            # 更新伺服器狀態
+            server.status = 'online'
+            server.last_error = None
+            server.save(update_fields=['status', 'last_error'])
+            
+            logger.info(f'[Celery] ✅ iPXE Server {server.ip_address} SSH 連接驗證成功')
+            
+            return {
+                'server_id': server_id,
+                'server_ip': server.ip_address,
+                'success': True,
+                'error_message': None
+            }
+        else:
+            # 連接失敗
+            error_msg = 'SSH 連接失敗（無法建立連接）'
+            
+            # 更新伺服器狀態
+            server.status = 'error'
+            server.last_error = error_msg
+            server.save(update_fields=['status', 'last_error'])
+            
+            logger.error(f'[Celery] ❌ iPXE Server {server.ip_address} SSH 連接失敗')
+            
+            return {
+                'server_id': server_id,
+                'server_ip': server.ip_address,
+                'success': False,
+                'error_message': error_msg
+            }
+        
+    except Exception as exc:
+        error_msg = f'SSH 驗證異常: {str(exc)}'
+        logger.error(f'[Celery] iPXE Server {server_id} SSH 驗證失敗', exc_info=True)
+        
+        # 更新伺服器狀態
+        try:
+            server = IPXEServer.objects.get(id=server_id)
+            server.status = 'error'
+            server.last_error = error_msg
+            server.save(update_fields=['status', 'last_error'])
+        except:
+            pass
+        
+        return {
+            'server_id': server_id,
+            'server_ip': None,
+            'success': False,
+            'error_message': error_msg
+        }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.verify_ipxe_server_ssh_task',
+    max_retries=2,
+    default_retry_delay=30,
+    time_limit=60,
+    soft_time_limit=50
+)
+def verify_ipxe_server_ssh_task(self, server_id):
+    """
+    驗證 iPXE Server 的 SSH 連接
+    
+    在創建新的 iPXE Server 後自動執行，確保：
+    1. SSH 連接可用
+    2. Docker 容器正在運行
+    3. 日誌文件可訪問
+    
+    Args:
+        server_id: IPXEServer ID
+        
+    Returns:
+        dict: {
+            'server_id': int,
+            'server_ip': str,
+            'connection_status': str,  # 'success' 或 'failed'
+            'containers_found': int,
+            'error_message': str or None
+        }
+    """
+    from api.models import IPXEServer
+    from api.ipxe_service import IPXEService
+    
+    try:
+        logger.info(f'[Celery] 開始驗證 iPXE Server SSH 連接 - Server ID: {server_id}')
+        
+        # 獲取伺服器
+        try:
+            server = IPXEServer.objects.get(id=server_id)
+        except IPXEServer.DoesNotExist:
+            error_msg = f'iPXE Server ID {server_id} 不存在'
+            logger.error(f'[Celery] {error_msg}')
+            return {
+                'server_id': server_id,
+                'server_ip': None,
+                'connection_status': 'failed',
+                'containers_found': 0,
+                'error_message': error_msg
+            }
+        
+        # 更新狀態為驗證中
+        server.connection_status = 'verifying'
+        server.save(update_fields=['connection_status'])
+        
+        # 創建服務實例並測試連接
+        service = IPXEService(server)
+        
+        # 1. 測試 SSH 連接
+        if not service.test_connection():
+            error_msg = f'SSH 連接失敗: {server.ip_address}'
+            logger.error(f'[Celery] {error_msg}')
+            
+            server.connection_status = 'failed'
+            server.status = 'error'
+            server.last_error = error_msg
+            server.save(update_fields=['connection_status', 'status', 'last_error'])
+            
+            return {
+                'server_id': server_id,
+                'server_ip': server.ip_address,
+                'connection_status': 'failed',
+                'containers_found': 0,
+                'error_message': error_msg
+            }
+        
+        # 2. 檢查 Docker 容器
+        containers = service.get_container_names()
+        if not containers:
+            error_msg = f'未找到 iPXE Docker 容器'
+            logger.warning(f'[Celery] {error_msg} - Server: {server.name}')
+            
+            server.connection_status = 'no_containers'
+            server.status = 'warning'
+            server.last_error = error_msg
+            server.save(update_fields=['connection_status', 'status', 'last_error'])
+            
+            return {
+                'server_id': server_id,
+                'server_ip': server.ip_address,
+                'connection_status': 'no_containers',
+                'containers_found': 0,
+                'error_message': error_msg
+            }
+        
+        # 3. 驗證成功
+        server.connection_status = 'connected'
+        server.status = 'active'
+        server.last_error = None
+        server.save(update_fields=['connection_status', 'status', 'last_error'])
+        
+        logger.info(
+            f'[Celery] iPXE Server SSH 驗證成功 - Server: {server.name} ({server.ip_address}) | '
+            f'找到 {len(containers)} 個容器'
+        )
+        
+        return {
+            'server_id': server_id,
+            'server_ip': server.ip_address,
+            'connection_status': 'connected',
+            'containers_found': len(containers),
+            'error_message': None
+        }
+        
+    except Exception as exc:
+        logger.error(f'[Celery] 驗證 iPXE Server SSH 連接失敗 - Server ID: {server_id}', exc_info=True)
+        
+        # 更新伺服器狀態
+        try:
+            server = IPXEServer.objects.get(id=server_id)
+            server.connection_status = 'error'
+            server.status = 'error'
+            server.last_error = str(exc)
+            server.save(update_fields=['connection_status', 'status', 'last_error'])
+        except:
+            pass
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=30)
+        except self.MaxRetriesExceededError:
+            logger.error(f'[Celery] iPXE Server SSH 驗證達到最大重試次數 - Server ID: {server_id}')
+            return {
+                'server_id': server_id,
+                'server_ip': None,
+                'connection_status': 'error',
+                'containers_found': 0,
+                'error_message': f'驗證失敗，已達最大重試次數: {str(exc)}'
+            }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_ipxe_logs_task',
+    max_retries=3,
+    default_retry_delay=60,  # 失敗後 60 秒重試
+    time_limit=240,  # 硬限制 4 分鐘
+    soft_time_limit=210  # 軟限制 3.5 分鐘
+)
+def sync_ipxe_logs_task(self, server_id, limit=1000):
+    """
+    同步 iPXE 日誌到資料庫
+    
+    Args:
+        server_id: IPXEServer ID
+        limit: 每個容器收集的日誌數量（預設: 1000）
+        
+    Returns:
+        dict: {
+            'server_id': int,
+            'server_name': str,
+            'mac_logs': int,    # MAC 管理日誌數
+            'boot_logs': int,   # 開機日誌數
+            'total': int,       # 總日誌數
+            'errors': int       # 錯誤數
+        }
+    """
+    from api.models import IPXEServer
+    from api.ipxe_service import IPXEService
+    
+    try:
+        logger.info(f'[Celery] 開始同步 iPXE 日誌 - Server ID: {server_id}, Limit: {limit}')
+        
+        # 獲取伺服器
+        try:
+            server = IPXEServer.objects.get(id=server_id)
+        except IPXEServer.DoesNotExist:
+            error_msg = f'iPXE Server ID {server_id} 不存在'
+            logger.error(f'[Celery] {error_msg}')
+            return {
+                'server_id': server_id,
+                'server_name': None,
+                'mac_logs': 0,
+                'boot_logs': 0,
+                'total': 0,
+                'errors': 1,
+                'error_message': error_msg
+            }
+        
+        # 檢查連接狀態（僅在已連接時執行同步）
+        if hasattr(server, 'connection_status') and server.connection_status not in ['connected', None]:
+            if server.connection_status == 'verifying':
+                logger.info(f'[Celery] Server {server.name} SSH 驗證中，稍後重試')
+                # 60 秒後重試
+                raise self.retry(countdown=60)
+            elif server.connection_status in ['failed', 'error', 'no_containers']:
+                error_msg = f'Server {server.name} 連接狀態異常: {server.connection_status}'
+                logger.warning(f'[Celery] {error_msg}，跳過日誌同步')
+                return {
+                    'server_id': server_id,
+                    'server_name': server.name,
+                    'mac_logs': 0,
+                    'boot_logs': 0,
+                    'total': 0,
+                    'errors': 0,
+                    'skipped': True,
+                    'error_message': error_msg
+                }
+        
+        # 創建服務實例並執行同步
+        service = IPXEService(server)
+        result = service.sync_logs_to_db(limit=limit)
+        
+        # 檢查是否有錯誤
+        if 'error' in result:
+            logger.error(f'[Celery] iPXE 日誌同步失敗 - Server: {server.name} | 錯誤: {result["error"]}')
+            return {
+                'server_id': server_id,
+                'server_name': server.name,
+                'mac_logs': 0,
+                'boot_logs': 0,
+                'total': 0,
+                'errors': 1,
+                'error_message': result['error']
+            }
+        
+        # 添加伺服器資訊
+        result['server_id'] = server_id
+        result['server_name'] = server.name
+        result['errors'] = 0
+        
+        # 記錄結果
+        logger.info(
+            f'[Celery] iPXE 日誌同步完成 - Server: {server.name} | '
+            f'MAC 日誌: {result["mac_logs"]} 條 | '
+            f'BOOT 日誌: {result["boot_logs"]} 條 | '
+            f'總計: {result["total"]} 條'
+        )
+        
+        return result
+        
+    except Exception as exc:
+        logger.error(f'[Celery] 同步 iPXE 日誌失敗 - Server ID: {server_id}', exc_info=True)
+        
+        # 自動重試（最多 3 次）
+        try:
+            raise self.retry(exc=exc, countdown=60)
+        except self.MaxRetriesExceededError:
+            logger.error(f'[Celery] 同步重試次數已達上限 - Server ID: {server_id}')
+            return {
+                'server_id': server_id,
+                'server_name': None,
+                'mac_logs': 0,
+                'boot_logs': 0,
+                'total': 0,
+                'errors': 1,
+                'error_message': str(exc)
+            }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_all_ipxe_logs_task',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def sync_all_ipxe_logs_task(self, limit=1000):
+    """
+    批次同步所有 iPXE Server 的日誌（定時任務）
+    
+    適用場景：
+    - 定時自動同步所有伺服器的日誌
+    - 確保所有伺服器都有最新的日誌數據
+    
+    Args:
+        limit: 每個伺服器每個容器最多同步的日誌數量
+        
+    Returns:
+        dict: {
+            'total_servers': int,    # 處理的伺服器總數
+            'success_count': int,    # 成功的伺服器數
+            'failed_count': int,     # 失敗的伺服器數
+            'total_logs_created': int,  # 總共新增的日誌數
+            'results': [...]         # 每個伺服器的詳細結果
+        }
+    """
+    from api.models import IPXEServer
+    from api.ipxe_service import IPXEService
+    
+    try:
+        logger.info(f'[Celery] 開始批次同步所有 iPXE Server 的日誌 (limit={limit})')
+        
+        # 獲取所有在線的 iPXE 伺服器
+        servers = IPXEServer.objects.filter(status='online')
+        total_servers = servers.count()
+        
+        logger.info(f'[Celery] 找到 {total_servers} 個在線的 iPXE Server')
+        
+        results = []
+        success_count = 0
+        failed_count = 0
+        total_logs_created = 0
+        
+        for server in servers:
+            try:
+                logger.info(f'[Celery] 正在同步 Server 日誌: {server.name} ({server.ip_address})')
+                
+                # 創建日誌服務並同步
+                service = IPXEService(server)
+                result = service.sync_logs_to_db(limit=limit)
+                
+                # 檢查是否有錯誤
+                if 'error' in result:
+                    logger.error(f'[Celery] Server {server.name} 日誌同步失敗 - {result["error"]}')
+                    result['server_id'] = server.id
+                    result['server_name'] = server.name
+                    result['server_ip'] = server.ip_address
+                    results.append(result)
+                    failed_count += 1
+                    continue
+                
+                # 添加伺服器資訊
+                result['server_id'] = server.id
+                result['server_name'] = server.name
+                result['server_ip'] = server.ip_address
+                
+                results.append(result)
+                success_count += 1
+                total_logs_created += result.get('total', 0)
+                
+                logger.info(
+                    f'[Celery] Server {server.name} 日誌同步成功 - '
+                    f'MAC: {result.get("mac_logs", 0)} 條 | '
+                    f'BOOT: {result.get("boot_logs", 0)} 條 | '
+                    f'總計: {result.get("total", 0)} 條'
+                )
+                
+            except Exception as e:
+                logger.error(f'[Celery] 同步 Server {server.name} 時發生錯誤: {e}', exc_info=True)
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'error': str(e)
+                })
+                failed_count += 1
+        
+        # 彙總結果
+        summary = {
+            'total_servers': total_servers,
+            'success_count': success_count,
+            'failed_count': failed_count,
+            'total_logs_created': total_logs_created,
+            'results': results
+        }
+        
+        logger.info(
+            f'[Celery] 批次同步完成 - '
+            f'總計: {total_servers} 個 | '
+            f'成功: {success_count} 個 | '
+            f'失敗: {failed_count} 個 | '
+            f'新增日誌: {total_logs_created} 條'
+        )
+        
+        return summary
+        
+    except Exception as exc:
+        logger.error('[Celery] 批次同步 iPXE 日誌失敗', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 批次同步重試次數已達上限')
+            return {
+                'total_servers': 0,
+                'success_count': 0,
+                'failed_count': 0,
+                'total_logs_created': 0,
+                'results': [],
+                'error_message': str(exc)
+            }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.health_check_ipxe_servers_task',
+    max_retries=1,
+    default_retry_delay=300,
+    time_limit=600,  # 10 分鐘
+    soft_time_limit=540
+)
+def health_check_ipxe_servers_task(self):
+    """
+    健康檢查所有 iPXE Server 的連接狀態（定時任務）
+    
+    功能：
+    1. 檢查所有 iPXE Server 的 SSH 連接
+    2. 更新 connection_status 狀態
+    3. 發現異常時記錄錯誤訊息
+    
+    建議排程：每小時執行一次
+    
+    Returns:
+        dict: {
+            'total_servers': int,       # 檢查的伺服器總數
+            'healthy_count': int,       # 健康的伺服器數
+            'unhealthy_count': int,     # 異常的伺服器數
+            'results': [...]            # 每個伺服器的檢查結果
+        }
+    """
+    from api.models import IPXEServer
+    from api.ipxe_service import IPXEService
+    
+    try:
+        logger.info('[Celery] 開始執行 iPXE Server 健康檢查')
+        
+        # 獲取所有 iPXE Server（包括離線的）
+        servers = IPXEServer.objects.all()
+        total_servers = servers.count()
+        
+        logger.info(f'[Celery] 找到 {total_servers} 個 iPXE Server 需要檢查')
+        
+        results = []
+        healthy_count = 0
+        unhealthy_count = 0
+        
+        for server in servers:
+            try:
+                logger.info(f'[Celery] 檢查 Server: {server.name} ({server.ip_address})')
+                
+                # 創建服務實例並測試連接
+                service = IPXEService(server)
+                
+                # 測試 SSH 連接
+                if not service.test_connection():
+                    # 連接失敗
+                    server.connection_status = 'failed'
+                    server.status = 'offline'
+                    server.last_error = 'SSH 連接失敗（健康檢查）'
+                    server.save(update_fields=['connection_status', 'status', 'last_error'])
+                    
+                    unhealthy_count += 1
+                    results.append({
+                        'server_id': server.id,
+                        'server_name': server.name,
+                        'server_ip': server.ip_address,
+                        'status': 'unhealthy',
+                        'connection_status': 'failed',
+                        'error': 'SSH 連接失敗'
+                    })
+                    
+                    logger.warning(f'[Celery] Server {server.name} SSH 連接失敗')
+                    continue
+                
+                # 檢查 Docker 容器
+                containers = service.get_container_names()
+                
+                if not containers:
+                    # 無容器
+                    server.connection_status = 'no_containers'
+                    server.status = 'warning'
+                    server.last_error = '未找到 iPXE Docker 容器（健康檢查）'
+                    server.save(update_fields=['connection_status', 'status', 'last_error'])
+                    
+                    unhealthy_count += 1
+                    results.append({
+                        'server_id': server.id,
+                        'server_name': server.name,
+                        'server_ip': server.ip_address,
+                        'status': 'unhealthy',
+                        'connection_status': 'no_containers',
+                        'error': '未找到容器'
+                    })
+                    
+                    logger.warning(f'[Celery] Server {server.name} 未找到 iPXE 容器')
+                    continue
+                
+                # 連接正常
+                server.connection_status = 'connected'
+                server.status = 'online'
+                server.last_error = None
+                server.save(update_fields=['connection_status', 'status', 'last_error'])
+                
+                healthy_count += 1
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'status': 'healthy',
+                    'connection_status': 'connected',
+                    'containers_found': len(containers)
+                })
+                
+                logger.info(f'[Celery] Server {server.name} 健康狀態正常（找到 {len(containers)} 個容器）')
+                
+            except Exception as e:
+                logger.error(f'[Celery] 檢查 Server {server.name} 時發生錯誤: {e}', exc_info=True)
+                
+                # 更新為錯誤狀態
+                try:
+                    server.connection_status = 'error'
+                    server.status = 'error'
+                    server.last_error = f'健康檢查錯誤: {str(e)}'
+                    server.save(update_fields=['connection_status', 'status', 'last_error'])
+                except:
+                    pass
+                
+                unhealthy_count += 1
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'status': 'error',
+                    'connection_status': 'error',
+                    'error': str(e)
+                })
+        
+        # 彙總結果
+        summary = {
+            'total_servers': total_servers,
+            'healthy_count': healthy_count,
+            'unhealthy_count': unhealthy_count,
+            'results': results
+        }
+        
+        logger.info(
+            f'[Celery] 健康檢查完成 - '
+            f'總計: {total_servers} 個 | '
+            f'健康: {healthy_count} 個 | '
+            f'異常: {unhealthy_count} 個'
+        )
+        
+        return summary
+        
+    except Exception as exc:
+        logger.error('[Celery] iPXE Server 健康檢查失敗', exc_info=True)
+        
+        # 自動重試（最多 1 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 健康檢查重試次數已達上限')
+            return {
+                'total_servers': 0,
+                'healthy_count': 0,
+                'unhealthy_count': 0,
+                'results': [],
+                'error_message': str(exc)
+            }
