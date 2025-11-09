@@ -6,6 +6,7 @@ import re
 import logging
 from datetime import datetime, timedelta
 from django.utils import timezone
+from dateutil import parser as date_parser
 
 logger = logging.getLogger(__name__)
 
@@ -924,7 +925,33 @@ class DHCPLogService:
                 
                 for log_data in logs:
                     try:
-                        timestamp = datetime.strptime(log_data['timestamp'], '%Y-%m-%d %H:%M:%S')
+                        # ✅ 解析 ISO 8601 格式的時間戳（包含時區資訊）
+                        # 格式：2025-11-10T03:25:33+08:00
+                        timestamp_str = log_data['timestamp']
+                        
+                        # 嘗試解析 ISO 8601 格式（timezone-aware）
+                        try:
+                            timestamp = date_parser.isoparse(timestamp_str)
+                            # 轉換為 Django 的 TIME_ZONE 設定的時區
+                            # 這樣可以確保時區對象一致
+                            if timestamp.tzinfo is not None:
+                                # 轉換為 UTC，然後讓 Django 處理時區
+                                import pytz
+                                utc_tz = pytz.UTC
+                                timestamp = timestamp.astimezone(utc_tz)
+                        except (ValueError, ImportError, AttributeError):
+                            # 如果是舊格式（YYYY-MM-DD HH:MM:SS），手動加上時區
+                            try:
+                                timestamp_naive = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                                # 假設是 Taipei 時區
+                                import pytz
+                                taipei_tz = pytz.timezone('Asia/Taipei')
+                                timestamp = taipei_tz.localize(timestamp_naive)
+                                # 轉換為 UTC 存儲
+                                timestamp = timestamp.astimezone(pytz.UTC)
+                            except ValueError:
+                                logger.warning(f'無法解析時間戳: {timestamp_str}')
+                                continue
                         
                         exists = DHCPLog.objects.filter(
                             server=self.server,
@@ -938,7 +965,7 @@ class DHCPLogService:
                         
                         DHCPLog.objects.create(
                             server=self.server,
-                            timestamp=timestamp,
+                            timestamp=timestamp,  # timezone-aware datetime (UTC)
                             level=log_data['level'],
                             event=log_data.get('event', ''),
                             message=log_data['message'],
@@ -1016,9 +1043,12 @@ class DHCPLogService:
             
             logs = []
             for log in logs_qs:
+                # ✅ 將 UTC 時間轉換為當前時區（Asia/Taipei）
+                local_timestamp = timezone.localtime(log.timestamp)
+                
                 logs.append({
                     'id': log.id,
-                    'timestamp': log.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+                    'timestamp': local_timestamp.strftime('%Y-%m-%d %H:%M:%S'),  # 使用本地時間
                     'level': log.level,
                     'event': log.event,
                     'message': log.message,

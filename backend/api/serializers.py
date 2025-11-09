@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.utils import timezone as django_timezone
 from .models import (
     DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, 
     IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality,
@@ -66,6 +67,18 @@ class DHCPLogSerializer(serializers.ModelSerializer):
     
     # 添加客戶端類型的顯示名稱
     client_type_display = serializers.CharField(source='get_client_type_display', read_only=True)
+    
+    # ✅ 自訂序列化方法，將 UTC 轉換為 Taipei 時區
+    timestamp = serializers.SerializerMethodField()
+    
+    def get_timestamp(self, obj):
+        """將 UTC 時間轉換為當前時區（Asia/Taipei）"""
+        if obj.timestamp:
+            # 轉換為當前時區
+            local_time = django_timezone.localtime(obj.timestamp)
+            # 格式化輸出
+            return local_time.strftime('%Y-%m-%d %H:%M:%S')
+        return None
     
     class Meta:
         model = DHCPLog

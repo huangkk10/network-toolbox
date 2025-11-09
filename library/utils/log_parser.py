@@ -14,6 +14,7 @@ import re
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -223,9 +224,15 @@ class WindowsDHCPLogParser:
             event_type = cls.EVENT_TYPES.get(event_id, f'Unknown({event_id})')
             
             # 解析並格式化時間戳（轉換為標準格式）
+            # ⚠️ 重要：Windows DHCP 日誌的時間已經是本地時區（Taipei, UTC+8）
+            # 需要明確標記時區，避免 Django 將其視為 UTC
             try:
-                dt = datetime.strptime(f'{date_str} {time_str}', '%m/%d/%y %H:%M:%S')
-                timestamp_str = dt.strftime('%Y-%m-%d %H:%M:%S')
+                dt_naive = datetime.strptime(f'{date_str} {time_str}', '%m/%d/%y %H:%M:%S')
+                # 明確指定為 Asia/Taipei 時區
+                taipei_tz = pytz.timezone('Asia/Taipei')
+                dt = taipei_tz.localize(dt_naive)
+                # 返回 timezone-aware datetime 物件
+                timestamp_str = dt.isoformat()  # ISO 8601 格式，包含時區資訊
             except ValueError:
                 # 如果解析失敗，保留原始格式
                 timestamp_str = f'{date_str} {time_str}'
@@ -234,7 +241,7 @@ class WindowsDHCPLogParser:
             log_entry = {
                 'event_id': event_id,
                 'event_type': event_type,
-                'timestamp': timestamp_str,
+                'timestamp': timestamp_str,  # ISO 8601 格式，包含時區：2025-11-10T03:25:33+08:00
                 'raw': line,
             }
             

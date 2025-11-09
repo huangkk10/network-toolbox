@@ -188,6 +188,9 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    # ✅ 時區設定：使用 Django 的 TIME_ZONE 設定
+    'DATETIME_FORMAT': '%Y-%m-%d %H:%M:%S',  # 輸出格式
+    'DATETIME_INPUT_FORMATS': ['iso-8601'],   # 輸入格式
 }
 
 # CORS settings
