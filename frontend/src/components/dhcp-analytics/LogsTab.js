@@ -138,13 +138,15 @@ const LogsTab = ({ serverId }) => {
             return;
         }
 
-        const csvHeader = 'Timestamp,Level,Event,Message\n';
+        const csvHeader = 'Timestamp,Level,Event,Message,Client Type,Raw Log\n';
         const csvRows = logs.map(log => {
             const timestamp = log.timestamp || '-';
             const level = log.level || '-';
             const event = log.event || '-';
+            const clientType = log.client_type || '-';
             const msg = (log.message || '').replace(/,/g, ';').replace(/"/g, '""');
-            return '"' + timestamp + '","' + level + '","' + event + '","' + msg + '"';
+            const raw = (log.raw || '').replace(/,/g, ';').replace(/"/g, '""').replace(/\n/g, ' ');
+            return '"' + timestamp + '","' + level + '","' + event + '","' + msg + '","' + clientType + '","' + raw + '"';
         }).join('\n');
 
         const csvContent = csvHeader + csvRows;
@@ -455,6 +457,30 @@ const LogsTab = ({ serverId }) => {
                                                             <strong>User Class:</strong> {log.user_class}
                                                         </div>
                                                     )}
+                                                </div>
+                                            )}
+                                            {log.raw && (
+                                                <div
+                                                    style={{
+                                                        fontSize: '11px',
+                                                        fontFamily: 'Monaco, Consolas, "Courier New", monospace',
+                                                        color: '#666',
+                                                        marginTop: '8px',
+                                                        padding: '6px 8px',
+                                                        background: '#f5f5f5',
+                                                        borderRadius: '4px',
+                                                        border: '1px solid #e8e8e8',
+                                                        cursor: 'text',
+                                                        whiteSpace: 'pre-wrap',
+                                                        wordBreak: 'break-all',
+                                                    }}
+                                                    title="雙擊複製原始日誌"
+                                                    onDoubleClick={() => {
+                                                        navigator.clipboard.writeText(log.raw);
+                                                        message.success('原始日誌已複製到剪貼簿');
+                                                    }}
+                                                >
+                                                    {log.raw}
                                                 </div>
                                             )}
                                         </div>
