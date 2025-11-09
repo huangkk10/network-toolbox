@@ -89,6 +89,18 @@ class DHCPLogSerializer(serializers.ModelSerializer):
 class NASConnectionLogSerializer(serializers.ModelSerializer):
     """NAS 連線記錄序列化器"""
     
+    # ✅ 自訂序列化方法，將 UTC 轉換為 Taipei 時區
+    timestamp = serializers.SerializerMethodField()
+    
+    def get_timestamp(self, obj):
+        """將 UTC 時間轉換為當前時區（Asia/Taipei）"""
+        if obj.timestamp:
+            # 轉換為當前時區
+            local_time = django_timezone.localtime(obj.timestamp)
+            # 格式化輸出
+            return local_time.strftime('%Y-%m-%d %H:%M:%S')
+        return None
+    
     class Meta:
         model = NASConnectionLog
         fields = '__all__'

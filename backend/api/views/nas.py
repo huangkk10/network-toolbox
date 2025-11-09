@@ -92,8 +92,11 @@ class NASConnectionLogViewSet(viewsets.ModelViewSet):
                 day_success = day_logs.filter(status='success').count()
                 day_failed = day_logs.filter(status='failed').count()
                 
+                # ✅ 轉換為當前時區（Asia/Taipei）再格式化
+                local_day_start = timezone.localtime(day_start)
+                
                 daily_stats.append({
-                    'date': day_start.strftime('%Y-%m-%d'),
+                    'date': local_day_start.strftime('%Y-%m-%d'),
                     'total': day_total,
                     'success': day_success,
                     'failed': day_failed,
@@ -110,8 +113,11 @@ class NASConnectionLogViewSet(viewsets.ModelViewSet):
                 hour_total = hour_logs.count()
                 hour_success = hour_logs.filter(status='success').count()
                 
+                # ✅ 轉換為當前時區（Asia/Taipei）再格式化
+                local_hour_start = timezone.localtime(hour_start)
+                
                 hourly_stats.append({
-                    'hour': hour_start.strftime('%Y-%m-%d %H:00'),
+                    'hour': local_hour_start.strftime('%Y-%m-%d %H:00'),
                     'total': hour_total,
                     'success': hour_success,
                     'failed': hour_total - hour_success,
@@ -154,11 +160,14 @@ class NASConnectionLogViewSet(viewsets.ModelViewSet):
                     download_speed__isnull=False
                 ).aggregate(Avg('download_speed'))['download_speed__avg']
                 
+                # ✅ 轉換為當前時區（Asia/Taipei）再格式化時間標籤
+                local_period_end = timezone.localtime(period_end)
+                
                 # 格式化時間標籤
                 if interval_minutes < 60:
-                    time_label = period_end.strftime('%m-%d %H:%M')
+                    time_label = local_period_end.strftime('%m-%d %H:%M')
                 else:
-                    time_label = period_end.strftime('%m-%d %H:00')
+                    time_label = local_period_end.strftime('%m-%d %H:00')
                 
                 speed_trends.append({
                     'time': time_label,
