@@ -141,6 +141,19 @@ app.conf.beat_schedule = {
             'queue': 'default',
         }
     },
+    
+    # 任務 12：Jenkins Builds 自動存儲到 NAS（每 30 分鐘）
+    'auto-store-jenkins-builds-every-30-minutes': {
+        'task': 'api.tasks.auto_store_jenkins_builds_task',
+        'schedule': crontab(minute='*/30'),  # 每 30 分鐘執行一次
+        'kwargs': {
+            'limit': 50        # 每次最多處理 50 個 Builds（已從 20 改為 50）
+        },
+        'options': {
+            'expires': 1500,   # 任務超時 25 分鐘（避免與下次重疊）
+            'queue': 'default',
+        }
+    },
 }
 
 

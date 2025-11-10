@@ -356,3 +356,28 @@ JENKINS_DB_QUERY_CACHE_TTL = 300  # 5 分鐘
 # Jenkins API 請求超時設置
 JENKINS_API_TIMEOUT = 30  # 30 秒
 JENKINS_API_RETRY_TIMES = 3  # 重試次數
+
+# Jenkins 自動存儲策略配置
+JENKINS_STORAGE_POLICY = {
+    # 基本開關
+    'auto_store': True,                      # 是否啟用自動存儲（默認：啟用）
+    
+    # 存儲內容選擇
+    'store_workspace': True,                 # 存儲 Workspace（默認：是）
+    'store_config': False,                   # 存儲 config.xml（默認：否，待實現）
+    'store_logs': False,                     # 存儲日誌（默認：否，待實現）
+    
+    # 存儲條件過濾
+    'store_results': ['SUCCESS', 'FAILURE', 'UNSTABLE'],  # 只存儲這些結果的 Builds
+                                                           # 選項：SUCCESS, FAILURE, UNSTABLE, ABORTED, NOT_BUILT
+                                                           # 設為 None 或空列表表示存儲所有結果
+    
+    # 容量限制
+    'max_workspace_size_mb': 500,            # 單個 Workspace 最大大小（MB），超過則跳過
+    'retention_days': 90,                    # 保留天數（超過則清理，0 表示永久保留）
+    
+    # 定時任務設置
+    'scan_interval_minutes': 30,             # 掃描間隔（分鐘）- 由 Celery Beat 控制
+    'batch_size': 50,                        # 每次掃描處理的最大 Builds 數量（已從 20 改為 50）
+}
+

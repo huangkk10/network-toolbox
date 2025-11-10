@@ -6,13 +6,15 @@ Celery 定時任務
 
 import logging
 import time
+from typing import Dict, Any
 from celery import shared_task
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import DHCPServer, DHCPLog, DHCPLease, DHCPScope
+from .models import DHCPServer, DHCPLog, DHCPLease, DHCPScope, JenkinsBuild, JenkinsServer
 from .services import DHCPLogService
+from library.services.jenkins_storage_service import JenkinsStorageService
 
 logger = logging.getLogger(__name__)
 
@@ -2632,3 +2634,329 @@ def health_check_ipxe_servers_task(self):
                 'results': [],
                 'error_message': str(exc)
             }
+
+
+# ==================== Jenkins Storage Tasks ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.store_jenkins_build_task',
+    max_retries=3,
+    default_retry_delay=120,  # 失敗後 2 分鐘重試
+    time_limit=600,  # 硬限制 10 分鐘
+    soft_time_limit=540  # 軟限制 9 分鐘
+)
+def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
+    """
+    存儲單個 Jenkins Build 到 NAS
+    
+    Args:
+        build_id: JenkinsBuild ID
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'build_id': int,
+            'job_name': str,
+            'build_number': int,
+            'workspace_path': str,
+            'workspace_size': int,
+            'stored_items': list,  # ['workspace', 'config', 'log']
+            'error': str (如果失敗)
+        }
+    """
+    try:
+        logger.info(f'[Celery] 開始存儲 Jenkins Build - Build ID: {build_id}')
+        
+        # 獲取 Build 記錄
+        try:
+            build = JenkinsBuild.objects.select_related('job', 'job__server').get(id=build_id)
+        except JenkinsBuild.DoesNotExist:
+            error_msg = f'Build 不存在: {build_id}'
+            logger.error(f'[Celery] {error_msg}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'error': error_msg
+            }
+        
+        # 檢查是否已存儲
+        if build.is_workspace_stored:
+            logger.info(f'[Celery] Build 已存儲，跳過 - {build.job.name} #{build.build_number}')
+            return {
+                'success': True,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'already_stored': True,
+                'workspace_path': build.workspace_path
+            }
+        
+        # 檢查 Build 狀態（只存儲已完成的 Builds）
+        if build.is_building:
+            logger.info(f'[Celery] Build 正在構建中，稍後再試 - {build.job.name} #{build.build_number}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'error': 'Build 仍在構建中'
+            }
+        
+        # 獲取伺服器 IP
+        server = build.job.server
+        server_ip = server.ip_address if server.ip_address else server.url.split('//')[1].split(':')[0]
+        
+        # 初始化存儲服務
+        storage_service = JenkinsStorageService(
+            jenkins_server_ip=server_ip,
+            job_name=build.job.name,
+            build_number=build.build_number
+        )
+        
+        # 檢查存儲路徑
+        path_check = storage_service.check_storage_path_accessible()
+        if not path_check.get('accessible') or not path_check.get('writable'):
+            error_msg = f'NAS 路徑不可訪問或不可寫: {path_check.get("error")}'
+            logger.error(f'[Celery] {error_msg}')
+            
+            # 如果是權限問題，不重試
+            return {
+                'success': False,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'error': error_msg
+            }
+        
+        # 構建 Workspace URL
+        workspace_url = f"{build.url}ws/"
+        
+        # 存儲 Workspace
+        logger.info(f'[Celery] 開始存儲 Workspace - {build.job.name} #{build.build_number}')
+        workspace_result = storage_service.store_workspace(
+            workspace_url=workspace_url,
+            username=server.username,
+            api_token=server.api_token
+        )
+        
+        stored_items = []
+        total_size = 0
+        
+        if workspace_result['success']:
+            logger.info(f'[Celery] Workspace 存儲成功 - 大小: {workspace_result["workspace_size"]} bytes')
+            stored_items.append('workspace')
+            total_size += workspace_result['workspace_size']
+            
+            # 更新 Build 記錄
+            build.workspace_path = workspace_result['workspace_path']
+            build.workspace_size = workspace_result['workspace_size']
+            build.workspace_stored_at = timezone.now()
+            build.is_workspace_stored = True
+            build.save(update_fields=[
+                'workspace_path', 'workspace_size', 
+                'workspace_stored_at', 'is_workspace_stored'
+            ])
+            
+            logger.info(f'[Celery] Build 存儲完成 - {build.job.name} #{build.build_number}')
+            
+            return {
+                'success': True,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'server_ip': server_ip,
+                'workspace_path': workspace_result['workspace_path'],
+                'workspace_size': workspace_result['workspace_size'],
+                'stored_items': stored_items,
+                'total_size': total_size
+            }
+        else:
+            error_msg = workspace_result.get('error', 'Unknown error')
+            logger.error(f'[Celery] Workspace 存儲失敗 - {error_msg}')
+            
+            # 根據錯誤類型決定是否重試
+            if '404' in error_msg or 'not found' in error_msg.lower():
+                # Workspace 不存在，不重試
+                return {
+                    'success': False,
+                    'build_id': build_id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'error': error_msg,
+                    'no_retry': True
+                }
+            else:
+                # 其他錯誤，可以重試
+                raise Exception(error_msg)
+        
+    except Exception as exc:
+        logger.error(f'[Celery] 存儲 Jenkins Build 失敗 - Build ID: {build_id}', exc_info=True)
+        
+        # 自動重試
+        try:
+            raise self.retry(exc=exc, countdown=120)
+        except self.MaxRetriesExceededError:
+            logger.error(f'[Celery] 存儲重試次數已達上限 - Build ID: {build_id}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'error': str(exc),
+                'max_retries_exceeded': True
+            }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.auto_store_jenkins_builds_task',
+    max_retries=1,
+    default_retry_delay=300,
+    time_limit=600,
+    soft_time_limit=540
+)
+def auto_store_jenkins_builds_task(self, limit: int = 20) -> Dict[str, Any]:
+    """
+    自動掃描並存儲未存儲的 Jenkins Builds
+    
+    這是一個定時任務，會定期掃描資料庫中未存儲的 Builds，
+    並自動觸發存儲任務。
+    
+    Args:
+        limit: 每次掃描處理的最大 Builds 數量（默認 20）
+        
+    Returns:
+        dict: {
+            'total_pending': int,     # 待存儲的總數
+            'processed': int,         # 本次處理的數量
+            'tasks_created': int,     # 創建的任務數
+            'skipped': int,           # 跳過的數量
+            'results': list
+        }
+    """
+    from django.conf import settings
+    
+    try:
+        logger.info(f'[Celery] 開始自動存儲任務掃描 - Limit: {limit}')
+        
+        # 獲取存儲策略配置
+        storage_policy = getattr(settings, 'JENKINS_STORAGE_POLICY', {})
+        auto_store_enabled = storage_policy.get('auto_store', True)
+        store_results = storage_policy.get('store_results', ['SUCCESS', 'FAILURE', 'UNSTABLE'])
+        max_workspace_size_mb = storage_policy.get('max_workspace_size_mb', 500)
+        
+        if not auto_store_enabled:
+            logger.info('[Celery] 自動存儲功能已禁用')
+            return {
+                'total_pending': 0,
+                'processed': 0,
+                'tasks_created': 0,
+                'skipped': 0,
+                'disabled': True
+            }
+        
+        # 查詢未存儲的 Builds
+        # 條件：
+        # 1. is_workspace_stored = False
+        # 2. is_building = False（已完成）
+        # 3. result 在配置的結果列表中
+        # 4. 有 URL（可訪問）
+        query = JenkinsBuild.objects.filter(
+            is_workspace_stored=False,
+            is_building=False,
+            url__isnull=False
+        )
+        
+        # 如果配置了只存儲特定結果
+        if store_results:
+            query = query.filter(result__in=store_results)
+        
+        # 排序：優先處理最新的 Builds
+        query = query.select_related('job', 'job__server').order_by('-build_timestamp')
+        
+        total_pending = query.count()
+        logger.info(f'[Celery] 找到 {total_pending} 個待存儲的 Builds')
+        
+        # 限制處理數量
+        builds_to_process = query[:limit]
+        
+        processed = 0
+        tasks_created = 0
+        skipped = 0
+        results = []
+        
+        for build in builds_to_process:
+            processed += 1
+            
+            try:
+                # 檢查 Workspace 大小限制（如果有記錄的話）
+                # 注意：這裡的 workspace_size 可能是 0（未獲取）
+                
+                # 創建異步存儲任務
+                task = store_jenkins_build_task.delay(build.id)
+                tasks_created += 1
+                
+                logger.info(
+                    f'[Celery] 創建存儲任務 - '
+                    f'Build: {build.job.name} #{build.build_number} | '
+                    f'Task ID: {task.id}'
+                )
+                
+                results.append({
+                    'build_id': build.id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'result': build.result,
+                    'task_id': task.id,
+                    'status': 'task_created'
+                })
+                
+            except Exception as e:
+                logger.error(
+                    f'[Celery] 創建存儲任務失敗 - '
+                    f'Build: {build.job.name} #{build.build_number} | '
+                    f'Error: {e}',
+                    exc_info=True
+                )
+                skipped += 1
+                results.append({
+                    'build_id': build.id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'status': 'error',
+                    'error': str(e)
+                })
+        
+        summary = {
+            'total_pending': total_pending,
+            'processed': processed,
+            'tasks_created': tasks_created,
+            'skipped': skipped,
+            'results': results
+        }
+        
+        logger.info(
+            f'[Celery] 自動存儲掃描完成 - '
+            f'待存儲: {total_pending} | '
+            f'已處理: {processed} | '
+            f'任務創建: {tasks_created} | '
+            f'跳過: {skipped}'
+        )
+        
+        return summary
+        
+    except Exception as exc:
+        logger.error('[Celery] 自動存儲掃描失敗', exc_info=True)
+        
+        # 自動重試
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 自動存儲掃描重試次數已達上限')
+            return {
+                'total_pending': 0,
+                'processed': 0,
+                'tasks_created': 0,
+                'skipped': 0,
+                'error_message': str(exc)
+            }
+
