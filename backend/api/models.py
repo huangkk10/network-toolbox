@@ -881,6 +881,14 @@ class JenkinsBuild(models.Model):
     workspace_stored_at = models.DateTimeField(null=True, blank=True, verbose_name='Workspace 存儲時間')
     is_workspace_stored = models.BooleanField(default=False, verbose_name='是否已存儲 Workspace')
     
+    # Artifacts 存儲資訊
+    artifacts_path = models.CharField(max_length=1000, blank=True, verbose_name='Artifacts 存儲路徑')
+    artifacts_size = models.BigIntegerField(default=0, verbose_name='Artifacts 總大小 (bytes)')
+    artifacts_count = models.IntegerField(default=0, verbose_name='Artifacts 檔案數量')
+    artifacts_list = models.JSONField(default=list, blank=True, verbose_name='Artifacts 檔案清單')
+    artifacts_stored_at = models.DateTimeField(null=True, blank=True, verbose_name='Artifacts 存儲時間')
+    is_artifacts_stored = models.BooleanField(default=False, verbose_name='是否已存儲 Artifacts')
+    
     # 時間戳記
     build_timestamp = models.DateTimeField(verbose_name='構建時間')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='記錄建立時間')
@@ -895,6 +903,8 @@ class JenkinsBuild(models.Model):
             models.Index(fields=['job', '-build_number'], name='idx_jenkins_build_job_num'),
             models.Index(fields=['result'], name='idx_jenkins_build_result'),
             models.Index(fields=['-build_timestamp'], name='idx_jenkins_build_time'),
+            models.Index(fields=['is_workspace_stored'], name='idx_jenkins_build_ws_stored'),
+            models.Index(fields=['is_artifacts_stored'], name='idx_jenkins_build_art_stored'),
         ]
     
     def __str__(self):

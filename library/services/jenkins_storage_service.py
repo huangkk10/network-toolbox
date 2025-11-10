@@ -8,7 +8,7 @@ import os
 import logging
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 import requests
 from django.conf import settings
@@ -88,6 +88,171 @@ class JenkinsStorageService:
                 'writable': False,
                 'error': str(e)
             }
+    
+    def _extract_archive(self, archive_path: Path, extract_to: Path) -> Dict[str, Any]:
+        """
+        解壓縮壓縮檔案
+        
+        支持的格式：
+        - .7z
+        - .zip
+        - .tar.gz, .tgz
+        - .tar.bz2, .tbz2
+        - .tar.xz
+        - .tar
+        
+        Args:
+            archive_path: 壓縮檔案路徑
+            extract_to: 解壓縮目標目錄
+            
+        Returns:
+            dict: 解壓縮結果
+                {
+                    'success': bool,
+                    'files_count': int,
+                    'total_size': int,
+                    'error': str (如果失敗)
+                }
+        """
+        import zipfile
+        import tarfile
+        import subprocess
+        
+        file_name = archive_path.name
+        file_ext = archive_path.suffix.lower()
+        
+        # 判斷是否為壓縮檔
+        supported_formats = {
+            '.7z': '7z',
+            '.zip': 'zip',
+            '.tar': 'tar',
+            '.gz': 'tar.gz',
+            '.tgz': 'tar.gz',
+            '.bz2': 'tar.bz2',
+            '.tbz2': 'tar.bz2',
+            '.xz': 'tar.xz',
+        }
+        
+        # 檢查是否為 tar.* 格式
+        if file_name.endswith(('.tar.gz', '.tar.bz2', '.tar.xz')):
+            archive_type = 'tar.gz'
+        elif file_ext not in supported_formats:
+            logger.debug(f"不是支持的壓縮格式，跳過解壓縮: {file_name}")
+            return {'success': False, 'message': 'Not a supported archive format'}
+        else:
+            archive_type = supported_formats[file_ext]
+        
+        logger.info(f"開始解壓縮: {file_name} (格式: {archive_type})")
+        
+        try:
+            files_count = 0
+            total_size = 0
+            
+            if archive_type == '7z':
+                # 使用 7z 命令解壓縮（需要安裝 p7zip-full）
+                try:
+                    result = subprocess.run(
+                        ['7z', 'x', str(archive_path), f'-o{extract_to}', '-y'],
+                        capture_output=True,
+                        text=True,
+                        timeout=300
+                    )
+                    
+                    if result.returncode == 0:
+                        # 計算解壓縮後的檔案
+                        for item in extract_to.rglob('*'):
+                            if item.is_file() and item != archive_path:
+                                files_count += 1
+                                total_size += item.stat().st_size
+                        
+                        logger.info(f"✓ 解壓縮成功: {files_count} 個檔案, {total_size / (1024**2):.2f} MB")
+                        
+                        # 刪除原始壓縮檔
+                        try:
+                            archive_path.unlink()
+                            logger.info(f"✓ 已刪除原始壓縮檔: {file_name}")
+                        except Exception as del_error:
+                            logger.warning(f"刪除原始壓縮檔失敗: {del_error}")
+                        
+                        return {
+                            'success': True,
+                            'files_count': files_count,
+                            'total_size': total_size
+                        }
+                    else:
+                        logger.warning(f"7z 解壓縮失敗: {result.stderr}")
+                        return {'success': False, 'error': result.stderr}
+                        
+                except FileNotFoundError:
+                    logger.warning("7z 命令未找到，請安裝 p7zip-full")
+                    return {'success': False, 'error': '7z command not found'}
+                except subprocess.TimeoutExpired:
+                    logger.error(f"解壓縮超時: {file_name}")
+                    return {'success': False, 'error': 'Extraction timeout'}
+            
+            elif archive_type == 'zip':
+                # 使用 zipfile 模塊解壓縮
+                with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_to)
+                    files_count = len(zip_ref.namelist())
+                    
+                    # 計算總大小
+                    for item in extract_to.rglob('*'):
+                        if item.is_file() and item != archive_path:
+                            total_size += item.stat().st_size
+                    
+                    logger.info(f"✓ 解壓縮成功: {files_count} 個檔案, {total_size / (1024**2):.2f} MB")
+                    
+                    # 刪除原始壓縮檔
+                    try:
+                        archive_path.unlink()
+                        logger.info(f"✓ 已刪除原始壓縮檔: {file_name}")
+                    except Exception as del_error:
+                        logger.warning(f"刪除原始壓縮檔失敗: {del_error}")
+                    
+                    return {
+                        'success': True,
+                        'files_count': files_count,
+                        'total_size': total_size
+                    }
+            
+            elif archive_type.startswith('tar'):
+                # 使用 tarfile 模塊解壓縮
+                with tarfile.open(archive_path, 'r:*') as tar_ref:
+                    tar_ref.extractall(extract_to)
+                    files_count = len(tar_ref.getmembers())
+                    
+                    # 計算總大小
+                    for item in extract_to.rglob('*'):
+                        if item.is_file() and item != archive_path:
+                            total_size += item.stat().st_size
+                    
+                    logger.info(f"✓ 解壓縮成功: {files_count} 個檔案, {total_size / (1024**2):.2f} MB")
+                    
+                    # 刪除原始壓縮檔
+                    try:
+                        archive_path.unlink()
+                        logger.info(f"✓ 已刪除原始壓縮檔: {file_name}")
+                    except Exception as del_error:
+                        logger.warning(f"刪除原始壓縮檔失敗: {del_error}")
+                    
+                    return {
+                        'success': True,
+                        'files_count': files_count,
+                        'total_size': total_size
+                    }
+            
+            return {'success': False, 'error': 'Unsupported archive type'}
+            
+        except zipfile.BadZipFile as e:
+            logger.error(f"無效的 ZIP 檔案: {e}")
+            return {'success': False, 'error': f'Bad ZIP file: {str(e)}'}
+        except tarfile.TarError as e:
+            logger.error(f"無效的 TAR 檔案: {e}")
+            return {'success': False, 'error': f'Bad TAR file: {str(e)}'}
+        except Exception as e:
+            logger.error(f"解壓縮失敗: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
     
     def _download_file_from_jenkins(
         self, 
@@ -449,6 +614,140 @@ class JenkinsStorageService:
             }
         except Exception as e:
             logger.error(f"存儲 Workspace 失敗: {e}", exc_info=True)
+            return {
+                'success': False,
+                'error': f'存儲失敗: {str(e)}'
+            }
+    
+    def store_artifacts(
+        self,
+        artifacts_list: List[Dict[str, Any]],
+        job_name: str,
+        build_number: int,
+        username: Optional[str] = None,
+        api_token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        下載並存儲 Jenkins Build Artifacts
+        
+        Args:
+            artifacts_list: Artifacts 列表（從 Jenkins API 獲取）
+            job_name: Job 名稱
+            build_number: Build 編號
+            username: Jenkins 使用者名稱
+            api_token: Jenkins API Token
+            
+        Returns:
+            dict: 存儲結果
+                {
+                    'success': bool,
+                    'artifacts_path': str,
+                    'artifacts_size': int (bytes),
+                    'artifacts_count': int,
+                    'stored_items': List[Dict],
+                    'failed_items': List[Dict],
+                    'error': str (如果失敗)
+                }
+        """
+        try:
+            # 如果沒有 Artifacts，直接返回
+            if not artifacts_list or len(artifacts_list) == 0:
+                logger.info(f"Build #{build_number} 沒有 Artifacts")
+                return {
+                    'success': True,
+                    'artifacts_count': 0,
+                    'message': '該 Build 沒有 Artifacts'
+                }
+            
+            # 創建存儲目錄（與 workspace/ 平行）
+            artifacts_path = self.build_storage_path / 'artifacts'
+            artifacts_path.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"開始存儲 Artifacts 到: {artifacts_path}")
+            
+            # 初始化 Jenkins Client
+            from library.services.jenkins_client import JenkinsClient
+            client = JenkinsClient(
+                base_url=f"http://{self.jenkins_server_ip}:8080",
+                username=username,
+                api_token=api_token
+            )
+            
+            stored_items = []
+            failed_items = []
+            total_size = 0
+            
+            try:
+                # 遍歷下載每個 Artifact
+                for artifact in artifacts_list:
+                    relative_path = artifact.get('relativePath', '')
+                    file_name = artifact.get('fileName', '')
+                    
+                    if not relative_path:
+                        logger.warning(f"Artifact 缺少 relativePath，跳過: {artifact}")
+                        continue
+                    
+                    # 構建本地保存路徑（保持相對路徑結構）
+                    save_path = artifacts_path / relative_path
+                    
+                    logger.info(f"下載 Artifact: {relative_path}")
+                    
+                    # 下載檔案
+                    success = client.download_artifact(
+                        job_name=job_name,
+                        build_number=build_number,
+                        artifact_path=relative_path,
+                        save_path=str(save_path)
+                    )
+                    
+                    if success and save_path.exists():
+                        file_size = save_path.stat().st_size
+                        total_size += file_size
+                        
+                        # 嘗試解壓縮檔案
+                        extracted_info = self._extract_archive(save_path, artifacts_path)
+                        
+                        stored_items.append({
+                            'file_name': file_name,
+                            'relative_path': relative_path,
+                            'size': file_size,
+                            'local_path': str(save_path),
+                            'extracted': extracted_info.get('success', False),
+                            'extracted_files': extracted_info.get('files_count', 0),
+                            'extracted_size': extracted_info.get('total_size', 0),
+                        })
+                        
+                        if extracted_info.get('success'):
+                            logger.info(f"  ✓ {file_name} ({file_size / (1024**2):.2f} MB) - 已解壓縮 {extracted_info['files_count']} 個檔案")
+                        else:
+                            logger.info(f"  ✓ {file_name} ({file_size / (1024**2):.2f} MB)")
+                    else:
+                        failed_items.append({
+                            'file_name': file_name,
+                            'relative_path': relative_path,
+                            'error': '下載失敗'
+                        })
+                        
+                        logger.warning(f"  ✗ {file_name} 下載失敗")
+            
+            finally:
+                client.close()
+            
+            success = len(failed_items) == 0
+            logger.info(f"Artifacts 存儲{'完成' if success else '部分失敗'}: {len(stored_items)}/{len(artifacts_list)} 個檔案")
+            
+            return {
+                'success': success,
+                'artifacts_path': str(artifacts_path),
+                'artifacts_size': total_size,
+                'artifacts_count': len(stored_items),
+                'stored_items': stored_items,
+                'failed_items': failed_items,
+                'stored_at': datetime.now().isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(f"存儲 Artifacts 失敗: {e}", exc_info=True)
             return {
                 'success': False,
                 'error': f'存儲失敗: {str(e)}'

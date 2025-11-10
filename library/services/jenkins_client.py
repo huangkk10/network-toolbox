@@ -328,6 +328,105 @@ class JenkinsClient:
         
         return summary
     
+    def get_build_artifacts(self, job_name: str, build_number: int) -> List[Dict[str, Any]]:
+        """
+        獲取 Build 的 Artifacts 列表
+        
+        Args:
+            job_name: Job 名稱
+            build_number: Build 編號
+            
+        Returns:
+            list: Artifacts 列表
+                [
+                    {
+                        'fileName': 'file.7z',
+                        'relativePath': 'path/to/file.7z',
+                        'displayPath': 'path/to/file.7z'
+                    }
+                ]
+        """
+        url = f"{self.base_url}/job/{job_name}/{build_number}/api/json"
+        params = {'tree': 'artifacts[fileName,relativePath,displayPath]'}
+        
+        response = self._make_request('GET', url, params=params)
+        data = response.json()
+        artifacts = data.get('artifacts', [])
+        
+        logger.info(f"獲取 Build '{job_name}' #{build_number} 的 Artifacts: 共 {len(artifacts)} 個")
+        return artifacts
+    
+    def get_artifact_size(self, job_name: str, build_number: int, artifact_path: str) -> int:
+        """
+        獲取 Artifact 檔案大小（使用 HEAD 請求）
+        
+        Args:
+            job_name: Job 名稱
+            build_number: Build 編號
+            artifact_path: Artifact 相對路徑
+            
+        Returns:
+            int: 檔案大小（bytes）
+        """
+        url = f"{self.base_url}/job/{job_name}/{build_number}/artifact/{artifact_path}"
+        
+        try:
+            response = self._make_request('HEAD', url)
+            content_length = response.headers.get('Content-Length', 0)
+            file_size = int(content_length)
+            
+            logger.debug(f"Artifact 大小: {artifact_path} = {file_size / (1024**2):.2f} MB")
+            return file_size
+        except Exception as e:
+            logger.warning(f"無法獲取 Artifact 大小 {artifact_path}: {e}")
+            return 0
+    
+    def download_artifact(
+        self, 
+        job_name: str, 
+        build_number: int, 
+        artifact_path: str,
+        save_path: str
+    ) -> bool:
+        """
+        下載 Artifact 檔案
+        
+        Args:
+            job_name: Job 名稱
+            build_number: Build 編號
+            artifact_path: Artifact 相對路徑（從 relativePath 取得）
+            save_path: 本地保存路徑
+            
+        Returns:
+            bool: 是否下載成功
+        """
+        from pathlib import Path
+        
+        url = f"{self.base_url}/job/{job_name}/{build_number}/artifact/{artifact_path}"
+        
+        try:
+            logger.info(f"開始下載 Artifact: {artifact_path}")
+            
+            response = self._make_request('GET', url, stream=True)
+            
+            # 確保目錄存在
+            save_file = Path(save_path)
+            save_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            # 下載文件
+            with open(save_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            
+            file_size = Path(save_path).stat().st_size
+            logger.info(f"Artifact 下載成功: {artifact_path} ({file_size / (1024**2):.2f} MB)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Artifact 下載失敗 {artifact_path}: {e}")
+            return False
+    
     def close(self):
         """關閉 Session"""
         self.session.close()

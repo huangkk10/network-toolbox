@@ -167,6 +167,40 @@ def setup_oui_update_task():
     return task
 
 
+def setup_jenkins_artifacts_storage_task():
+    """設置 Jenkins Artifacts 自動存儲任務（每小時執行一次）"""
+    
+    print('正在設置 Jenkins Artifacts 自動存儲任務...')
+    
+    # 創建 Crontab Schedule（每小時執行一次）
+    schedule = create_or_update_crontab(minute='10', hour='*')
+    
+    # 創建或更新 Periodic Task
+    task, created = PeriodicTask.objects.get_or_create(
+        name='auto-store-jenkins-artifacts-hourly',
+        defaults={
+            'task': 'api.tasks.auto_store_jenkins_artifacts_task',
+            'crontab': schedule,
+            'enabled': True,
+            'kwargs': json.dumps({'max_builds': 10, 'max_age_hours': 72}),
+            'description': 'Jenkins Artifacts 自動存儲任務 - 每小時 10 分執行，存儲最近 3 天的成功 Build',
+        }
+    )
+    
+    if not created:
+        task.task = 'api.tasks.auto_store_jenkins_artifacts_task'
+        task.crontab = schedule
+        task.enabled = True
+        task.kwargs = json.dumps({'max_builds': 10, 'max_age_hours': 72})
+        task.description = 'Jenkins Artifacts 自動存儲任務 - 每小時 10 分執行，存儲最近 3 天的成功 Build'
+        task.save()
+        print(f'  ✅ 已更新任務: {task.name}')
+    else:
+        print(f'  ✅ 已創建任務: {task.name}')
+    
+    return task
+
+
 def main():
     """主函數：設置所有定時任務"""
     
@@ -181,6 +215,7 @@ def main():
         setup_dhcp_sync_task()
         setup_cleanup_logs_task()
         setup_oui_update_task()
+        setup_jenkins_artifacts_storage_task()  # 🆕 Jenkins Artifacts 自動存儲任務
         
         print()
         print('=' * 60)

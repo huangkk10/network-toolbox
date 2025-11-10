@@ -688,6 +688,260 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['get'])
+    def artifacts(self, request, pk=None):
+        """
+        獲取 Build 的 Artifacts 列表
+        
+        GET /api/jenkins-builds/{id}/artifacts/
+        
+        支援參數：
+        - from_nas: 是否從 NAS 讀取（預設 false，從 Jenkins API 獲取）
+        
+        Returns:
+            {
+                'success': bool,
+                'build_id': int,
+                'build_number': int,
+                'artifacts_count': int,
+                'total_size': int,
+                'artifacts': [
+                    {
+                        'fileName': str,
+                        'relativePath': str,
+                        'size': int,
+                        'displayPath': str,
+                        'download_url': str
+                    }
+                ],
+                'source': 'nas' | 'jenkins_api'
+            }
+        """
+        build = self.get_object()
+        from_nas = request.query_params.get('from_nas', 'false').lower() == 'true'
+        
+        try:
+            if from_nas:
+                # 從 NAS 讀取
+                if not build.is_artifacts_stored:
+                    return Response({
+                        'success': False,
+                        'message': 'Artifacts 尚未存儲到 NAS'
+                    }, status=status.HTTP_404_NOT_FOUND)
+                
+                # 返回存儲時的 artifacts_list
+                return Response({
+                    'success': True,
+                    'build_id': build.id,
+                    'build_number': build.build_number,
+                    'artifacts_count': build.artifacts_count,
+                    'total_size': build.artifacts_size,
+                    'artifacts': build.artifacts_list,
+                    'artifacts_path': build.artifacts_path,
+                    'stored_at': build.artifacts_stored_at.isoformat() if build.artifacts_stored_at else None,
+                    'source': 'nas'
+                })
+            else:
+                # 從 Jenkins API 獲取
+                client = JenkinsClient(
+                    base_url=build.job.server.url,
+                    username=build.job.server.username,
+                    api_token=build.job.server.api_token
+                )
+                
+                try:
+                    artifacts_list = client.get_build_artifacts(
+                        build.job.name,
+                        build.build_number
+                    )
+                    
+                    # 獲取每個 Artifact 的大小
+                    total_size = 0
+                    for artifact in artifacts_list:
+                        size = client.get_artifact_size(
+                            build.job.name,
+                            build.build_number,
+                            artifact['relativePath']
+                        )
+                        artifact['size'] = size
+                        total_size += size
+                        
+                        # 添加下載 URL
+                        artifact['download_url'] = (
+                            f"{build.job.server.url}/job/{build.job.name}/"
+                            f"{build.build_number}/artifact/{artifact['relativePath']}"
+                        )
+                    
+                finally:
+                    client.close()
+                
+                return Response({
+                    'success': True,
+                    'build_id': build.id,
+                    'build_number': build.build_number,
+                    'artifacts_count': len(artifacts_list),
+                    'total_size': total_size,
+                    'artifacts': artifacts_list,
+                    'source': 'jenkins_api'
+                })
+                
+        except Exception as e:
+            logger.error(f"獲取 Artifacts 失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'message': f'獲取 Artifacts 失敗: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'])
+    def store_artifacts(self, request, pk=None):
+        """
+        存儲 Build Artifacts 到 NAS
+        
+        POST /api/jenkins-builds/{id}/store_artifacts/
+        
+        將 Jenkins Build 的 Artifacts 下載並存儲到 NAS 上。
+        存儲路徑：{NAS_BASE}/jenkins_test_storage/{jenkins_ip}/{job_name}/{build_number}/artifacts/
+        
+        Returns:
+            {
+                'success': bool,
+                'message': str,
+                'artifacts_path': str,
+                'artifacts_size': int (bytes),
+                'artifacts_count': int,
+                'stored_items': List[Dict],
+                'failed_items': List[Dict],
+                'error': str (如果失敗)
+            }
+        """
+        build = self.get_object()
+        
+        # 檢查是否已經存儲
+        if build.is_artifacts_stored:
+            return Response({
+                'success': True,
+                'message': 'Artifacts 已經存儲過了',
+                'artifacts_path': build.artifacts_path,
+                'artifacts_size': build.artifacts_size,
+                'artifacts_count': build.artifacts_count,
+                'stored_at': build.artifacts_stored_at.isoformat() if build.artifacts_stored_at else None,
+                'already_stored': True
+            })
+        
+        try:
+            # 1. 從 Jenkins 獲取 Artifacts 列表
+            client = JenkinsClient(
+                base_url=build.job.server.url,
+                username=build.job.server.username,
+                api_token=build.job.server.api_token
+            )
+            
+            try:
+                artifacts_list = client.get_build_artifacts(
+                    build.job.name,
+                    build.build_number
+                )
+            finally:
+                client.close()
+            
+            # 如果沒有 Artifacts
+            if not artifacts_list:
+                # 標記為已存儲（避免重複檢查）
+                build.is_artifacts_stored = True
+                build.artifacts_count = 0
+                build.artifacts_stored_at = timezone.now()
+                build.save()
+                
+                return Response({
+                    'success': True,
+                    'message': '該 Build 沒有 Artifacts',
+                    'artifacts_count': 0
+                })
+            
+            # 2. 解析 Jenkins Server IP
+            jenkins_url = build.job.server.url
+            import re
+            match = re.search(r'https?://([^:/]+)', jenkins_url)
+            if not match:
+                return Response({
+                    'success': False,
+                    'error': '無法解析 Jenkins Server IP'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            jenkins_ip = match.group(1)
+            
+            logger.info(f"開始存儲 Build #{build.build_number} Artifacts")
+            logger.info(f"  - Jenkins IP: {jenkins_ip}")
+            logger.info(f"  - Job: {build.job.name}")
+            logger.info(f"  - Artifacts 數量: {len(artifacts_list)}")
+            
+            # 3. 創建存儲服務並存儲
+            storage = JenkinsStorageService(
+                jenkins_server_ip=jenkins_ip,
+                job_name=build.job.name,
+                build_number=build.build_number
+            )
+            
+            # 檢查 NAS 路徑是否可訪問
+            path_check = storage.check_storage_path_accessible()
+            if not path_check['accessible']:
+                return Response({
+                    'success': False,
+                    'error': f"NAS 路徑不可訪問: {path_check.get('error', 'Unknown error')}"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            if not path_check['writable']:
+                return Response({
+                    'success': False,
+                    'error': 'NAS 路徑不可寫'
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            result = storage.store_artifacts(
+                artifacts_list=artifacts_list,
+                job_name=build.job.name,
+                build_number=build.build_number,
+                username=build.job.server.username,
+                api_token=build.job.server.api_token
+            )
+            
+            if result['success']:
+                # 更新 Build 記錄
+                build.artifacts_path = result['artifacts_path']
+                build.artifacts_size = result['artifacts_size']
+                build.artifacts_count = result['artifacts_count']
+                build.artifacts_list = result['stored_items']
+                build.artifacts_stored_at = timezone.now()
+                build.is_artifacts_stored = True
+                build.save()
+                
+                logger.info(f"Build #{build.build_number} Artifacts 存儲成功")
+                logger.info(f"  - 路徑: {result['artifacts_path']}")
+                logger.info(f"  - 總大小: {result['artifacts_size'] / (1024**2):.2f} MB")
+                logger.info(f"  - 檔案數: {result['artifacts_count']}")
+                
+                return Response({
+                    'success': True,
+                    'message': 'Artifacts 存儲成功',
+                    'artifacts_path': result['artifacts_path'],
+                    'artifacts_size': result['artifacts_size'],
+                    'artifacts_count': result['artifacts_count'],
+                    'stored_items': result['stored_items'],
+                    'stored_at': result['stored_at'],
+                })
+            else:
+                logger.error(f"Build #{build.build_number} Artifacts 存儲失敗: {result.get('error')}")
+                return Response({
+                    'success': False,
+                    'error': result.get('error', 'Unknown error'),
+                    'failed_items': result.get('failed_items', [])
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            logger.error(f"存儲 Artifacts 失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': f'存儲失敗: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
     def config_file(self, request, pk=None):
         """
         獲取 Build 的配置文件（Phase 4 功能，尚未實現）

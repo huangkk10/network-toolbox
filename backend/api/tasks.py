@@ -2960,3 +2960,449 @@ def auto_store_jenkins_builds_task(self, limit: int = 20) -> Dict[str, Any]:
                 'error_message': str(exc)
             }
 
+
+
+# ==================== Jenkins Artifacts 自動存儲任務 ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.store_jenkins_artifacts_task',
+    max_retries=3,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def store_jenkins_artifacts_task(self, build_id):
+    """
+    存儲單個 Jenkins Build 的 Artifacts 到 NAS
+    
+    這是一個可重試的任務，用於：
+    - 手動觸發存儲特定 Build 的 Artifacts
+    - 從批量自動存儲任務中調用
+    - 失敗後自動重試（最多 3 次）
+    
+    Args:
+        build_id: JenkinsBuild ID
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'build_id': int,
+            'job_name': str,
+            'build_number': int,
+            'artifacts_path': str,
+            'artifacts_size': int,
+            'artifacts_count': int,
+            'stored_items': list,
+            'error_message': str (如果失敗)
+        }
+    """
+    import re
+    from .models import JenkinsBuild
+    from library.services.jenkins_client import JenkinsClient
+    from library.services.jenkins_storage_service import JenkinsStorageService
+    
+    try:
+        logger.info(f'[Celery] 🚀 開始存儲 Jenkins Artifacts - Build ID: {build_id}')
+        
+        # 獲取 Build 記錄
+        try:
+            build = JenkinsBuild.objects.select_related('job', 'job__server').get(id=build_id)
+        except JenkinsBuild.DoesNotExist:
+            error_msg = f'Build ID {build_id} 不存在'
+            logger.error(f'[Celery] ❌ {error_msg}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'error_message': error_msg
+            }
+        
+        logger.info(
+            f'[Celery] 📦 處理 Build: {build.job.name} #{build.build_number} | '
+            f'Result: {build.result} | '
+            f'Server: {build.job.server.name}'
+        )
+        
+        # 檢查是否已經存儲
+        if build.is_artifacts_stored:
+            logger.info(f'[Celery] ⚠️  Artifacts 已經存儲過，跳過')
+            return {
+                'success': True,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'already_stored': True,
+                'artifacts_path': build.artifacts_path,
+                'artifacts_size': build.artifacts_size,
+                'artifacts_count': build.artifacts_count,
+            }
+        
+        # 1. 從 Jenkins 獲取 Artifacts 列表
+        client = None
+        try:
+            client = JenkinsClient(
+                base_url=build.job.server.url,
+                username=build.job.server.username,
+                api_token=build.job.server.api_token
+            )
+            
+            artifacts_list = client.get_build_artifacts(
+                build.job.name,
+                build.build_number
+            )
+            
+            logger.info(f'[Celery] 📋 從 Jenkins API 獲取到 {len(artifacts_list)} 個 Artifacts')
+            
+        finally:
+            if client:
+                client.close()
+        
+        # 如果沒有 Artifacts
+        if not artifacts_list:
+            logger.info(f'[Celery] ℹ️  該 Build 沒有 Artifacts')
+            
+            # 標記為已存儲（避免重複檢查）
+            build.is_artifacts_stored = True
+            build.artifacts_count = 0
+            build.artifacts_stored_at = timezone.now()
+            build.save()
+            
+            return {
+                'success': True,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'artifacts_count': 0,
+                'message': '該 Build 沒有 Artifacts'
+            }
+        
+        # 2. 解析 Jenkins Server IP
+        jenkins_url = build.job.server.url
+        match = re.search(r'https?://([^:/]+)', jenkins_url)
+        if not match:
+            error_msg = '無法解析 Jenkins Server IP'
+            logger.error(f'[Celery] ❌ {error_msg}: {jenkins_url}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'error_message': error_msg
+            }
+        
+        jenkins_ip = match.group(1)
+        logger.info(f'[Celery] 🖥️  Jenkins IP: {jenkins_ip}')
+        
+        # 3. 創建存儲服務並執行存儲
+        storage = JenkinsStorageService(
+            jenkins_server_ip=jenkins_ip,
+            job_name=build.job.name,
+            build_number=build.build_number
+        )
+        
+        # 檢查 NAS 路徑
+        path_check = storage.check_storage_path_accessible()
+        if not path_check['accessible'] or not path_check['writable']:
+            error_msg = 'NAS 路徑不可訪問或不可寫'
+            logger.error(f'[Celery] ❌ {error_msg}')
+            
+            # 這類錯誤值得重試（可能是網路問題）
+            raise Exception(error_msg)
+        
+        # 存儲 Artifacts（包含自動解壓和刪除原始壓縮檔）
+        result = storage.store_artifacts(
+            artifacts_list=artifacts_list,
+            job_name=build.job.name,
+            build_number=build.build_number,
+            username=build.job.server.username,
+            api_token=build.job.server.api_token
+        )
+        
+        if result['success']:
+            # 更新 Build 記錄
+            build.artifacts_path = result['artifacts_path']
+            build.artifacts_size = result['artifacts_size']
+            build.artifacts_count = result['artifacts_count']
+            build.artifacts_list = result['stored_items']  # JSON 格式
+            build.is_artifacts_stored = True
+            build.artifacts_stored_at = timezone.now()
+            build.save()
+            
+            logger.info(
+                f'[Celery] ✅ 成功存儲 Artifacts | '
+                f'檔案數: {result["artifacts_count"]} | '
+                f'總大小: {result["artifacts_size"] / (1024**2):.2f} MB | '
+                f'路徑: {result["artifacts_path"]}'
+            )
+            
+            return {
+                'success': True,
+                'build_id': build_id,
+                'job_name': build.job.name,
+                'build_number': build.build_number,
+                'artifacts_path': result['artifacts_path'],
+                'artifacts_size': result['artifacts_size'],
+                'artifacts_count': result['artifacts_count'],
+                'stored_items': result['stored_items'],
+            }
+        else:
+            error_msg = result.get('error', 'Unknown error')
+            logger.error(f'[Celery] ❌ 存儲 Artifacts 失敗: {error_msg}')
+            
+            # 拋出異常以觸發重試機制
+            raise Exception(error_msg)
+        
+    except Exception as exc:
+        logger.error(
+            f'[Celery] ❌ 存儲 Artifacts 失敗 - '
+            f'Build ID: {build_id} | '
+            f'Error: {exc}',
+            exc_info=True
+        )
+        
+        # 自動重試（最多 3 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error(f'[Celery] ❌ Artifacts 存儲重試次數已達上限 - Build ID: {build_id}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'error_message': str(exc),
+                'retries_exhausted': True
+            }
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.auto_store_jenkins_artifacts_task',
+    max_retries=2,
+    default_retry_delay=600,  # 失敗後 10 分鐘重試
+    time_limit=7200,  # 硬限制 2 小時
+    soft_time_limit=6900  # 軟限制 1 小時 55 分鐘
+)
+def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=72):
+    """
+    自動批量存儲 Jenkins Artifacts 到 NAS（定時任務）
+    
+    根據配置的規則，自動掃描符合條件的 Build 並存儲其 Artifacts。
+    類似 auto_store_workspaces 的實現邏輯。
+    
+    規則：
+    - 只存儲 SUCCESS 的 Build
+    - 只存儲有 Artifacts 的 Build
+    - 只存儲最近 N 小時內的 Build（預設 72 小時 = 3 天）
+    - 至少 30 分鐘前完成的 Build（避免正在執行）
+    - 跳過已存儲的 Build
+    - 每次最多存儲 N 個 Build（預設 50）
+    
+    Args:
+        max_builds: 每次執行最多存儲的 Build 數量（預設 10）
+        max_age_hours: 只存儲最近 N 小時內的 Build（預設 72）
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'total_found': int,        # 找到符合條件的 Build 數量
+            'processed': int,          # 實際處理的數量
+            'stored': int,             # 成功存儲的數量
+            'no_artifacts': int,       # 沒有 Artifacts 的數量
+            'failed': int,             # 失敗的數量
+            'total_size': int,         # 總存儲大小（bytes）
+            'total_artifacts': int,    # 總 Artifacts 數
+            'duration': float,         # 執行時間（秒）
+            'details': list            # 詳細結果
+        }
+    """
+    from .models import JenkinsBuild
+    import time
+    
+    start_time = time.time()
+    
+    try:
+        logger.info('=' * 80)
+        logger.info('[Celery] 🚀 開始自動存儲 Jenkins Artifacts（批量任務）')
+        logger.info('=' * 80)
+        logger.info(f'[Celery] 參數配置：')
+        logger.info(f'[Celery]   - 每次最多存儲: {max_builds} 個 Build')
+        logger.info(f'[Celery]   - 時間範圍: 最近 {max_age_hours} 小時')
+        logger.info(f'[Celery]   - 存儲狀態: SUCCESS')
+        logger.info(f'[Celery]   - 跳過已存儲: True')
+        
+        # 計算時間範圍
+        now = timezone.now()
+        max_age = now - timedelta(hours=max_age_hours)
+        min_age = now - timedelta(minutes=30)  # 至少 30 分鐘前完成
+        
+        # 查詢符合條件的 Build
+        queryset = JenkinsBuild.objects.select_related('job', 'job__server').filter(
+            result='SUCCESS',                    # 只存儲成功的 Build
+            build_timestamp__gte=max_age,        # 最近 N 小時內
+            build_timestamp__lte=min_age,        # 至少 30 分鐘前完成
+            is_building=False,                   # 確保 Build 已完成
+            is_artifacts_stored=False,           # 跳過已存儲的
+        ).order_by('-build_timestamp')[:max_builds]  # 優先處理最新的
+        
+        total_found = queryset.count()
+        logger.info(f'[Celery] 📊 找到 {total_found} 個符合條件的 Build')
+        
+        if total_found == 0:
+            logger.info('[Celery] ℹ️  沒有需要處理的 Build')
+            return {
+                'success': True,
+                'total_found': 0,
+                'processed': 0,
+                'stored': 0,
+                'no_artifacts': 0,
+                'failed': 0,
+                'total_size': 0,
+                'total_artifacts': 0,
+                'duration': time.time() - start_time,
+                'details': []
+            }
+        
+        # 處理每個 Build
+        results = {
+            'processed': 0,
+            'stored': 0,
+            'no_artifacts': 0,
+            'failed': 0,
+            'total_size': 0,
+            'total_artifacts': 0,
+            'details': []
+        }
+        
+        for i, build in enumerate(queryset, 1):
+            logger.info(
+                f'[Celery] [{i}/{total_found}] 處理 Build: '
+                f'{build.job.name} #{build.build_number} | '
+                f'Server: {build.job.server.name}'
+            )
+            
+            try:
+                results['processed'] += 1
+                
+                # 調用單個 Build 存儲任務
+                result = store_jenkins_artifacts_task(build.id)
+                
+                if result['success']:
+                    if result.get('already_stored'):
+                        logger.info(f'[Celery]   ⚠️  已存儲，跳過')
+                        results['details'].append({
+                            'build_id': build.id,
+                            'job_name': build.job.name,
+                            'build_number': build.build_number,
+                            'status': 'already_stored'
+                        })
+                    elif result.get('artifacts_count', 0) == 0:
+                        results['no_artifacts'] += 1
+                        logger.info(f'[Celery]   ℹ️  沒有 Artifacts')
+                        results['details'].append({
+                            'build_id': build.id,
+                            'job_name': build.job.name,
+                            'build_number': build.build_number,
+                            'status': 'no_artifacts'
+                        })
+                    else:
+                        results['stored'] += 1
+                        results['total_size'] += result.get('artifacts_size', 0)
+                        results['total_artifacts'] += result.get('artifacts_count', 0)
+                        
+                        logger.info(
+                            f'[Celery]   ✅ 成功 | '
+                            f'{result["artifacts_count"]} 個檔案, '
+                            f'{result["artifacts_size"] / (1024**2):.2f} MB'
+                        )
+                        
+                        results['details'].append({
+                            'build_id': build.id,
+                            'job_name': build.job.name,
+                            'build_number': build.build_number,
+                            'status': 'success',
+                            'artifacts_count': result['artifacts_count'],
+                            'artifacts_size': result['artifacts_size'],
+                            'artifacts_path': result['artifacts_path']
+                        })
+                else:
+                    results['failed'] += 1
+                    error_msg = result.get('error_message', 'Unknown error')
+                    logger.error(f'[Celery]   ❌ 失敗: {error_msg}')
+                    
+                    results['details'].append({
+                        'build_id': build.id,
+                        'job_name': build.job.name,
+                        'build_number': build.build_number,
+                        'status': 'failed',
+                        'error': error_msg
+                    })
+                
+            except Exception as e:
+                results['failed'] += 1
+                logger.error(
+                    f'[Celery]   ❌ 處理失敗: {e}',
+                    exc_info=True
+                )
+                
+                results['details'].append({
+                    'build_id': build.id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'status': 'error',
+                    'error': str(e)
+                })
+        
+        # 計算執行時間
+        duration = time.time() - start_time
+        
+        # 記錄最終結果
+        logger.info('=' * 80)
+        logger.info('[Celery] 📊 執行報告')
+        logger.info('=' * 80)
+        logger.info(f'[Celery] 總處理數: {results["processed"]} 個 Build')
+        logger.info(f'[Celery] 成功存儲: {results["stored"]} ✅')
+        logger.info(f'[Celery] 無 Artifacts: {results["no_artifacts"]} ℹ️')
+        logger.info(f'[Celery] 失敗: {results["failed"]} ❌')
+        logger.info(f'[Celery] 總存儲大小: {results["total_size"] / (1024**2):.2f} MB')
+        logger.info(f'[Celery] 總 Artifacts 數: {results["total_artifacts"]} 個')
+        logger.info(f'[Celery] 總耗時: {duration:.1f} 秒')
+        logger.info('=' * 80)
+        logger.info('[Celery] ✅ 自動存儲 Artifacts 完成')
+        logger.info('=' * 80)
+        
+        return {
+            'success': True,
+            'total_found': total_found,
+            'processed': results['processed'],
+            'stored': results['stored'],
+            'no_artifacts': results['no_artifacts'],
+            'failed': results['failed'],
+            'total_size': results['total_size'],
+            'total_artifacts': results['total_artifacts'],
+            'duration': duration,
+            'details': results['details']
+        }
+        
+    except Exception as exc:
+        duration = time.time() - start_time
+        logger.error(
+            f'[Celery] ❌ 自動存儲 Artifacts 失敗（執行 {duration:.1f} 秒）',
+            exc_info=True
+        )
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=600)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] ❌ 自動存儲 Artifacts 重試次數已達上限')
+            return {
+                'success': False,
+                'total_found': 0,
+                'processed': 0,
+                'stored': 0,
+                'no_artifacts': 0,
+                'failed': 0,
+                'total_size': 0,
+                'total_artifacts': 0,
+                'duration': duration,
+                'error_message': str(exc)
+            }
