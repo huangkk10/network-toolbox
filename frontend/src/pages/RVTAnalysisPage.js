@@ -208,11 +208,16 @@ const RVTAnalysisPage = () => {
         }
     };
     
-    // 載入所有可用的 View 列表（不受篩選條件影響）
-    const fetchAvailableViews = async () => {
+    // 載入可用的 View 列表（根據當前選擇的伺服器）
+    const fetchAvailableViews = async (serverId = null) => {
         try {
-            // 獲取所有 Jobs（不帶篩選參數）
-            const response = await axios.get('/api/jenkins-jobs/');
+            // 根據 serverId 過濾 Jobs
+            let url = '/api/jenkins-jobs/';
+            if (serverId) {
+                url += `?server_id=${serverId}`;
+            }
+            
+            const response = await axios.get(url);
             
             // 提取唯一的 View 名稱列表
             const uniqueViews = [...new Set(
@@ -586,7 +591,7 @@ const RVTAnalysisPage = () => {
     // ========== 初始化 ==========
     useEffect(() => {
         fetchStatistics();  // 這個函數內部已經包含了 setServers()
-        fetchAvailableViews();  // ← 新增：載入所有可用的 View 列表
+        fetchAvailableViews(filters.server_id);  // ← 修改：根據當前選擇的伺服器載入 View 列表
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     
@@ -666,9 +671,10 @@ const RVTAnalysisPage = () => {
                                     allowClear
                                     value={filters.server_id}
                                     onChange={(value) => {
-                                        const newFilters = { ...filters, server_id: value };
+                                        const newFilters = { ...filters, server_id: value, view_name: null };  // 清空 view_name
                                         setFilters(newFilters);
                                         updateURLParams(newFilters);
+                                        fetchAvailableViews(value);  // 重新載入 View 列表
                                     }}
                                     size="large"
                                 >
