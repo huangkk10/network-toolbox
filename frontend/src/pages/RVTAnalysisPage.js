@@ -42,10 +42,12 @@ import {
     RightOutlined,
     DownOutlined,
     SaveOutlined,
+    SettingOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
 
 const { Content } = Layout;
 const { Option } = Select;
@@ -153,6 +155,15 @@ const RVTAnalysisPage = () => {
         visible: false,
         loading: false,
         data: null,
+    });
+    
+    // Ansible Config Drawer
+    const [ansibleConfigDrawer, setAnsibleConfigDrawer] = useState({
+        visible: false,
+        jobId: null,
+        jobName: null,
+        buildNumber: null,
+        hostname: null, // 添加 hostname 參數，用於過濾主機
     });
 
     // ========== API 調用 ==========
@@ -377,6 +388,18 @@ const RVTAnalysisPage = () => {
         }
     };
     
+    // 查看 Ansible 配置（從 Build 行調用）
+    const handleViewAnsibleConfig = (record) => {
+        // record 是 Build 行，包含 job_id, job_name, build_number
+        setAnsibleConfigDrawer({
+            visible: true,
+            jobId: record.job_id,
+            jobName: record.job_name,
+            buildNumber: record.build_number,
+            hostname: record.job_name, // 只顯示與 job_name 相同的主機
+        });
+    };
+    
     // 存儲 Workspace 到 NAS
     const handleStoreWorkspace = async (record) => {
         Modal.confirm({
@@ -544,7 +567,7 @@ const RVTAnalysisPage = () => {
         {
             title: '操作',
             key: 'action',
-            width: 200,
+            width: 250,
             fixed: 'right',
             render: (_, record) => {
                 if (record.type === 'job') {
@@ -571,6 +594,15 @@ const RVTAnalysisPage = () => {
                                     onClick={() => handleViewLog(record)}
                                 >
                                     日誌
+                                </Button>
+                            </Tooltip>
+                            <Tooltip title="查看 Ansible 配置">
+                                <Button 
+                                    size="small" 
+                                    icon={<SettingOutlined />}
+                                    onClick={() => handleViewAnsibleConfig(record)}
+                                >
+                                    配置
                                 </Button>
                             </Tooltip>
                             <Tooltip title="查看構建詳情">
@@ -922,6 +954,16 @@ const RVTAnalysisPage = () => {
                     </>
                 ) : null}
             </Drawer>
+
+            {/* Ansible Config Drawer */}
+            <AnsibleConfigDrawer
+                visible={ansibleConfigDrawer.visible}
+                onClose={() => setAnsibleConfigDrawer({ ...ansibleConfigDrawer, visible: false })}
+                jobId={ansibleConfigDrawer.jobId}
+                jobName={ansibleConfigDrawer.jobName}
+                buildNumber={ansibleConfigDrawer.buildNumber}
+                hostname={ansibleConfigDrawer.hostname}
+            />
         </Content>
     );
 };

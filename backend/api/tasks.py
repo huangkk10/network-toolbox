@@ -3406,3 +3406,134 @@ def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=72):
                 'duration': duration,
                 'error_message': str(exc)
             }
+
+
+# ==================== Ansible Inventory 快取清理任務 ====================
+
+@shared_task(name='清理過期的 Ansible Inventory 快取')
+def clean_expired_ansible_caches():
+    """
+    清理過期的 Ansible Inventory 快取
+    
+    每天執行一次，清理 7 天前的快取。
+    
+    清理邏輯：
+    1. 遍歷所有 {server_ip}/{job_name}/{build_number}/cache/ 目錄
+    2. 讀取 cache_metadata.json
+    3. 檢查 cache_expires_at 是否過期
+    4. 刪除過期的快取目錄
+    5. 記錄統計信息
+    
+    Returns:
+        dict: {
+            "success": bool,
+            "cleaned_count": int,
+            "total_size_mb": float,
+            "errors": list
+        }
+    """
+    from django.conf import settings
+    from pathlib import Path
+    from datetime import datetime
+    import json
+    import shutil
+    
+    logger.info('[Celery] 🔍 開始清理過期的 Ansible Inventory 快取')
+    start_time = datetime.now()
+    
+    base_path = Path(settings.JENKINS_STORAGE_BASE_PATH)
+    now = datetime.now()
+    cleaned_count = 0
+    total_size_mb = 0
+    errors = []
+    
+    try:
+        # 遍歷所有 cache 目錄
+        cache_dirs = list(base_path.rglob('cache'))
+        logger.info(f'[Celery] 找到 {len(cache_dirs)} 個 cache 目錄')
+        
+        for cache_dir in cache_dirs:
+            if not cache_dir.is_dir():
+                continue
+            
+            # 讀取快取元數據
+            metadata_file = cache_dir / 'cache_metadata.json'
+            if not metadata_file.exists():
+                logger.debug(f'[Celery] 跳過（無元數據）: {cache_dir}')
+                continue
+            
+            try:
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                
+                # 檢查是否過期
+                expires_at_str = metadata.get('cache_expires_at')
+                if not expires_at_str:
+                    logger.warning(f'[Celery] 元數據缺少 cache_expires_at: {cache_dir}')
+                    continue
+                
+                expires_at = datetime.fromisoformat(expires_at_str)
+                
+                if now > expires_at:
+                    # 計算快取大小
+                    cache_size = sum(
+                        f.stat().st_size for f in cache_dir.iterdir() if f.is_file()
+                    )
+                    cache_size_mb = cache_size / 1024 / 1024
+                    
+                    # 記錄快取信息（用於日誌）
+                    build_path = cache_dir.parent
+                    relative_path = build_path.relative_to(base_path)
+                    
+                    # 刪除快取目錄
+                    shutil.rmtree(cache_dir)
+                    cleaned_count += 1
+                    total_size_mb += cache_size_mb
+                    
+                    logger.info(
+                        f'[Celery] ✅ 已清理過期快取: {relative_path} '
+                        f'({cache_size_mb:.2f} MB)'
+                    )
+                else:
+                    # 未過期，跳過
+                    logger.debug(f'[Celery] 快取有效: {cache_dir}')
+                    
+            except json.JSONDecodeError as e:
+                error_msg = f'JSON 解析失敗 {cache_dir}: {e}'
+                logger.warning(f'[Celery] {error_msg}')
+                errors.append(error_msg)
+                continue
+            except Exception as e:
+                error_msg = f'處理快取目錄失敗 {cache_dir}: {e}'
+                logger.warning(f'[Celery] {error_msg}')
+                errors.append(error_msg)
+                continue
+        
+        # 計算執行時間
+        duration = (datetime.now() - start_time).total_seconds()
+        
+        logger.info(
+            f'[Celery] ✅ 快取清理完成：'
+            f'清理 {cleaned_count} 個目錄，'
+            f'釋放 {total_size_mb:.2f} MB，'
+            f'耗時 {duration:.2f} 秒'
+        )
+        
+        return {
+            'success': True,
+            'cleaned_count': cleaned_count,
+            'total_size_mb': round(total_size_mb, 2),
+            'duration': round(duration, 2),
+            'errors': errors
+        }
+        
+    except Exception as e:
+        logger.error(f'[Celery] 清理快取失敗: {e}', exc_info=True)
+        return {
+            'success': False,
+            'cleaned_count': cleaned_count,
+            'total_size_mb': round(total_size_mb, 2),
+            'error': str(e),
+            'errors': errors
+        }
+

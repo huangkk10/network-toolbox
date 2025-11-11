@@ -154,6 +154,16 @@ app.conf.beat_schedule = {
             'queue': 'default',
         }
     },
+    
+    # 任務 13：清理過期的 Ansible Inventory 快取（每天凌晨 3 點）
+    'clean-expired-ansible-caches-daily': {
+        'task': '清理過期的 Ansible Inventory 快取',
+        'schedule': crontab(hour=3, minute=30),  # 每天 03:30 執行（DHCP 清理後 30 分鐘）
+        'options': {
+            'expires': 1800,   # 任務超時 30 分鐘
+            'queue': 'default',
+        }
+    },
 }
 
 

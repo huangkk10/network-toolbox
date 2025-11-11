@@ -6,6 +6,7 @@ Jenkins ViewSets
 """
 
 import logging
+from typing import Optional
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -447,6 +448,300 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             'recent_builds_7d': recent_builds,
             'last_build_time': job.last_build_time,
         })
+    
+    # ==================== Ansible Inventory 相關 API ====================
+    
+    def _get_latest_build_inventory_path(self, job: 'JenkinsJob') -> Optional[str]:
+        """
+        獲取最新 Build 的 inventory/hosts 文件路徑
+        
+        Args:
+            job: JenkinsJob 實例
+        
+        Returns:
+            str: inventory 文件路徑，如果不存在返回 None
+        """
+        from django.conf import settings
+        from pathlib import Path
+        
+        # 獲取最新的 Build（有 artifacts 的）
+        latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
+        
+        if not latest_build:
+            logger.warning(f"Job {job.name} 沒有包含 artifacts 的 Build")
+            return None
+        
+        # 檢查是否有 artifacts_path
+        if not latest_build.artifacts_path:
+            logger.warning(f"Build {latest_build.build_number} 沒有 artifacts_path")
+            return None
+        
+        # 構建 inventory 文件路徑（使用 artifacts_path）
+        artifacts_path = Path(latest_build.artifacts_path)
+        inventory_path = artifacts_path / 'inventory' / 'hosts'
+        
+        if not inventory_path.exists():
+            logger.warning(f"Inventory 文件不存在: {inventory_path}")
+            return None
+        
+        return str(inventory_path)
+    
+    @action(detail=True, methods=['get'], url_path='ansible-inventory')
+    def ansible_inventory(self, request, pk=None):
+        """
+        獲取完整 Ansible Inventory
+        
+        GET /api/jenkins-jobs/{id}/ansible-inventory/
+        
+        Query Parameters:
+            - use_cache: 是否使用快取（默認 true）
+            - force_refresh: 強制刷新（清除快取後重新解析）
+        
+        Returns:
+            完整的 inventory JSON 數據
+        """
+        from library.services.ansible_inventory_service import AnsibleInventoryService
+        
+        job = self.get_object()
+        use_cache = request.query_params.get('use_cache', 'true').lower() == 'true'
+        force_refresh = request.query_params.get('force_refresh', 'false').lower() == 'true'
+        
+        # 獲取 inventory 文件路徑
+        inventory_path = self._get_latest_build_inventory_path(job)
+        if not inventory_path:
+            return Response({
+                'success': False,
+                'error': '找不到 inventory 文件',
+                'message': '該 Job 沒有包含 inventory/hosts 的 Build'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            service = AnsibleInventoryService(inventory_path)
+            
+            # 強制刷新：先清除快取
+            if force_refresh:
+                service.clear_cache('all')
+                use_cache = False
+            
+            # 獲取數據
+            result = service.get_full_inventory(use_cache=use_cache)
+            
+            if result['success']:
+                # 獲取 Build 信息
+                latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
+                
+                return Response({
+                    'success': True,
+                    'job_id': job.id,
+                    'job_name': job.name,
+                    'build_number': latest_build.build_number if latest_build else None,
+                    'cached': result['cached'],
+                    'data': result['data']
+                })
+            else:
+                return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except FileNotFoundError as e:
+            return Response({
+                'success': False,
+                'error': str(e),
+                'message': 'Inventory 文件不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"獲取 Ansible Inventory 失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e),
+                'message': '獲取 inventory 失敗'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'], url_path='ansible-inventory/hosts')
+    def ansible_inventory_hosts(self, request, pk=None):
+        """
+        獲取主機列表
+        
+        GET /api/jenkins-jobs/{id}/ansible-inventory/hosts/
+        
+        Query Parameters:
+            - use_cache: 是否使用快取（默認 true）
+        
+        Returns:
+            主機列表摘要（hostname, IP, device_number, groups）
+        """
+        from library.services.ansible_inventory_service import AnsibleInventoryService
+        
+        job = self.get_object()
+        use_cache = request.query_params.get('use_cache', 'true').lower() == 'true'
+        
+        inventory_path = self._get_latest_build_inventory_path(job)
+        if not inventory_path:
+            return Response({
+                'success': False,
+                'error': '找不到 inventory 文件'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            service = AnsibleInventoryService(inventory_path)
+            result = service.list_all_hosts(use_cache=use_cache)
+            
+            if result['success']:
+                latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
+                
+                return Response({
+                    'success': True,
+                    'job_id': job.id,
+                    'job_name': job.name,
+                    'build_number': latest_build.build_number if latest_build else None,
+                    'cached': result['cached'],
+                    'total_hosts': result['total_hosts'],
+                    'hosts': result['hosts']
+                })
+            else:
+                return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Exception as e:
+            logger.error(f"獲取主機列表失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'], url_path='ansible-inventory/hosts/(?P<hostname>[^/.]+)')
+    def ansible_inventory_host_config(self, request, pk=None, hostname=None):
+        """
+        獲取特定主機配置
+        
+        GET /api/jenkins-jobs/{id}/ansible-inventory/hosts/{hostname}/
+        
+        Query Parameters:
+            - use_cache: 是否使用快取（默認 true）
+        
+        Returns:
+            主機的完整配置（包括從群組繼承的所有變量）
+        """
+        from library.services.ansible_inventory_service import AnsibleInventoryService
+        
+        job = self.get_object()
+        use_cache = request.query_params.get('use_cache', 'true').lower() == 'true'
+        
+        inventory_path = self._get_latest_build_inventory_path(job)
+        if not inventory_path:
+            return Response({
+                'success': False,
+                'error': '找不到 inventory 文件'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            service = AnsibleInventoryService(inventory_path)
+            result = service.get_host_config(hostname, use_cache=use_cache)
+            
+            if result['success']:
+                latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
+                
+                return Response({
+                    'success': True,
+                    'job_id': job.id,
+                    'job_name': job.name,
+                    'build_number': latest_build.build_number if latest_build else None,
+                    'cached': result['cached'],
+                    'hostname': hostname,
+                    'config': result['config']
+                })
+            else:
+                return Response(result, status=status.HTTP_404_NOT_FOUND)
+                
+        except Exception as e:
+            logger.error(f"獲取主機配置失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['delete'], url_path='ansible-inventory/cache')
+    def clear_ansible_cache(self, request, pk=None):
+        """
+        清除快取
+        
+        DELETE /api/jenkins-jobs/{id}/ansible-inventory/cache/
+        
+        Query Parameters:
+            - cache_type: 'all' | 'full_inventory' | 'hosts_list' | 'host_config'（默認 'all'）
+            - hostname: 當 cache_type='host_config' 時指定主機名
+        
+        Returns:
+            清除結果
+        """
+        from library.services.ansible_inventory_service import AnsibleInventoryService
+        
+        job = self.get_object()
+        cache_type = request.query_params.get('cache_type', 'all')
+        hostname = request.query_params.get('hostname')
+        
+        inventory_path = self._get_latest_build_inventory_path(job)
+        if not inventory_path:
+            return Response({
+                'success': False,
+                'error': '找不到 inventory 文件'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            service = AnsibleInventoryService(inventory_path)
+            result = service.clear_cache(cache_type, hostname)
+            
+            return Response({
+                **result,
+                'job_id': job.id,
+                'job_name': job.name
+            })
+            
+        except Exception as e:
+            logger.error(f"清除快取失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'], url_path='ansible-inventory/cache/statistics')
+    def ansible_cache_statistics(self, request, pk=None):
+        """
+        獲取快取統計信息
+        
+        GET /api/jenkins-jobs/{id}/ansible-inventory/cache/statistics/
+        
+        Returns:
+            快取統計（是否存在、是否有效、大小、過期時間等）
+        """
+        from library.services.ansible_inventory_service import AnsibleInventoryService
+        
+        job = self.get_object()
+        
+        inventory_path = self._get_latest_build_inventory_path(job)
+        if not inventory_path:
+            return Response({
+                'success': False,
+                'error': '找不到 inventory 文件'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            service = AnsibleInventoryService(inventory_path)
+            stats = service.get_cache_statistics()
+            
+            latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
+            
+            return Response({
+                'success': True,
+                'job_id': job.id,
+                'job_name': job.name,
+                'build_number': latest_build.build_number if latest_build else None,
+                **stats
+            })
+            
+        except Exception as e:
+            logger.error(f"獲取快取統計失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class JenkinsBuildViewSet(viewsets.ModelViewSet):

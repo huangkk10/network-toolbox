@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
     cifs-utils \
     p7zip-full \
+    gcc \
+    libffi-dev \
+    libssl-dev \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # 複製依賴文件
