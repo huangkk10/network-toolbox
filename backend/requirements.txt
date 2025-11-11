@@ -26,3 +26,6 @@ lxml>=4.9.0  # XML/HTML 解析器
 
 # Ansible Inventory 解析
 ansible>=8.0.0  # Ansible 自動化工具（用於 inventory 解析）
+
+# NTP 時間同步
+ntplib>=0.4.0  # NTP 協議客戶端

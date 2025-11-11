@@ -914,3 +914,47 @@ class JenkinsBuild(models.Model):
     def duration_seconds(self):
         """獲取構建時長（秒）"""
         return self.duration / 1000 if self.duration else 0
+
+
+class NTPSyncLog(models.Model):
+    """NTP 時間同步記錄模型 - 每5分鐘記錄一次，保留2週數據"""
+    
+    STATUS_CHOICES = [
+        ('success', '成功'),
+        ('failed', '失敗'),
+    ]
+    
+    timestamp = models.DateTimeField(verbose_name='記錄時間', db_index=True)
+    status = models.CharField(
+        max_length=10,
+        choices=STATUS_CHOICES,
+        verbose_name='同步狀態',
+        db_index=True
+    )
+    
+    # NTP 伺服器資訊
+    ntp_server = models.GenericIPAddressField(verbose_name='NTP Server', default='10.10.10.51')
+    
+    # 同步結果
+    response_time = models.FloatField(null=True, blank=True, verbose_name='響應時間 (ms)')
+    offset = models.FloatField(null=True, blank=True, verbose_name='時間偏移 (ms)')
+    stratum = models.IntegerField(null=True, blank=True, verbose_name='Stratum 層級')
+    jitter = models.FloatField(null=True, blank=True, verbose_name='時間抖動 (ms)')
+    
+    # 錯誤訊息
+    error_message = models.TextField(blank=True, verbose_name='錯誤訊息')
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    
+    class Meta:
+        verbose_name = 'NTP 同步記錄'
+        verbose_name_plural = 'NTP 同步記錄'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp'], name='idx_ntp_timestamp'),
+            models.Index(fields=['status'], name='idx_ntp_status'),
+            models.Index(fields=['timestamp', 'status'], name='idx_ntp_time_status'),
+        ]
+    
+    def __str__(self):
+        return f"[{self.status}] {self.timestamp} - {self.ntp_server}"

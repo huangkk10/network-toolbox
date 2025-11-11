@@ -14,6 +14,7 @@ import {
     DashboardOutlined,
     GitlabOutlined,
     RocketOutlined,
+    ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useAuth } from '../contexts/AuthContext';
 import './Sidebar.css';
@@ -61,6 +62,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
         if (pathname.startsWith('/nas-analytics')) {
             return 'nas-analytics';
         }
+        if (pathname.startsWith('/ntp-analytics')) {
+            return 'ntp-analytics';
+        }
         if (pathname.startsWith('/gitlab-analytics')) {
             return 'gitlab-analytics';
         }
@@ -89,6 +93,9 @@ const Sidebar = ({ collapsed, onCollapse }) => {
                 break;
             case 'nas-analytics':
                 navigate('/nas-analytics');
+                break;
+            case 'ntp-analytics':
+                navigate('/ntp-analytics');
                 break;
             case 'gitlab-analytics':
                 navigate('/gitlab-analytics');
@@ -144,6 +151,11 @@ const Sidebar = ({ collapsed, onCollapse }) => {
             key: 'ipxe-analytics',
             icon: <ExperimentOutlined />,
             label: 'IPXE 分析',
+        },
+        {
+            key: 'ntp-analytics',
+            icon: <ClockCircleOutlined />,
+            label: 'NTP 分析',
         },
     ];
     

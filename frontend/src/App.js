@@ -13,6 +13,7 @@ import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import DHCPAnalyticsPage from './pages/DHCPAnalyticsPage';
 import NASAnalyticsPage from './pages/NASAnalyticsPage';
+import NTPAnalyticsPage from './pages/NTPAnalyticsPage';
 import GitLabAnalyticsPage from './pages/GitLabAnalyticsPage';
 import IPXEAnalyticsPage from './pages/IPXEAnalyticsPage';
 import DHCPServerManagementPage from './pages/DHCPServerManagementPage';
@@ -86,6 +87,8 @@ function AppLayout() {
                 return 'Dashboard';
             case '/nas-analytics':
                 return 'NAS 分析';
+            case '/ntp-analytics':
+                return 'NTP 分析';
             case '/gitlab-analytics':
                 return 'GitLab 分析';
             case '/system-monitor':
@@ -236,6 +239,7 @@ function AppLayout() {
                         <Route path="/dhcp-analytics/server/:serverId/:tab" element={<DHCPAnalyticsPage />} />
                         
                         <Route path="/nas-analytics" element={<NASAnalyticsPage />} />
+                        <Route path="/ntp-analytics" element={<NTPAnalyticsPage />} />
                         <Route path="/gitlab-analytics" element={<GitLabAnalyticsPage />} />
                         
                         {/* iPXE Analytics 路由 - 支援子路由 */}

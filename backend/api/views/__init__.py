@@ -32,6 +32,9 @@ from .dhcp_logs import (
 # NAS Views
 from .nas import NASConnectionLogViewSet
 
+# NTP Views
+from .ntp import NTPSyncLogViewSet
+
 # GitLab Views
 from .gitlab import GitLabConnectionViewSet
 
@@ -85,6 +88,9 @@ __all__ = [
     
     # NAS
     'NASConnectionLogViewSet',
+    
+    # NTP
+    'NTPSyncLogViewSet',
     
     # GitLab
     'GitLabConnectionViewSet',

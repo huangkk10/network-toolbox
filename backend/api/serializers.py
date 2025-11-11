@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.utils import timezone as django_timezone
 from .models import (
-    DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, 
+    DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, NTPSyncLog,
     IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality,
     NetworkSwitch, SwitchPort, GitLabConnection,
     JenkinsServer, JenkinsJob, JenkinsBuild
@@ -385,3 +385,24 @@ class JenkinsBuildDetailSerializer(JenkinsBuildSerializer):
     
     class Meta(JenkinsBuildSerializer.Meta):
         pass
+
+
+class NTPSyncLogSerializer(serializers.ModelSerializer):
+    """NTP 時間同步記錄序列化器"""
+    
+    # 自訂序列化方法，將 UTC 轉換為 Taipei 時區
+    timestamp = serializers.SerializerMethodField()
+    
+    def get_timestamp(self, obj):
+        """將 UTC 時間轉換為當前時區（Asia/Taipei）"""
+        if obj.timestamp:
+            # 轉換為當前時區
+            local_time = django_timezone.localtime(obj.timestamp)
+            # 格式化輸出
+            return local_time.strftime('%Y-%m-%d %H:%M:%S')
+        return None
+    
+    class Meta:
+        model = NTPSyncLog
+        fields = '__all__'
+        read_only_fields = ('created_at',)

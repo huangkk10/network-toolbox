@@ -3537,3 +3537,92 @@ def clean_expired_ansible_caches():
             'errors': errors
         }
 
+
+@shared_task(
+    bind=True,
+    name='api.tasks.check_ntp_sync_task',
+    max_retries=2,
+    default_retry_delay=60,  # 失敗後 1 分鐘重試
+    time_limit=60,  # 硬限制 1 分鐘
+    soft_time_limit=45  # 軟限制 45 秒
+)
+def check_ntp_sync_task(self):
+    """
+    NTP 時間同步檢測定時任務（每5分鐘執行一次）
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'status': str,           # 'success' or 'failed'
+            'ntp_server': str,
+            'response_time': float,  # 響應時間（ms）
+            'offset': float,         # 時間偏移（ms）
+            'stratum': int,          # Stratum 層級
+            'jitter': float,         # 時間抖動（ms）
+            'timestamp': str
+        }
+    """
+    try:
+        logger.info('[Celery] 開始執行 NTP 時間同步檢測')
+        
+        # 使用 NTP 服務執行檢測
+        from .ntp_service import check_ntp_sync
+        from .models import NTPSyncLog
+        
+        ntp_server = '10.10.10.51'
+        result = check_ntp_sync(ntp_server)
+        
+        # 記錄到資料庫
+        log_entry = NTPSyncLog.objects.create(
+            timestamp=timezone.now(),
+            status=result['status'],
+            ntp_server=result['ntp_server'],
+            response_time=result.get('response_time'),
+            offset=result.get('offset'),
+            stratum=result.get('stratum'),
+            jitter=result.get('jitter'),
+            error_message=result.get('error_message', '')
+        )
+        
+        result_log = {
+            'success': result['status'] == 'success',
+            'status': result['status'],
+            'ntp_server': result['ntp_server'],
+            'response_time': result.get('response_time'),
+            'offset': result.get('offset'),
+            'stratum': result.get('stratum'),
+            'jitter': result.get('jitter'),
+            'timestamp': log_entry.timestamp.isoformat(),
+        }
+        
+        if result['status'] == 'success':
+            logger.info(
+                f'[Celery] NTP 時間同步檢測完成 - '
+                f'Server: {ntp_server} | '
+                f'響應時間: {result["response_time"]:.2f} ms | '
+                f'時間偏移: {result["offset"]:.3f} ms | '
+                f'Stratum: {result["stratum"]}'
+            )
+        else:
+            logger.warning(
+                f'[Celery] NTP 時間同步失敗 - '
+                f'Server: {ntp_server} | '
+                f'錯誤: {result.get("error_message", "未知錯誤")}'
+            )
+        
+        return result_log
+        
+    except Exception as exc:
+        logger.error('[Celery] NTP 時間同步檢測異常', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=60)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] NTP 時間同步檢測重試次數已達上限')
+            return {
+                'success': False,
+                'error_message': str(exc),
+                'timestamp': timezone.now().isoformat()
+            }
+
