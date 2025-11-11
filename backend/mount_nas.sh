@@ -49,15 +49,6 @@ if mount | grep -q "${MOUNT_POINT}"; then
     echo "目錄內容（前 10 項）："
     ls -lah "${MOUNT_POINT}" 2>/dev/null | head -11 || echo "無法列出目錄內容"
     
-    # 創建 Jenkins 存儲目錄
-    JENKINS_STORAGE_PATH="${MOUNT_POINT}/jenkins_test_storage"
-    if [ ! -d "${JENKINS_STORAGE_PATH}" ]; then
-        echo ""
-        echo "📁 創建 Jenkins 存儲目錄: ${JENKINS_STORAGE_PATH}"
-        mkdir -p "${JENKINS_STORAGE_PATH}"
-        chmod 755 "${JENKINS_STORAGE_PATH}"
-    fi
-    
     echo ""
     echo "✅ NAS 掛載完成！"
 else
