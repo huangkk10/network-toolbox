@@ -39,11 +39,30 @@ const HostListTab = ({ hosts, onViewConfig, loading }) => {
 
     // 複製到剪貼簿
     const handleCopy = (text, label) => {
-        navigator.clipboard.writeText(text).then(() => {
-            message.success(`已複製 ${label}`);
-        }).catch(() => {
-            message.error('複製失敗');
-        });
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text)
+                .then(() => {
+                    message.success(`已複製 ${label}`);
+                })
+                .catch(() => {
+                    message.error('複製失敗');
+                });
+        } else {
+            try {
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                message.success(`已複製 ${label}`);
+            } catch (err) {
+                console.error('複製失敗:', err);
+                message.error('複製失敗');
+            }
+        }
     };
 
     // 表格欄位定義

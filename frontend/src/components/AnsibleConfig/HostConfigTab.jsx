@@ -81,11 +81,30 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     // 複製 JSON 到剪貼簿
     const handleCopyJSON = () => {
         const json = JSON.stringify(hostConfig, null, 2);
-        navigator.clipboard.writeText(json).then(() => {
-            message.success('已複製 JSON 配置');
-        }).catch(() => {
-            message.error('複製失敗');
-        });
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(json)
+                .then(() => {
+                    message.success('已複製 JSON 配置');
+                })
+                .catch(() => {
+                    message.error('複製失敗');
+                });
+        } else {
+            try {
+                const textArea = document.createElement('textarea');
+                textArea.value = json;
+                textArea.style.position = 'fixed';
+                textArea.style.opacity = '0';
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                message.success('已複製 JSON 配置');
+            } catch (err) {
+                console.error('複製失敗:', err);
+                message.error('複製失敗');
+            }
+        }
     };
 
     // 格式化配置項目

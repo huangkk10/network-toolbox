@@ -175,8 +175,31 @@ const LogsTab = ({ serverId }) => {
                     }}
                     title="雙擊複製"
                     onDoubleClick={() => {
-                        navigator.clipboard.writeText(text);
-                        message.success('已複製到剪貼簿');
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(text)
+                                .then(() => {
+                                    message.success('已複製到剪貼簿');
+                                })
+                                .catch(err => {
+                                    console.error('複製失敗:', err);
+                                    message.error('複製失敗，請手動選擇文字複製');
+                                });
+                        } else {
+                            try {
+                                const textArea = document.createElement('textarea');
+                                textArea.value = text;
+                                textArea.style.position = 'fixed';
+                                textArea.style.opacity = '0';
+                                document.body.appendChild(textArea);
+                                textArea.select();
+                                document.execCommand('copy');
+                                document.body.removeChild(textArea);
+                                message.success('已複製到剪貼簿');
+                            } catch (err) {
+                                console.error('複製失敗:', err);
+                                message.error('複製失敗，請手動選擇文字複製');
+                            }
+                        }
                     }}
                 >
                     {text}

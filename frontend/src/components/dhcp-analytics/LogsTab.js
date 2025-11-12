@@ -476,8 +476,33 @@ const LogsTab = ({ serverId }) => {
                                                     }}
                                                     title="雙擊複製原始日誌"
                                                     onDoubleClick={() => {
-                                                        navigator.clipboard.writeText(log.raw);
-                                                        message.success('原始日誌已複製到剪貼簿');
+                                                        // 檢查是否支援 Clipboard API
+                                                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                                                            navigator.clipboard.writeText(log.raw)
+                                                                .then(() => {
+                                                                    message.success('原始日誌已複製到剪貼簿');
+                                                                })
+                                                                .catch(err => {
+                                                                    console.error('複製失敗:', err);
+                                                                    message.error('複製失敗，請手動選擇文字複製');
+                                                                });
+                                                        } else {
+                                                            // 降級方案：使用傳統的複製方法
+                                                            try {
+                                                                const textArea = document.createElement('textarea');
+                                                                textArea.value = log.raw;
+                                                                textArea.style.position = 'fixed';
+                                                                textArea.style.opacity = '0';
+                                                                document.body.appendChild(textArea);
+                                                                textArea.select();
+                                                                document.execCommand('copy');
+                                                                document.body.removeChild(textArea);
+                                                                message.success('原始日誌已複製到剪貼簿');
+                                                            } catch (err) {
+                                                                console.error('複製失敗:', err);
+                                                                message.error('複製失敗，請手動選擇文字複製');
+                                                            }
+                                                        }
                                                     }}
                                                 >
                                                     {log.raw}
