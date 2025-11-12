@@ -3181,7 +3181,7 @@ def store_jenkins_artifacts_task(self, build_id):
     time_limit=7200,  # 硬限制 2 小時
     soft_time_limit=6900  # 軟限制 1 小時 55 分鐘
 )
-def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=72):
+def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=168):
     """
     自動批量存儲 Jenkins Artifacts 到 NAS（定時任務）
     
@@ -3189,16 +3189,16 @@ def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=72):
     類似 auto_store_workspaces 的實現邏輯。
     
     規則：
-    - 只存儲 SUCCESS 的 Build
+    - 處理所有狀態的 Build（SUCCESS、FAILURE、UNSTABLE 等）
     - 只存儲有 Artifacts 的 Build
-    - 只存儲最近 N 小時內的 Build（預設 72 小時 = 3 天）
+    - 只存儲最近 N 小時內的 Build（預設 168 小時 = 7 天）
     - 至少 30 分鐘前完成的 Build（避免正在執行）
     - 跳過已存儲的 Build
     - 每次最多存儲 N 個 Build（預設 50）
     
     Args:
-        max_builds: 每次執行最多存儲的 Build 數量（預設 10）
-        max_age_hours: 只存儲最近 N 小時內的 Build（預設 72）
+        max_builds: 每次執行最多存儲的 Build 數量（預設 50）
+        max_age_hours: 只存儲最近 N 小時內的 Build（預設 168 = 7 天）
         
     Returns:
         dict: {
@@ -3225,8 +3225,8 @@ def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=72):
         logger.info('=' * 80)
         logger.info(f'[Celery] 參數配置：')
         logger.info(f'[Celery]   - 每次最多存儲: {max_builds} 個 Build')
-        logger.info(f'[Celery]   - 時間範圍: 最近 {max_age_hours} 小時')
-        logger.info(f'[Celery]   - 存儲狀態: SUCCESS')
+        logger.info(f'[Celery]   - 時間範圍: 最近 {max_age_hours} 小時 ({max_age_hours / 24:.1f} 天)')
+        logger.info(f'[Celery]   - 存儲狀態: 所有狀態（SUCCESS、FAILURE、UNSTABLE 等）')
         logger.info(f'[Celery]   - 跳過已存儲: True')
         
         # 計算時間範圍
@@ -3234,13 +3234,14 @@ def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=72):
         max_age = now - timedelta(hours=max_age_hours)
         min_age = now - timedelta(minutes=30)  # 至少 30 分鐘前完成
         
-        # 查詢符合條件的 Build
+        # 查詢符合條件的 Build（不限定 result 狀態）
         queryset = JenkinsBuild.objects.select_related('job', 'job__server').filter(
-            result='SUCCESS',                    # 只存儲成功的 Build
             build_timestamp__gte=max_age,        # 最近 N 小時內
             build_timestamp__lte=min_age,        # 至少 30 分鐘前完成
             is_building=False,                   # 確保 Build 已完成
             is_artifacts_stored=False,           # 跳過已存儲的
+        ).exclude(
+            result__in=['ABORTED', 'NOT_BUILT']  # 排除被中止和未建置的
         ).order_by('-build_timestamp')[:max_builds]  # 優先處理最新的
         
         total_found = queryset.count()

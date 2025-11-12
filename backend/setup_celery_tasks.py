@@ -168,12 +168,12 @@ def setup_oui_update_task():
 
 
 def setup_jenkins_artifacts_storage_task():
-    """設置 Jenkins Artifacts 自動存儲任務（每小時執行一次）"""
+    """設置 Jenkins Artifacts 自動存儲任務（每 30 分鐘執行一次）"""
     
     print('正在設置 Jenkins Artifacts 自動存儲任務...')
     
-    # 創建 Crontab Schedule（每小時執行一次）
-    schedule = create_or_update_crontab(minute='10', hour='*')
+    # 創建 Crontab Schedule（每 30 分鐘執行一次）
+    schedule = create_or_update_crontab(minute='*/30', hour='*')
     
     # 創建或更新 Periodic Task
     task, created = PeriodicTask.objects.get_or_create(
@@ -182,8 +182,8 @@ def setup_jenkins_artifacts_storage_task():
             'task': 'api.tasks.auto_store_jenkins_artifacts_task',
             'crontab': schedule,
             'enabled': True,
-            'kwargs': json.dumps({'max_builds': 10, 'max_age_hours': 72}),
-            'description': 'Jenkins Artifacts 自動存儲任務 - 每小時 10 分執行，存儲最近 3 天的成功 Build',
+            'kwargs': json.dumps({'max_builds': 50, 'max_age_hours': 168}),
+            'description': 'Jenkins Artifacts 自動存儲任務 - 每 30 分鐘執行，存儲最近 7 天的所有 Build（不限狀態）',
         }
     )
     
@@ -191,8 +191,8 @@ def setup_jenkins_artifacts_storage_task():
         task.task = 'api.tasks.auto_store_jenkins_artifacts_task'
         task.crontab = schedule
         task.enabled = True
-        task.kwargs = json.dumps({'max_builds': 10, 'max_age_hours': 72})
-        task.description = 'Jenkins Artifacts 自動存儲任務 - 每小時 10 分執行，存儲最近 3 天的成功 Build'
+        task.kwargs = json.dumps({'max_builds': 50, 'max_age_hours': 168})
+        task.description = 'Jenkins Artifacts 自動存儲任務 - 每 30 分鐘執行，存儲最近 7 天的所有 Build（不限狀態）'
         task.save()
         print(f'  ✅ 已更新任務: {task.name}')
     else:
