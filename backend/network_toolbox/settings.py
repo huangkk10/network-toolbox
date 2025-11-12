@@ -368,7 +368,7 @@ JENKINS_STORAGE_POLICY = {
     'store_logs': False,                     # 存儲日誌（默認：否，待實現）
     
     # 存儲條件過濾
-    'store_results': ['SUCCESS', 'FAILURE', 'UNSTABLE'],  # 只存儲這些結果的 Builds
+    'store_results': ['SUCCESS', 'FAILURE', 'UNSTABLE', 'ABORTED'],  # 只存儲這些結果的 Builds
                                                            # 選項：SUCCESS, FAILURE, UNSTABLE, ABORTED, NOT_BUILT
                                                            # 設為 None 或空列表表示存儲所有結果
     
