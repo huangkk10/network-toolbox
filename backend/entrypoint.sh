@@ -18,5 +18,11 @@ else
 fi
 
 echo ""
+echo "🚀 啟動 Celery Worker..."
+celery -A network_toolbox worker --loglevel=info --detach
+
+echo "🚀 啟動 Celery Beat（定時任務調度器）..."
+celery -A network_toolbox beat --loglevel=info --detach
+
 echo "🚀 啟動 Django 開發伺服器..."
 exec python manage.py runserver 0.0.0.0:8000
