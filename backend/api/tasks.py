@@ -3627,3 +3627,248 @@ def check_ntp_sync_task(self):
                 'timestamp': timezone.now().isoformat()
             }
 
+
+# ==================== Jenkins Jobs 自動同步任務 ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_all_jenkins_jobs_task',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def sync_all_jenkins_jobs_task(self, server_id=None):
+    """
+    自動同步所有在線 Jenkins Server 的 Jobs
+    
+    定期執行此任務可以：
+    1. 自動發現新建立的 Jenkins Jobs
+    2. 更新現有 Jobs 的狀態（is_buildable, is_disabled）
+    3. 更新 View 分類資訊
+    4. 更新最後同步時間
+    
+    Args:
+        server_id: Jenkins Server ID（可選，None 表示所有在線 Server）
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'total_servers': int,        # 處理的伺服器數量
+            'total_jobs_created': int,   # 新增的 Jobs 總數
+            'total_jobs_updated': int,   # 更新的 Jobs 總數
+            'total_jobs_found': int,     # 從 Jenkins 找到的 Jobs 總數
+            'servers_details': List[dict],  # 每個伺服器的詳細結果
+            'errors': int,               # 錯誤數量
+            'duration': float,           # 執行時間（秒）
+        }
+    """
+    from .models import JenkinsServer, JenkinsJob
+    from library.services.jenkins_client import JenkinsClient
+    
+    start_time = time.time()
+    
+    try:
+        logger.info('[Celery] 🔄 開始自動同步 Jenkins Jobs')
+        logger.info(f'[Celery]   - Server ID: {server_id if server_id else "All Online"}')
+        
+        # 獲取要處理的 Server（只處理在線的）
+        if server_id:
+            servers = JenkinsServer.objects.filter(id=server_id, status='online')
+        else:
+            servers = JenkinsServer.objects.filter(status='online')
+        
+        if not servers.exists():
+            logger.warning('[Celery] ⚠️  沒有找到在線的 Jenkins Server')
+            return {
+                'success': False,
+                'total_servers': 0,
+                'total_jobs_created': 0,
+                'total_jobs_updated': 0,
+                'total_jobs_found': 0,
+                'servers_details': [],
+                'errors': 0,
+                'duration': 0,
+                'error_message': 'No online servers found'
+            }
+        
+        total_servers = servers.count()
+        total_jobs_created = 0
+        total_jobs_updated = 0
+        total_jobs_found = 0
+        servers_details = []
+        total_errors = 0
+        
+        logger.info(f'[Celery] 📡 找到 {total_servers} 個在線的 Jenkins Server')
+        
+        # 遍歷每個 Server
+        for server in servers:
+            server_start = time.time()
+            logger.info(f'[Celery] 🖥️  處理 Server: {server.name} ({server.url})')
+            
+            client = None
+            try:
+                # 創建 Jenkins 客戶端
+                client = JenkinsClient(
+                    base_url=server.url,
+                    username=server.username,
+                    api_token=server.api_token
+                )
+                
+                # 1. 獲取所有 Views
+                views = client.list_views()
+                logger.info(f'[Celery]   - 找到 {len(views)} 個 Views')
+                
+                # 2. 建立 Job 到 View 的映射
+                job_view_map = {}
+                for view in views:
+                    view_name = view.get('name')
+                    # 跳過 "all" 視圖（包含所有 Job）
+                    if view_name == 'all':
+                        continue
+                    
+                    try:
+                        view_jobs = client.get_view_jobs(view_name)
+                        for job_data in view_jobs:
+                            job_name = job_data.get('name')
+                            # 如果 Job 還沒有被分配到 View，則記錄
+                            if job_name not in job_view_map:
+                                job_view_map[job_name] = view_name
+                    except Exception as e:
+                        logger.warning(f'[Celery]   - 無法獲取 View "{view_name}" 的 Jobs: {e}')
+                
+                # 3. 獲取所有 Job 列表
+                jobs = client.list_jobs()
+                logger.info(f'[Celery]   - 找到 {len(jobs)} 個 Jobs')
+                
+                created_count = 0
+                updated_count = 0
+                
+                # 4. 遍歷每個 Job 並創建/更新
+                for job_data in jobs:
+                    job_name = job_data.get('name')
+                    job_url = job_data.get('url')
+                    color = job_data.get('color', 'notbuilt')
+                    
+                    # 根據 color 判斷狀態和是否可構建
+                    is_disabled = color == 'disabled'
+                    is_buildable = color != 'disabled' and color != 'notbuilt'
+                    
+                    # 獲取 Job 所屬的 View
+                    view_name = job_view_map.get(job_name, '')
+                    
+                    # 創建或更新 Job
+                    job, created = JenkinsJob.objects.update_or_create(
+                        server=server,
+                        name=job_name,
+                        defaults={
+                            'url': job_url,
+                            'full_name': job_name,
+                            'is_buildable': is_buildable,
+                            'is_disabled': is_disabled,
+                            'view_name': view_name,
+                            'last_sync_at': timezone.now(),
+                        }
+                    )
+                    
+                    if created:
+                        created_count += 1
+                    else:
+                        updated_count += 1
+                
+                # 5. 更新伺服器同步時間
+                server.last_sync_at = timezone.now()
+                server.save()
+                
+                server_duration = time.time() - server_start
+                
+                logger.info(
+                    f'[Celery] ✅ Server "{server.name}" 同步完成: '
+                    f'新增 {created_count}, 更新 {updated_count}, '
+                    f'共 {len(jobs)} 個 Jobs, 耗時 {server_duration:.2f} 秒'
+                )
+                
+                # 記錄每個 Server 的結果
+                servers_details.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_url': server.url,
+                    'jobs_found': len(jobs),
+                    'jobs_created': created_count,
+                    'jobs_updated': updated_count,
+                    'views_count': len(views) - 1,  # 扣除 "all" view
+                    'duration': server_duration,
+                    'success': True
+                })
+                
+                total_jobs_found += len(jobs)
+                total_jobs_created += created_count
+                total_jobs_updated += updated_count
+                
+            except Exception as e:
+                logger.error(
+                    f'[Celery] ❌ Server "{server.name}" 同步失敗: {e}',
+                    exc_info=True
+                )
+                
+                total_errors += 1
+                
+                servers_details.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_url': server.url,
+                    'jobs_found': 0,
+                    'jobs_created': 0,
+                    'jobs_updated': 0,
+                    'views_count': 0,
+                    'duration': time.time() - server_start,
+                    'success': False,
+                    'error_message': str(e)
+                })
+                
+            finally:
+                if client:
+                    client.close()
+        
+        # 計算總執行時間
+        duration = time.time() - start_time
+        
+        logger.info('[Celery] 🎉 Jenkins Jobs 自動同步完成')
+        logger.info(f'[Celery]   - 處理伺服器: {total_servers} 個')
+        logger.info(f'[Celery]   - 找到 Jobs: {total_jobs_found} 個')
+        logger.info(f'[Celery]   - 新增 Jobs: {total_jobs_created} 個')
+        logger.info(f'[Celery]   - 更新 Jobs: {total_jobs_updated} 個')
+        logger.info(f'[Celery]   - 錯誤數量: {total_errors} 個')
+        logger.info(f'[Celery]   - 總耗時: {duration:.2f} 秒')
+        
+        return {
+            'success': total_errors == 0,
+            'total_servers': total_servers,
+            'total_jobs_created': total_jobs_created,
+            'total_jobs_updated': total_jobs_updated,
+            'total_jobs_found': total_jobs_found,
+            'servers_details': servers_details,
+            'errors': total_errors,
+            'duration': duration,
+        }
+        
+    except Exception as exc:
+        logger.error('[Celery] 💥 Jenkins Jobs 自動同步異常', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] Jenkins Jobs 自動同步重試次數已達上限')
+            duration = time.time() - start_time
+            return {
+                'success': False,
+                'total_servers': 0,
+                'total_jobs_created': 0,
+                'total_jobs_updated': 0,
+                'total_jobs_found': 0,
+                'servers_details': [],
+                'errors': 1,
+                'duration': duration,
+                'error_message': str(exc)
+            }

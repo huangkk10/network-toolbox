@@ -164,6 +164,19 @@ app.conf.beat_schedule = {
             'queue': 'default',
         }
     },
+    
+    # 任務 14：Jenkins Jobs 自動同步（每小時整點）
+    'sync-jenkins-jobs-hourly': {
+        'task': 'api.tasks.sync_all_jenkins_jobs_task',
+        'schedule': crontab(minute=0),  # 每小時整點執行（00:00, 01:00, 02:00...）
+        'kwargs': {
+            'server_id': None  # None 表示處理所有在線 Server
+        },
+        'options': {
+            'expires': 3300,   # 任務超時 55 分鐘（避免與下次重疊）
+            'queue': 'default',
+        }
+    },
 }
 
 
