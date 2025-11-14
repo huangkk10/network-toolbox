@@ -1,7 +1,7 @@
 #!/bin/bash
 # Django 容器啟動腳本
 # 1. 掛載 NAS
-# 2. 啟動 Django 開發伺服器
+# 2. 使用 Supervisor 啟動所有服務（Celery Worker, Celery Beat, Django）
 
 set -e
 
@@ -18,11 +18,11 @@ else
 fi
 
 echo ""
-echo "🚀 啟動 Celery Worker..."
-celery -A network_toolbox worker --loglevel=info --detach
+echo "🚀 使用 Supervisor 啟動所有服務..."
+echo "   - Celery Worker（異步任務處理）"
+echo "   - Celery Beat（定時任務調度器）"
+echo "   - Django 開發伺服器"
+echo ""
 
-echo "🚀 啟動 Celery Beat（定時任務調度器）..."
-celery -A network_toolbox beat --loglevel=info --detach
-
-echo "🚀 啟動 Django 開發伺服器..."
-exec python manage.py runserver 0.0.0.0:8000
+# 啟動 Supervisor（管理所有進程）
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf

@@ -124,7 +124,7 @@ app.conf.beat_schedule = {
         'kwargs': {
             'server_id': None,           # None 表示處理所有 Server
             'max_builds_per_job': 20,    # 每個 Job 最多同步 20 個 Builds
-            'max_age_days': 7            # 只同步最近 7 天內的 Builds
+            'max_age_days': 30           # 只同步最近 30 天內的 Builds（從 7 改為 30）
         },
         'options': {
             'expires': 540,    # 任務超時 9 分鐘

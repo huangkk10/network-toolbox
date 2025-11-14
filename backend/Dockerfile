@@ -13,7 +13,11 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     libssl-dev \
     python3-dev \
+    supervisor \
     && rm -rf /var/lib/apt/lists/*
+
+# 建立 Supervisor 日誌目錄
+RUN mkdir -p /var/log/supervisor
 
 # 複製依賴文件
 COPY requirements.txt /app/
@@ -26,6 +30,9 @@ COPY . /app/
 
 # 創建日誌目錄
 RUN mkdir -p /app/logs && chmod 777 /app/logs
+
+# 複製 Supervisor 配置
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # 設置啟動腳本權限
 RUN chmod +x /app/entrypoint.sh /app/mount_nas.sh
