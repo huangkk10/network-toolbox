@@ -24,9 +24,14 @@ import {
     CodeOutlined,
     CopyOutlined,
     CheckCircleOutlined,
+    CloseCircleOutlined,
+    ExperimentOutlined,
 } from '@ant-design/icons';
-import { getHostConfig } from '../../services/ansibleService';
-import { formatConfigForDisplay } from '../../services/ansibleService';
+import { 
+    getHostConfig,
+    formatConfigForDisplay,
+    extractTestcaseFields,
+} from '../../services/ansibleService';
 
 const { Panel } = Collapse;
 const { Paragraph, Text } = Typography;
@@ -107,10 +112,14 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
         }
     };
 
-    // 格式化配置項目
+    // 格式化配置項目（已自動排除測試案例參數）
     const configItems = hostConfig ? formatConfigForDisplay(hostConfig) : [];
 
-    // 分類配置項目
+    // 提取測試案例參數（獨立分類）
+    const testcaseFields = hostConfig ? extractTestcaseFields(hostConfig) : {};
+    const testcaseKeys = Object.keys(testcaseFields);
+
+    // 分類配置項目（configItems 已經不包含測試案例參數）
     const basicItems = configItems.filter(item => 
         ['ansible_host', 'device_number', 'sample_number', 'macaddress'].includes(item.key)
     );
@@ -283,6 +292,122 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
                                     </Descriptions.Item>
                                 ))}
                             </Descriptions>
+                        </Card>
+                    )}
+
+                    {/* 測試案例配置卡片 */}
+                    {testcaseKeys.length > 0 && (
+                        <Card 
+                            title={
+                                <Space>
+                                    <ExperimentOutlined />
+                                    測試案例配置
+                                </Space>
+                            }
+                            size="small"
+                            style={{ 
+                                borderColor: '#52c41a',
+                                boxShadow: '0 2px 8px rgba(82, 196, 26, 0.1)'
+                            }}
+                        >
+                            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                                {testcaseKeys.map(key => {
+                                    const field = testcaseFields[key];
+                                    
+                                    // 如果是測試配置的 array of objects，展開顯示詳細欄位
+                                    if (Array.isArray(field.value) && 
+                                        field.value.length > 0 && 
+                                        typeof field.value[0] === 'object') {
+                                        
+                                        const testcaseFields_detail = ['id', 'enabled', 'script_exec', 'log_path', 'timeout', 'archive_patterns'];
+                                        const hasTestcaseFields = testcaseFields_detail.some(f => f in field.value[0]);
+                                        
+                                        if (hasTestcaseFields) {
+                                            // 這是測試配置，展開顯示每個測試項目
+                                            return (
+                                                <div key={key}>
+                                                    <Text strong style={{ color: '#52c41a', fontSize: '16px' }}>
+                                                        {field.label}
+                                                    </Text>
+                                                    {field.value.map((testItem, index) => (
+                                                        <Card 
+                                                            key={index}
+                                                            size="small"
+                                                            style={{ marginTop: 8, backgroundColor: testItem.enabled ? '#f6ffed' : '#fff1f0' }}
+                                                            title={
+                                                                <Space>
+                                                                    {testItem.enabled ? (
+                                                                        <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                                                    ) : (
+                                                                        <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                                                                    )}
+                                                                    <Text strong>
+                                                                        測試項目 #{index + 1}
+                                                                        {testItem.id && `: ${testItem.id}`}
+                                                                    </Text>
+                                                                </Space>
+                                                            }
+                                                        >
+                                                            <Descriptions 
+                                                                column={1} 
+                                                                bordered
+                                                                size="small"
+                                                            >
+                                                                {Object.entries(testItem).map(([itemKey, itemValue]) => (
+                                                                    <Descriptions.Item 
+                                                                        key={itemKey}
+                                                                        label={<Text strong>{itemKey}</Text>}
+                                                                    >
+                                                                        <Text copyable>
+                                                                            {typeof itemValue === 'boolean' 
+                                                                                ? (itemValue ? '✓ 是' : '✗ 否')
+                                                                                : (typeof itemValue === 'object' 
+                                                                                    ? JSON.stringify(itemValue, null, 2) 
+                                                                                    : String(itemValue))
+                                                                            }
+                                                                        </Text>
+                                                                    </Descriptions.Item>
+                                                                ))}
+                                                            </Descriptions>
+                                                        </Card>
+                                                    ))}
+                                                </div>
+                                            );
+                                        }
+                                    }
+                                    
+                                    // 其他類型的測試案例參數（如 testcase_set, testcase_version 等）
+                                    let displayValue = field.value;
+                                    if (Array.isArray(field.value)) {
+                                        displayValue = field.value.join(', ');
+                                    } else if (typeof field.value === 'object' && field.value !== null) {
+                                        displayValue = JSON.stringify(field.value, null, 2);
+                                    } else {
+                                        displayValue = String(field.value);
+                                    }
+                                    
+                                    return (
+                                        <Descriptions 
+                                            key={key}
+                                            column={2} 
+                                            bordered
+                                            size="small"
+                                        >
+                                            <Descriptions.Item 
+                                                label={<Text strong style={{ color: '#52c41a' }}>{field.label}</Text>}
+                                                span={2}
+                                            >
+                                                <Text 
+                                                    copyable={displayValue !== 'N/A'}
+                                                    style={{ color: '#389e0d' }}
+                                                >
+                                                    {displayValue}
+                                                </Text>
+                                            </Descriptions.Item>
+                                        </Descriptions>
+                                    );
+                                })}
+                            </Space>
                         </Card>
                     )}
 
