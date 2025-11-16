@@ -587,6 +587,24 @@ const RVTAnalysisPage = () => {
                 } else {
                     return (
                         <Space size="small">
+                            <Tooltip title="檢查 Build 配置">
+                                <Button 
+                                    size="small"
+                                    icon={<CheckCircleOutlined />}
+                                    onClick={() => {
+                                        console.log('🔍 檢查配置按鈕 - record:', record);
+                                        console.log('🔍 record.id:', record.id);
+                                        console.log('🔍 record.build_id:', record.build_id);
+                                        console.log('🔍 record.build_number:', record.build_number);
+                                        // 使用 build_id（後端 API 的主鍵）
+                                        const buildId = record.build_id || record.id;
+                                        console.log('🔍 最終使用的 buildId:', buildId);
+                                        navigate(`/rvt-analytics/build-config-validator/${buildId}`);
+                                    }}
+                                >
+                                    檢查配置
+                                </Button>
+                            </Tooltip>
                             <Tooltip title="查看控制台日誌">
                                 <Button 
                                     size="small"

@@ -1,0 +1,481 @@
+/**
+ * Build 配置檢查頁面 - Check List 版本
+ * 
+ * 功能：
+ * 1. 顯示 Build 基本資訊和檢查總覽
+ * 2. 使用 Check List 風格展示檢查項目
+ * 3. 支持展開/折疊詳細信息
+ * 4. 提供重新檢查、導出報告等功能
+ * 5. 智能展開（錯誤項目自動展開）
+ */
+
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import {
+    Card,
+    Checkbox,
+    Collapse,
+    Progress,
+    Button,
+    Descriptions,
+    Tag,
+    Spin,
+    Space,
+    Divider,
+    message,
+    Select,
+    Statistic,
+    Row,
+    Col,
+    Typography,
+} from 'antd';
+import {
+    CheckCircleOutlined,
+    CloseCircleOutlined,
+    WarningOutlined,
+    SyncOutlined,
+    LeftOutlined,
+    InfoCircleOutlined,
+    DownloadOutlined,
+    ClockCircleOutlined,
+} from '@ant-design/icons';
+import axios from 'axios';
+
+const { Panel } = Collapse;
+const { Option } = Select;
+const { Title, Text } = Typography;
+
+const BuildConfigValidatorPage = () => {
+    const { buildId } = useParams();
+    const navigate = useNavigate();
+
+    // 狀態管理
+    const [loading, setLoading] = useState(false);
+    const [buildInfo, setBuildInfo] = useState(null);
+    const [validationResult, setValidationResult] = useState(null);
+    const [dhcpServers, setDhcpServers] = useState([]);
+    const [selectedDhcpServer, setSelectedDhcpServer] = useState(null);
+    const [expandedPanels, setExpandedPanels] = useState([]);
+    const [checkboxStates, setCheckboxStates] = useState({});
+
+    // 獲取 Build 基本資訊
+    useEffect(() => {
+        console.log('🔍 useEffect triggered - buildId:', buildId);
+        if (buildId) {
+            fetchBuildInfo();
+            fetchDhcpServers();
+        } else {
+            console.error('❌ buildId is undefined!');
+            message.error('無效的 Build ID');
+        }
+    }, [buildId]);
+
+    const fetchBuildInfo = async () => {
+        setLoading(true);
+        try {
+            const response = await axios.get(`/api/jenkins-builds/${buildId}/`);
+            setBuildInfo(response.data);
+        } catch (error) {
+            console.error('獲取 Build 資訊失敗:', error);
+            message.error('獲取 Build 資訊失敗');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchDhcpServers = async () => {
+        try {
+            const response = await axios.get('/api/dhcp-servers/');
+            // 確保返回的是數組
+            if (Array.isArray(response.data)) {
+                setDhcpServers(response.data);
+            } else {
+                console.warn('DHCP Servers 響應格式不正確:', response.data);
+                setDhcpServers([]);
+            }
+        } catch (error) {
+            console.error('獲取 DHCP Server 列表失敗:', error);
+            setDhcpServers([]);
+        }
+    };
+
+    // 執行配置檢查
+    const handleValidate = async () => {
+        setLoading(true);
+        try {
+            const payload = selectedDhcpServer ? { dhcp_server_id: selectedDhcpServer } : {};
+            console.log('🔍 發送驗證請求 - payload:', payload);
+            
+            const response = await axios.post(`/api/jenkins-builds/${buildId}/validate_config/`, payload);
+            
+            console.log('✅ 驗證響應:', response.data);
+            console.log('🔍 checks 類型:', typeof response.data.checks);
+            console.log('🔍 checks 值:', response.data.checks);
+            
+            // 後端返回的是 checks 物件，需要轉換為 check_results 陣列
+            const formattedResult = {
+                ...response.data,
+                check_results: Object.entries(response.data.checks || {}).map(([key, value]) => ({
+                    item: key,
+                    status: value.status,
+                    message: value.message,
+                    details: value.details,
+                    suggestions: value.suggestions || []
+                }))
+            };
+            
+            console.log('✅ 格式化後的結果:', formattedResult);
+            
+            setValidationResult(formattedResult);
+            message.success('配置檢查完成');
+        } catch (error) {
+            console.error('❌ 配置檢查失敗:', error);
+            console.error('❌ 錯誤響應:', error.response?.data);
+            message.error('配置檢查失敗：' + (error.response?.data?.message || error.message));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // 返回上一頁
+    const handleBack = () => {
+        navigate(-1);
+    };
+
+    // 渲染檢查項目狀態圖標
+    const renderStatusIcon = (status) => {
+        switch (status) {
+            case 'passed':
+                return <CheckCircleOutlined style={{ color: '#52c41a', fontSize: '24px' }} />;
+            case 'warning':
+                return <WarningOutlined style={{ color: '#faad14', fontSize: '24px' }} />;
+            case 'failed':
+                return <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: '24px' }} />;
+            default:
+                return null;
+        }
+    };
+
+    // 渲染 Step 狀態
+    const renderStepStatus = (status) => {
+        switch (status) {
+            case 'passed':
+                return 'finish';
+            case 'warning':
+                return 'error';
+            case 'failed':
+                return 'error';
+            default:
+                return 'wait';
+        }
+    };
+
+    // 渲染檢查結果詳情
+    const renderCheckResult = (result) => {
+        const { item, status, value, message: msg, details } = result;
+
+        const statusColor = {
+            passed: 'success',
+            warning: 'warning',
+            failed: 'error',
+        }[status];
+
+        return (
+            <Card
+                key={item}
+                style={{ marginBottom: '16px' }}
+                title={
+                    <Space>
+                        {renderStatusIcon(status)}
+                        <span>{getItemDisplayName(item)}</span>
+                        <Tag color={statusColor}>{getStatusDisplayName(status)}</Tag>
+                    </Space>
+                }
+            >
+                <Descriptions column={1} size="small">
+                    <Descriptions.Item label="檢查值">
+                        <code>{value || 'N/A'}</code>
+                    </Descriptions.Item>
+                    <Descriptions.Item label="檢查結果">
+                        {msg}
+                    </Descriptions.Item>
+                </Descriptions>
+
+                {/* 詳細資訊 */}
+                {details && Object.keys(details).length > 0 && (
+                    <>
+                        <Divider />
+                        <Descriptions column={1} size="small" title="詳細資訊">
+                            {Object.entries(details).map(([key, val]) => (
+                                <Descriptions.Item key={key} label={getDetailLabel(key)}>
+                                    {formatDetailValue(key, val)}
+                                </Descriptions.Item>
+                            ))}
+                        </Descriptions>
+                    </>
+                )}
+
+                {/* 警告或錯誤提示 */}
+                {(status === 'warning' || status === 'failed') && details.suggestion && (
+                    <Alert
+                        message="建議"
+                        description={details.suggestion}
+                        type={status === 'warning' ? 'warning' : 'error'}
+                        showIcon
+                        style={{ marginTop: '16px' }}
+                    />
+                )}
+            </Card>
+        );
+    };
+
+    // 檢查項目顯示名稱
+    const getItemDisplayName = (item) => {
+        const names = {
+            host_ip: 'Host IP',
+            host_mac: 'Host MAC',
+            uart_ip: 'UART IP',
+        };
+        return names[item] || item;
+    };
+
+    // 狀態顯示名稱
+    const getStatusDisplayName = (status) => {
+        const names = {
+            passed: '通過',
+            warning: '警告',
+            failed: '失敗',
+        };
+        return names[status] || status;
+    };
+
+    // 詳細資訊標籤名稱
+    const getDetailLabel = (key) => {
+        const labels = {
+            lease_found: '租約狀態',
+            lease_active: '租約啟用',
+            lease_end: '租約到期',
+            lease_ip: '租約 IP',
+            hostname: '主機名稱',
+            dhcp_server: 'DHCP Server',
+            dhcp_server_ip: 'DHCP Server IP',
+            dhcp_server_status: 'DHCP Server 狀態',
+            hours_remaining: '剩餘時間（小時）',
+            checked_servers: '已檢查伺服器',
+            online_servers_count: '線上伺服器數量',
+            expected_format: '正確格式',
+            suggestion: '建議',
+            config_ip: '配置的 IP',
+        };
+        return labels[key] || key;
+    };
+
+    // 格式化詳細資訊值
+    const formatDetailValue = (key, value) => {
+        if (value === true) return <Tag color="success">是</Tag>;
+        if (value === false) return <Tag color="default">否</Tag>;
+        if (key === 'lease_end') return new Date(value).toLocaleString('zh-TW');
+        if (key === 'checked_servers' && Array.isArray(value)) return value.join(', ');
+        return String(value);
+    };
+
+    // 渲染 Steps
+    const renderSteps = () => {
+        if (!validationResult) return null;
+
+        const { check_results = [], overall_status = 'unknown' } = validationResult;
+        
+        // 安全檢查：確保 check_results 是數組
+        if (!Array.isArray(check_results)) {
+            console.error('❌ check_results is not an array:', check_results);
+            return null;
+        }
+
+        return (
+            <Steps
+                current={check_results.length}
+                status={overall_status === 'passed' ? 'finish' : 'error'}
+                style={{ marginBottom: '24px' }}
+            >
+                {check_results.map((result, index) => (
+                    <Step
+                        key={result.item}
+                        title={getItemDisplayName(result.item)}
+                        status={renderStepStatus(result.status)}
+                        icon={renderStatusIcon(result.status)}
+                    />
+                ))}
+            </Steps>
+        );
+    };
+
+    // 渲染總體結果
+    const renderOverallResult = () => {
+        if (!validationResult) return null;
+
+        const { overall_status = 'unknown' } = validationResult;
+
+        const resultConfig = {
+            passed: {
+                status: 'success',
+                title: '配置檢查通過',
+                subTitle: '所有檢查項目均已通過，配置正確無誤',
+                icon: <CheckCircleOutlined />,
+            },
+            warning: {
+                status: 'warning',
+                title: '配置檢查有警告',
+                subTitle: '部分檢查項目需要注意，請查看詳細資訊',
+                icon: <WarningOutlined />,
+            },
+            failed: {
+                status: 'error',
+                title: '配置檢查失敗',
+                subTitle: '部分檢查項目未通過，請修正配置後重試',
+                icon: <CloseCircleOutlined />,
+            },
+            error: {
+                status: 'error',
+                title: '檢查過程發生錯誤',
+                subTitle: validationResult.error || '執行配置檢查時發生錯誤',
+                icon: <CloseCircleOutlined />,
+            },
+            unknown: {
+                status: 'info',
+                title: '狀態未知',
+                subTitle: '無法確定檢查狀態',
+                icon: <InfoCircleOutlined />,
+            },
+        };
+
+        const config = resultConfig[overall_status] || resultConfig.unknown;
+
+        return (
+            <Result
+                status={config.status}
+                title={config.title}
+                subTitle={config.subTitle}
+                icon={config.icon}
+            />
+        );
+    };
+
+    if (loading && !buildInfo) {
+        return (
+            <div style={{ padding: '24px', textAlign: 'center' }}>
+                <Spin size="large" tip="載入中..." />
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ padding: '24px', background: '#f0f2f5', minHeight: '100vh' }}>
+            {/* 頁面標題和返回按鈕 */}
+            <Card style={{ marginBottom: '24px' }}>
+                <Space style={{ marginBottom: '16px' }}>
+                    <Button icon={<LeftOutlined />} onClick={handleBack}>
+                        返回
+                    </Button>
+                    <Divider type="vertical" />
+                    <h2 style={{ margin: 0 }}>Build 配置檢查</h2>
+                </Space>
+            </Card>
+
+            {/* Build 基本資訊 */}
+            {buildInfo && (
+                <Card title="Build 資訊" style={{ marginBottom: '24px' }}>
+                    <Descriptions column={2}>
+                        <Descriptions.Item label="Job 名稱">
+                            {buildInfo.job_name}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Build 編號">
+                            #{buildInfo.build_number}
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Build 結果">
+                            <Tag
+                                color={
+                                    buildInfo.result === 'SUCCESS'
+                                        ? 'success'
+                                        : buildInfo.result === 'FAILURE'
+                                        ? 'error'
+                                        : 'default'
+                                }
+                            >
+                                {buildInfo.result}
+                            </Tag>
+                        </Descriptions.Item>
+                        <Descriptions.Item label="Build 時間">
+                            {buildInfo.build_timestamp
+                                ? new Date(buildInfo.build_timestamp).toLocaleString('zh-TW')
+                                : 'N/A'}
+                        </Descriptions.Item>
+                    </Descriptions>
+                </Card>
+            )}
+
+            {/* 檢查控制 */}
+            <Card title="執行檢查" style={{ marginBottom: '24px' }}>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                    <div>
+                        <label>指定 DHCP Server（可選）：</label>
+                        <Select
+                            placeholder="選擇 DHCP Server（留空則自動選擇）"
+                            allowClear
+                            style={{ width: '300px', marginLeft: '8px' }}
+                            value={selectedDhcpServer}
+                            onChange={setSelectedDhcpServer}
+                        >
+                            {Array.isArray(dhcpServers) && dhcpServers.map((server) => (
+                                <Option key={server.id} value={server.id}>
+                                    {server.name} ({server.ip_address})
+                                </Option>
+                            ))}
+                        </Select>
+                    </div>
+                    <Button
+                        type="primary"
+                        icon={<SyncOutlined />}
+                        onClick={handleValidate}
+                        loading={loading}
+                        size="large"
+                    >
+                        開始檢查
+                    </Button>
+                </Space>
+            </Card>
+
+            {/* 檢查結果 */}
+            {validationResult && (
+                <>
+                    {/* Steps 展示 */}
+                    <Card style={{ marginBottom: '24px' }}>
+                        {renderSteps()}
+                    </Card>
+
+                    {/* 總體結果 */}
+                    <Card style={{ marginBottom: '24px' }}>
+                        {renderOverallResult()}
+                        <Descriptions column={2} size="small" style={{ marginTop: '16px' }}>
+                            <Descriptions.Item label="檢查時間">
+                                {validationResult.checked_at 
+                                    ? new Date(validationResult.checked_at).toLocaleString('zh-TW')
+                                    : 'N/A'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="檢查項目數">
+                                {validationResult.check_results?.length || 0}
+                            </Descriptions.Item>
+                        </Descriptions>
+                    </Card>
+
+                    {/* 詳細檢查結果 */}
+                    <Card title="詳細檢查結果">
+                        {Array.isArray(validationResult.check_results) && 
+                            validationResult.check_results.map((result) => renderCheckResult(result))}
+                    </Card>
+                </>
+            )}
+        </div>
+    );
+};
+
+export default BuildConfigValidatorPage;

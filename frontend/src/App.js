@@ -23,6 +23,7 @@ import SettingsPage from './pages/SettingsPage';
 import SystemMonitorPage from './pages/SystemMonitorPage';
 import RVTAnalysisPage from './pages/RVTAnalysisPage';
 import RVTManagementPage from './pages/RVTManagementPage';
+import BuildConfigValidatorPage from './pages/BuildConfigValidatorPage';
 
 const { Content } = Layout;
 
@@ -249,6 +250,7 @@ function AppLayout() {
                         
                         {/* RVT Analytics 路由 - 僅 Admin 可訪問 */}
                         <Route path="/rvt-analytics" element={<RVTAnalysisPage />} />
+                        <Route path="/rvt-analytics/build-config-validator/:buildId" element={<BuildConfigValidatorPage />} />
                         
                         <Route path="/system-monitor" element={<SystemMonitorPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />

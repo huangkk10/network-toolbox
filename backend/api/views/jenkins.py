@@ -1470,3 +1470,57 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'])
+    def validate_config(self, request, pk=None):
+        """
+        檢查 Build 配置是否有問題
+        
+        POST /api/jenkins-builds/{id}/validate_config/
+        
+        Request Body (可選):
+            {
+                'dhcp_server_id': int  # 可選，指定要查詢的 DHCP Server ID
+            }
+        
+        Returns:
+            {
+                'build_id': int,
+                'job_name': str,
+                'build_number': int,
+                'overall_status': 'passed' | 'warning' | 'failed',
+                'check_results': [
+                    {
+                        'item': 'host_ip' | 'host_mac' | 'uart_ip',
+                        'status': 'passed' | 'warning' | 'failed',
+                        'value': str,
+                        'message': str,
+                        'details': {}
+                    }
+                ],
+                'checked_at': str (ISO 時間)
+            }
+        """
+        from library.services.build_config_validator import BuildConfigValidator
+        
+        build = self.get_object()
+        
+        # 獲取可選的 dhcp_server_id（將單個 ID 轉換為列表）
+        dhcp_server_id = request.data.get('dhcp_server_id')
+        dhcp_server_ids = [dhcp_server_id] if dhcp_server_id else None
+        
+        try:
+            # 創建檢查器並執行檢查
+            validator = BuildConfigValidator(build.id, dhcp_server_ids=dhcp_server_ids)
+            result = validator.validate()
+            
+            logger.info(f"Build #{build.build_number} 配置檢查完成: {result['overall_status']}")
+            
+            return Response(result)
+            
+        except Exception as e:
+            logger.error(f"配置檢查失敗: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'message': f'檢查失敗: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

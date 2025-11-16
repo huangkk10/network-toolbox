@@ -355,11 +355,11 @@ class JenkinsBuildDetailSerializer(JenkinsBuildSerializer):
     
     def get_build_parameters_formatted(self, obj):
         """格式化 Build 參數為易讀格式"""
-        if not obj.build_parameters:
+        if not obj.parameters:
             return None
         
         # 將 JSON 轉換為易讀的列表格式
-        params = obj.build_parameters
+        params = obj.parameters
         if isinstance(params, dict):
             return [
                 {'name': k, 'value': v}
