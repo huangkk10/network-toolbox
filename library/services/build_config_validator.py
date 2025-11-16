@@ -154,13 +154,12 @@ class BuildConfigValidator:
     
     def _fetch_config_from_ansible_api(self) -> Optional[Dict]:
         """
-        Fetch actual config from Ansible Inventory API (using --host)
+        Fetch actual config from Ansible Inventory API
         
-        Steps:
-        1. Check if build has associated job
-        2. Call /api/jenkins-jobs/{job_id}/ansible-inventory/hosts/{job_name}/
-           (This uses ansible-inventory --host {job_name} internally)
-        3. Map fields: ansible_host -> HOST_IP, macaddress -> HOST_MAC
+        Optimized Strategy:
+        1. Get full inventory once (uses cache: ansible_inventory.json)
+        2. Extract host config from _meta.hostvars[hostname]
+        3. If uart_host is hostname, extract its ansible_host from full inventory
         
         Returns:
             Config dict or None if failed
@@ -178,18 +177,28 @@ class BuildConfigValidator:
             import requests
             
             job_id = self.build.job.id
-            # Use --host API endpoint: directly get config for specific hostname
-            api_url = f"http://localhost:8000/api/jenkins-jobs/{job_id}/ansible-inventory/hosts/{job_name}/"
             
-            logger.info(f"Calling Ansible Inventory API (--host): GET {api_url}?use_cache=true")
+            # Optimized: Use full inventory API (single cache file: ansible_inventory.json)
+            api_url = f"http://localhost:8000/api/jenkins-jobs/{job_id}/ansible-inventory/"
             
-            response = requests.get(api_url, params={'use_cache': True}, timeout=10)
+            logger.info(f"Calling Ansible Inventory API (--list): GET {api_url}?use_cache=true")
+            
+            response = requests.get(api_url, params={'use_cache': True}, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
                 
-                if data.get('success') and data.get('config'):
-                    host_config = data['config']
+                if data.get('success') and data.get('data'):
+                    full_inventory = data['data']
+                    
+                    # Extract host config from _meta.hostvars
+                    hostvars = full_inventory.get('_meta', {}).get('hostvars', {})
+                    
+                    if job_name not in hostvars:
+                        logger.warning(f"Host '{job_name}' not found in inventory hostvars")
+                        return None
+                    
+                    host_config = hostvars[job_name]
                     
                     logger.info(f"✅ Got Ansible config for host: {job_name} ({len(host_config)} params)")
                     
@@ -205,21 +214,40 @@ class BuildConfigValidator:
                         mapped_config['HOST_MAC'] = host_config['macaddress']
                         logger.debug(f"Mapped macaddress -> HOST_MAC: {host_config['macaddress']}")
                     
-                    # Map uart_host to UART_IP (accept both IP and hostname)
+                    # Map uart_host to UART_IP (optimized: resolve from full inventory)
                     if 'uart_host' in host_config:
                         uart_host = host_config['uart_host']
-                        mapped_config['UART_IP'] = uart_host
+                        
+                        # Check if uart_host is an IP or hostname
                         if self._is_valid_ip(uart_host):
+                            # It's already an IP, use it directly
+                            mapped_config['UART_IP'] = uart_host
                             logger.debug(f"Mapped uart_host -> UART_IP: {uart_host} (IP format)")
                         else:
-                            logger.debug(f"Mapped uart_host -> UART_IP: {uart_host} (hostname)")
+                            # It's a hostname, resolve from full inventory (no additional API call!)
+                            logger.debug(f"uart_host is hostname: {uart_host}, resolving from inventory...")
+                            
+                            if uart_host in hostvars:
+                                uart_config = hostvars[uart_host]
+                                
+                                if 'ansible_host' in uart_config:
+                                    resolved_ip = uart_config['ansible_host']
+                                    mapped_config['UART_IP'] = resolved_ip
+                                    mapped_config['UART_HOSTNAME'] = uart_host
+                                    logger.info(f"✅ Resolved UART hostname '{uart_host}' -> IP: {resolved_ip} (from inventory cache)")
+                                else:
+                                    logger.warning(f"UART hostname '{uart_host}' found but has no ansible_host")
+                                    mapped_config['UART_IP'] = uart_host
+                            else:
+                                logger.warning(f"UART hostname '{uart_host}' not found in inventory")
+                                mapped_config['UART_IP'] = uart_host
                     
                     return mapped_config
                 else:
-                    logger.warning(f"Ansible Inventory API format error: success={data.get('success')}, has_config={bool(data.get('config'))}")
+                    logger.warning(f"Ansible Inventory API format error: success={data.get('success')}, has_data={bool(data.get('data'))}")
                     return None
             elif response.status_code == 404:
-                logger.warning(f"Host '{job_name}' not found in Ansible Inventory (404) for Job ID {job_id}")
+                logger.warning(f"Inventory not found (404) for Job ID {job_id}")
                 return None
             else:
                 logger.warning(f"Ansible Inventory API error: HTTP {response.status_code}")
@@ -385,6 +413,7 @@ class BuildConfigValidator:
         
         try:
             uart_ip = self.config.get('UART_IP', '').strip()
+            uart_hostname = self.config.get('UART_HOSTNAME', '')
             check_result['value'] = uart_ip
             
             if not uart_ip:
@@ -402,31 +431,57 @@ class BuildConfigValidator:
                 
                 if lease_info:
                     check_result['status'] = 'success'
-                    check_result['message'] = f'UART_IP found in DHCP lease: {uart_ip}'
-                    check_result['details'] = {
-                        'ip_address': uart_ip,
-                        'type': 'ip',
-                        'mac_address': lease_info.get('mac_address'),
-                        'hostname': lease_info.get('hostname'),
-                        'dhcp_server': lease_info.get('dhcp_server'),
-                        'lease_start': lease_info.get('lease_start'),
-                        'lease_end': lease_info.get('lease_end'),
-                        'lease_state': lease_info.get('lease_state')
-                    }
+                    
+                    # If this IP was resolved from a hostname, mention it
+                    if uart_hostname:
+                        check_result['message'] = f'UART_IP resolved from hostname {uart_hostname} and found in DHCP lease: {uart_ip}'
+                        check_result['details'] = {
+                            'hostname': uart_hostname,
+                            'ip_address': uart_ip,
+                            'type': 'resolved_from_hostname',
+                            'mac_address': lease_info.get('mac_address'),
+                            'dhcp_hostname': lease_info.get('hostname'),
+                            'dhcp_server': lease_info.get('dhcp_server'),
+                            'lease_start': lease_info.get('lease_start'),
+                            'lease_end': lease_info.get('lease_end'),
+                            'lease_state': lease_info.get('lease_state')
+                        }
+                    else:
+                        check_result['message'] = f'UART_IP found in DHCP lease: {uart_ip}'
+                        check_result['details'] = {
+                            'ip_address': uart_ip,
+                            'type': 'ip',
+                            'mac_address': lease_info.get('mac_address'),
+                            'hostname': lease_info.get('hostname'),
+                            'dhcp_server': lease_info.get('dhcp_server'),
+                            'lease_start': lease_info.get('lease_start'),
+                            'lease_end': lease_info.get('lease_end'),
+                            'lease_state': lease_info.get('lease_state')
+                        }
                 else:
                     check_result['status'] = 'warning'
-                    check_result['message'] = f'UART_IP not found in DHCP lease: {uart_ip}'
-                    check_result['details'] = {
-                        'ip_address': uart_ip,
-                        'type': 'ip'
-                    }
+                    
+                    if uart_hostname:
+                        check_result['message'] = f'UART_IP resolved from hostname {uart_hostname} but not found in DHCP lease: {uart_ip}'
+                        check_result['details'] = {
+                            'hostname': uart_hostname,
+                            'ip_address': uart_ip,
+                            'type': 'resolved_from_hostname'
+                        }
+                    else:
+                        check_result['message'] = f'UART_IP not found in DHCP lease: {uart_ip}'
+                        check_result['details'] = {
+                            'ip_address': uart_ip,
+                            'type': 'ip'
+                        }
+                    
                     check_result['suggestions'].extend([
                         'IP may not have DHCP lease yet',
                         'Check if UART device is connected to network',
                         f'Queried DHCP servers: {self.dhcp_server_ids}'
                     ])
             else:
-                # It's a hostname
+                # It's a hostname (couldn't be resolved to IP)
                 check_result['status'] = 'success'
                 check_result['message'] = f'UART_IP configured as hostname: {uart_ip}'
                 check_result['details'] = {

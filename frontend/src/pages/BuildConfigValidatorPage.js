@@ -474,6 +474,7 @@ const BuildConfigValidatorPage = () => {
             mac_address: 'MAC 地址',
             hostname: '主機名稱',
             dhcp_server: 'DHCP Server',
+            dhcp_hostname: 'DHCP 主機名稱',
             lease_start: '租約開始',
             lease_end: '租約到期',
             is_active: '租約狀態',
@@ -497,7 +498,10 @@ const BuildConfigValidatorPage = () => {
             return value ? <Tag color="success">活躍</Tag> : <Tag color="default">非活躍</Tag>;
         }
         if (key === 'type') {
-            return value === 'ip' ? <Tag color="blue">IP 地址</Tag> : <Tag color="purple">主機名稱</Tag>;
+            if (value === 'ip') return <Tag color="blue">IP 地址</Tag>;
+            if (value === 'hostname') return <Tag color="purple">主機名稱</Tag>;
+            if (value === 'resolved_from_hostname') return <Tag color="cyan">從主機名稱解析</Tag>;
+            return <Tag>{value}</Tag>;
         }
         return String(value || 'N/A');
     };

@@ -217,6 +217,8 @@ export const formatConfigForDisplay = (config) => {
         // UART 連接資訊（獨立區塊）
         uart_id: 'UART ID',
         uart_host: 'UART 主機',
+        UART_IP: 'UART IP 地址',
+        // UART_HOSTNAME 已移除（與 uart_host 重複）
         ansible_user: '使用者',
         ansible_password: '密碼',
         // 其他 Ansible 變數

@@ -126,12 +126,12 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     
     // UART 相關配置（根據 key 或 label 識別）
     const uartItems = configItems.filter(item => {
-        // 根據 key 識別
-        const uartKeys = ['uart_id', 'uart_host', 'ansible_user', 'ansible_password'];
+        // 根據 key 識別（移除 UART_HOSTNAME，避免重複）
+        const uartKeys = ['uart_id', 'uart_host', 'UART_IP', 'ansible_user', 'ansible_password'];
         if (uartKeys.includes(item.key)) return true;
         
         // 根據 label 識別（中文）
-        const uartLabels = ['UART ID', 'UART 主機', '使用者', '密碼'];
+        const uartLabels = ['UART ID', 'UART 主機', 'UART IP 地址', '使用者', '密碼'];
         if (uartLabels.includes(item.label)) return true;
         
         return false;
@@ -139,7 +139,7 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     
     const ansibleItems = configItems.filter(item => {
         // 排除已在 UART 區塊顯示的欄位
-        const excludeKeys = ['ansible_host', 'ansible_user', 'ansible_password', 'uart_id', 'uart_host'];
+        const excludeKeys = ['ansible_host', 'ansible_user', 'ansible_password', 'uart_id', 'uart_host', 'UART_IP'];
         if (excludeKeys.includes(item.key)) return false;
         
         // 只保留 ansible_ 開頭的欄位
@@ -152,7 +152,7 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
         if (basicKeys.includes(item.key)) return false;
         
         // 排除 UART 資訊
-        const uartKeys = ['uart_id', 'uart_host', 'ansible_user', 'ansible_password'];
+        const uartKeys = ['uart_id', 'uart_host', 'UART_IP', 'ansible_user', 'ansible_password'];
         if (uartKeys.includes(item.key)) return false;
         
         // 排除 Ansible 變數

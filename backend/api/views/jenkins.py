@@ -638,6 +638,35 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             if result['success']:
                 latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
                 
+                # 增強功能：自動解析 UART hostname 到 IP
+                config = result['config']
+                if 'uart_host' in config:
+                    uart_host = config['uart_host']
+                    
+                    # 檢查是否為 hostname（非 IP 格式）
+                    import re
+                    ip_pattern = r'^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$'
+                    is_ip = bool(re.match(ip_pattern, uart_host))
+                    
+                    if not is_ip:
+                        # 是 hostname，從完整 inventory 中解析
+                        full_inventory_result = service.get_full_inventory(use_cache=use_cache)
+                        if full_inventory_result['success']:
+                            hostvars = full_inventory_result['data'].get('_meta', {}).get('hostvars', {})
+                            
+                            if uart_host in hostvars:
+                                uart_config = hostvars[uart_host]
+                                if 'ansible_host' in uart_config:
+                                    # 添加解析後的 IP 和 hostname
+                                    config['UART_IP'] = uart_config['ansible_host']
+                                    config['UART_HOSTNAME'] = uart_host
+                                    logger.info(f"✅ Resolved UART hostname '{uart_host}' -> IP: {uart_config['ansible_host']}")
+                            else:
+                                logger.warning(f"UART hostname '{uart_host}' not found in inventory")
+                    else:
+                        # 已經是 IP，直接使用
+                        config['UART_IP'] = uart_host
+                
                 return Response({
                     'success': True,
                     'job_id': job.id,
@@ -645,7 +674,7 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
                     'build_number': latest_build.build_number if latest_build else None,
                     'cached': result['cached'],
                     'hostname': hostname,
-                    'config': result['config']
+                    'config': config
                 })
             else:
                 return Response(result, status=status.HTTP_404_NOT_FOUND)
