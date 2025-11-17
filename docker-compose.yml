@@ -175,7 +175,7 @@ services:
       - SYS_ADMIN
     devices:
       - /dev/fuse
-    command: bash -c "bash /app/mount_nas.sh || true && celery -A network_toolbox worker --loglevel=info --concurrency=2"
+    command: bash -c "bash /app/mount_nas.sh || true && celery -A network_toolbox worker --loglevel=info --concurrency=8"
     environment:
       - TZ=Asia/Taipei
       - DEBUG=1
