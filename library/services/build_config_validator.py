@@ -58,10 +58,17 @@ class BuildConfigValidator:
                     'value': None,
                     'details': {},
                     'suggestions': []
+                },
+                'uart_ssh': {
+                    'status': 'unknown',
+                    'message': '',
+                    'value': None,
+                    'details': {},
+                    'suggestions': []
                 }
             },
             'summary': {
-                'total_checks': 3,
+                'total_checks': 4,
                 'passed': 0,
                 'warnings': 0,
                 'errors': 0
@@ -93,6 +100,7 @@ class BuildConfigValidator:
             self._check_host_ip()
             self._check_host_mac()
             self._check_uart_ip()
+            self._check_uart_ssh_connection()
             self._calculate_overall_status()
             
             logger.info(f"Validation complete. Status: {self.validation_results['overall_status']}, Source: {self.config_source}")
@@ -246,6 +254,19 @@ class BuildConfigValidator:
                                     mapped_config['UART_IP'] = resolved_ip
                                     mapped_config['UART_HOSTNAME'] = uart_host
                                     logger.info(f"✅ Resolved UART hostname '{uart_host}' -> IP: {resolved_ip} (from inventory cache)")
+                                    
+                                    # 同時獲取 UART 主機的認證信息
+                                    if 'ansible_user' in uart_config:
+                                        mapped_config['uart_user'] = uart_config['ansible_user']
+                                        logger.debug(f"  Got UART ansible_user: {uart_config['ansible_user']}")
+                                    
+                                    if 'ansible_password' in uart_config:
+                                        mapped_config['uart_password'] = uart_config['ansible_password']
+                                        logger.debug(f"  Got UART ansible_password: ***")
+                                    
+                                    if 'ansible_port' in uart_config:
+                                        mapped_config['uart_port'] = uart_config['ansible_port']
+                                        logger.debug(f"  Got UART ansible_port: {uart_config['ansible_port']}")
                                 else:
                                     logger.warning(f"UART hostname '{uart_host}' found but has no ansible_host")
                                     mapped_config['UART_IP'] = uart_host
@@ -507,6 +528,141 @@ class BuildConfigValidator:
             logger.error(f"Failed to check UART_IP: {e}", exc_info=True)
             check_result['status'] = 'error'
             check_result['message'] = f'Error checking UART_IP: {str(e)}'
+    
+    def _check_uart_ssh_connection(self):
+        """Check SSH connection to UART PC"""
+        check_result = self.validation_results['checks']['uart_ssh']
+        
+        try:
+            # Get UART connection info from config
+            uart_ip = self.config.get('UART_IP', '').strip()
+            uart_user = self.config.get('uart_user', '').strip()
+            uart_password = self.config.get('uart_password', '').strip()
+            uart_port = self.config.get('uart_port', 22)  # Default SSH port
+            
+            # Store connection info in check result
+            check_result['value'] = uart_ip
+            check_result['details'] = {
+                'ip': uart_ip,
+                'user': uart_user,
+                'port': uart_port,
+                'password_set': bool(uart_password)
+            }
+            
+            # Check if UART_IP is set
+            if not uart_ip:
+                check_result['status'] = 'warning'
+                check_result['message'] = 'UART_IP not set, SSH check skipped'
+                check_result['suggestions'].append('Set UART_IP if SSH connection to UART PC is needed')
+                return
+            
+            # Check if user is set
+            if not uart_user:
+                check_result['status'] = 'warning'
+                check_result['message'] = 'UART user not set, SSH check skipped'
+                check_result['suggestions'].append('Set uart_user in config for SSH authentication')
+                return
+            
+            # Check if password is set
+            if not uart_password:
+                check_result['status'] = 'warning'
+                check_result['message'] = 'UART password not set, SSH check skipped'
+                check_result['suggestions'].append('Set uart_password in config for SSH authentication')
+                return
+            
+            # Check if UART_IP is valid (skip if it's a hostname)
+            is_ip_format = self._is_valid_ip(uart_ip)
+            if not is_ip_format:
+                # It's a hostname, try to resolve it
+                uart_hostname = self.config.get('UART_HOSTNAME', uart_ip)
+                check_result['status'] = 'warning'
+                check_result['message'] = f'UART is configured as hostname: {uart_hostname}, SSH check requires IP address'
+                check_result['details']['hostname'] = uart_hostname
+                check_result['suggestions'].append('Configure UART_IP as IP address for SSH connection test')
+                return
+            
+            # Attempt SSH connection
+            logger.info(f"Testing SSH connection to UART PC: {uart_user}@{uart_ip}:{uart_port}")
+            
+            import paramiko
+            import socket
+            
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            try:
+                # Try to connect with timeout
+                ssh.connect(
+                    hostname=uart_ip,
+                    port=uart_port,
+                    username=uart_user,
+                    password=uart_password,
+                    timeout=10,
+                    banner_timeout=10,
+                    auth_timeout=10
+                )
+                
+                # Connection successful
+                check_result['status'] = 'success'
+                check_result['message'] = f'SSH connection to UART PC successful: {uart_user}@{uart_ip}'
+                check_result['details'].update({
+                    'connected': True,
+                    'connection_time': 'Success'
+                })
+                
+                logger.info(f"✅ SSH connection to UART PC successful: {uart_user}@{uart_ip}")
+                
+                # Close connection
+                ssh.close()
+                
+            except paramiko.AuthenticationException:
+                check_result['status'] = 'error'
+                check_result['message'] = f'SSH authentication failed: Invalid username or password'
+                check_result['details']['connected'] = False
+                check_result['details']['error'] = 'Authentication failed'
+                check_result['suggestions'].extend([
+                    'Check if uart_user is correct',
+                    'Check if uart_password is correct',
+                    'Verify credentials on UART PC'
+                ])
+                logger.error(f"❌ SSH authentication failed for {uart_user}@{uart_ip}")
+                
+            except socket.timeout:
+                check_result['status'] = 'error'
+                check_result['message'] = f'SSH connection timeout to {uart_ip}:{uart_port}'
+                check_result['details']['connected'] = False
+                check_result['details']['error'] = 'Connection timeout'
+                check_result['suggestions'].extend([
+                    'Check if UART PC is powered on',
+                    'Check network connectivity to UART PC',
+                    f'Verify SSH service is running on port {uart_port}'
+                ])
+                logger.error(f"❌ SSH connection timeout to {uart_ip}:{uart_port}")
+                
+            except socket.error as e:
+                check_result['status'] = 'error'
+                check_result['message'] = f'SSH connection error: {str(e)}'
+                check_result['details']['connected'] = False
+                check_result['details']['error'] = str(e)
+                check_result['suggestions'].extend([
+                    'Check if UART PC is reachable on the network',
+                    'Verify firewall settings allow SSH connections',
+                    f'Check if SSH is listening on port {uart_port}'
+                ])
+                logger.error(f"❌ SSH connection error to {uart_ip}: {e}")
+                
+            except Exception as e:
+                check_result['status'] = 'error'
+                check_result['message'] = f'SSH connection failed: {str(e)}'
+                check_result['details']['connected'] = False
+                check_result['details']['error'] = str(e)
+                check_result['suggestions'].append('Check SSH connection settings and UART PC status')
+                logger.error(f"❌ SSH connection failed to {uart_ip}: {e}")
+            
+        except Exception as e:
+            logger.error(f"Failed to check UART SSH connection: {e}", exc_info=True)
+            check_result['status'] = 'error'
+            check_result['message'] = f'Error checking UART SSH: {str(e)}'
     
     def _query_dhcp_lease(self, ip_address: str) -> Optional[Dict]:
         """Query DHCP lease for IP"""

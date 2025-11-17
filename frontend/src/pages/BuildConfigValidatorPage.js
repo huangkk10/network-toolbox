@@ -235,6 +235,7 @@ const BuildConfigValidatorPage = () => {
             host_ip: 'HOST_IP 檢查',
             host_mac: 'HOST_MAC 檢查',
             uart_ip: 'UART_IP 檢查',
+            uart_ssh: 'UART SSH 連線檢查',
         };
         return names[item] || item;
     };
@@ -508,6 +509,13 @@ const BuildConfigValidatorPage = () => {
             dhcp_mac: 'DHCP 租約 MAC',
             match: 'MAC 匹配',
             config_mac: '配置 MAC',
+            ip: 'IP 地址',
+            user: '用戶名稱',
+            port: 'SSH 端口',
+            password_set: '密碼已設置',
+            connected: '連線狀態',
+            connection_time: '連線時間',
+            error: '錯誤信息',
         };
         return labels[key] || key;
     };
@@ -521,6 +529,12 @@ const BuildConfigValidatorPage = () => {
         }
         if (key === 'is_active') {
             return value ? <Tag color="success">活躍</Tag> : <Tag color="default">非活躍</Tag>;
+        }
+        if (key === 'connected') {
+            return value ? <Tag color="success">已連接</Tag> : <Tag color="error">未連接</Tag>;
+        }
+        if (key === 'password_set') {
+            return value ? <Tag color="success">已設置</Tag> : <Tag color="warning">未設置</Tag>;
         }
         if (key === 'type') {
             if (value === 'ip') return <Tag color="blue">IP 地址</Tag>;
