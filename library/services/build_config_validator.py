@@ -25,15 +25,18 @@ class BuildConfigValidator:
     2. Database JenkinsBuild.parameters field (fallback)
     """
     
-    def __init__(self, build_id: int, dhcp_server_ids: Optional[List[int]] = None):
+    def __init__(self, build_id: int, dhcp_server_ids: Optional[List[int]] = None, auto_check_on_failure: bool = True):
         self.build_id = build_id
         self.dhcp_server_ids = dhcp_server_ids or []
+        self.auto_check_on_failure = auto_check_on_failure
         self.build = None
         self.config = {}
         self.config_source = 'unknown'
         self.validation_results = {
             'overall_status': 'unknown',
             'config_source': 'unknown',
+            'build_result': None,  # 新增：記錄 Build 的結果狀態
+            'auto_triggered': False,  # 新增：是否為自動觸發的檢查
             'checks': {
                 'host_ip': {
                     'status': 'unknown',
@@ -72,6 +75,14 @@ class BuildConfigValidator:
             
             if not self._load_build():
                 return self._create_error_result("Failed to load build")
+            
+            # 檢查 Build 狀態，如果不是 SUCCESS 則標記為自動觸發
+            if self.auto_check_on_failure and self.build.result != 'SUCCESS':
+                self.validation_results['auto_triggered'] = True
+                logger.warning(f"⚠️ Build {self.build_id} has {self.build.result} status (not SUCCESS), automatically triggering config validation")
+            
+            # 記錄 Build 結果
+            self.validation_results['build_result'] = self.build.result
             
             if not self._parse_config():
                 return self._create_error_result("Failed to parse config")

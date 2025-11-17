@@ -38,8 +38,10 @@ import {
     InfoCircleOutlined,
     DownloadOutlined,
     ClockCircleOutlined,
+    FileTextOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
 
 const { Panel } = Collapse;
 const { Option } = Select;
@@ -57,6 +59,13 @@ const BuildConfigValidatorPage = () => {
     const [selectedDhcpServer, setSelectedDhcpServer] = useState(null);
     const [expandedPanels, setExpandedPanels] = useState([]);
     const [validationTime, setValidationTime] = useState(null);
+    const [ansibleConfigDrawer, setAnsibleConfigDrawer] = useState({
+        visible: false,
+        jobId: null,
+        jobName: null,
+        buildNumber: null,
+        hostname: null,
+    });
 
     // 獲取 Build 基本資訊
     useEffect(() => {
@@ -150,6 +159,22 @@ const BuildConfigValidatorPage = () => {
         URL.revokeObjectURL(url);
         
         message.success('報告已下載');
+    };
+
+    // 查看 Ansible 配置
+    const handleViewAnsibleConfig = () => {
+        if (!buildInfo || !buildInfo.job || !buildInfo.job_name) {
+            message.warning('Build 資訊不完整，無法查看配置');
+            return;
+        }
+        
+        setAnsibleConfigDrawer({
+            visible: true,
+            jobId: buildInfo.job,  // API 返回的是 job (ID)
+            jobName: buildInfo.job_name,
+            buildNumber: buildInfo.build_number,
+            hostname: buildInfo.job_name,
+        });
     };
 
     // 全部展開/折疊
@@ -518,15 +543,26 @@ const BuildConfigValidatorPage = () => {
         <div style={{ padding: '24px', background: '#f0f2f5', minHeight: '100vh' }}>
             {/* 頁面標題 */}
             <Card style={{ marginBottom: '24px' }}>
-                <Space>
-                    <Button icon={<LeftOutlined />} onClick={handleBack}>
-                        返回
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Space>
+                        <Button icon={<LeftOutlined />} onClick={handleBack}>
+                            返回
+                        </Button>
+                        <Divider type="vertical" />
+                        <Title level={2} style={{ margin: 0 }}>
+                            Build 配置檢查 #{buildId}
+                        </Title>
+                    </Space>
+                    
+                    {/* 查看配置按鈕 */}
+                    <Button 
+                        icon={<FileTextOutlined />} 
+                        onClick={handleViewAnsibleConfig}
+                        disabled={!buildInfo || !buildInfo.job}
+                    >
+                        查看配置
                     </Button>
-                    <Divider type="vertical" />
-                    <Title level={2} style={{ margin: 0 }}>
-                        Build 配置檢查 #{buildId}
-                    </Title>
-                </Space>
+                </div>
             </Card>
 
             {/* 執行檢查區域 */}
@@ -582,6 +618,16 @@ const BuildConfigValidatorPage = () => {
                     {renderStatisticsCard()}
                 </>
             )}
+            
+            {/* Ansible 配置 Drawer */}
+            <AnsibleConfigDrawer
+                visible={ansibleConfigDrawer.visible}
+                onClose={() => setAnsibleConfigDrawer({ ...ansibleConfigDrawer, visible: false })}
+                jobId={ansibleConfigDrawer.jobId}
+                jobName={ansibleConfigDrawer.jobName}
+                buildNumber={ansibleConfigDrawer.buildNumber}
+                hostname={ansibleConfigDrawer.hostname}
+            />
         </div>
     );
 };
