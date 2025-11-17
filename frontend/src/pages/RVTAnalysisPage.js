@@ -53,6 +53,30 @@ const { Content } = Layout;
 const { Option } = Select;
 const { RangePicker } = DatePicker;
 
+// 自訂表格表頭樣式（深色背景）
+const tableHeaderStyles = `
+    .ant-table-thead > tr > th {
+        background-color: #595959 !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        border-bottom: 2px solid #434343 !important;
+    }
+    .ant-table-thead > tr > th:hover {
+        background-color: #434343 !important;
+    }
+`;
+
+// 插入樣式到 head
+if (typeof document !== 'undefined') {
+    const styleId = 'rvt-table-header-styles';
+    if (!document.getElementById(styleId)) {
+        const styleElement = document.createElement('style');
+        styleElement.id = styleId;
+        styleElement.textContent = tableHeaderStyles;
+        document.head.appendChild(styleElement);
+    }
+}
+
 const RVTAnalysisPage = () => {
     const { user } = useAuth();
     const navigate = useNavigate();
@@ -247,6 +271,7 @@ const RVTAnalysisPage = () => {
     // 載入 Jobs 列表
     const fetchJobs = async () => {
         setLoading(true);
+        setExpandedRowKeys([]);  // ← 清空展開狀態，避免顯示孤立的 Build 記錄
         try {
             let url = '/api/jenkins-jobs/';
             const params = [];
