@@ -50,7 +50,10 @@ function AppLayout() {
     // 從 URL 獲取當前 Tab（用於 RVT Analytics）
     const getRVTActiveTab = () => {
         const params = new URLSearchParams(location.search);
-        return params.get('tab') || 'overview';
+        const tab = params.get('tab');
+        // 如果沒有 tab 參數（概觀頁面），返回 null，不選中任何 Tab
+        // 如果有 tab 參數，返回對應的值
+        return tab || null;
     };
     
     // 處理 RVT Tab 切換
@@ -118,8 +121,8 @@ function AppLayout() {
 
     const currentPageTitle = getPageTitle(location.pathname);
     
-    // 為 RVT Analytics 頁面準備 Tab（只有 Jenkins 詳細，且僅在 ?tab=details 時顯示）
-    const rvtAnalyticsTabs = location.pathname.startsWith('/rvt-analytics') && location.search.includes('tab=details') ? (
+    // 為 RVT Analytics 頁面準備 Tab（始終顯示 Jenkins 詳細 Tab）
+    const rvtAnalyticsTabs = location.pathname.startsWith('/rvt-analytics') ? (
         <div style={{ 
             display: 'flex', 
             alignItems: 'center', 
@@ -131,7 +134,8 @@ function AppLayout() {
             top: 0
         }}>
             <Tabs 
-                activeKey="details"
+                activeKey={getRVTActiveTab()}
+                onChange={handleRVTTabChange}
                 size="large"
                 style={{ 
                     marginBottom: 0,

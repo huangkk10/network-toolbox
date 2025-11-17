@@ -138,6 +138,12 @@ const RVTAnalysisPage = () => {
     // 篩選條件（從 URL 初始化）
     const [filters, setFilters] = useState(getFiltersFromURL());
     
+    // 分頁設置
+    const [pagination, setPagination] = useState({
+        current: 1,
+        pageSize: 10,
+    });
+    
     // View 列表（從 Jobs 中提取唯一的 view_name）
     const [availableViews, setAvailableViews] = useState([]);
     
@@ -690,18 +696,29 @@ const RVTAnalysisPage = () => {
 
     // ========== 渲染 ==========
     return (
-        <Content style={{ padding: '24px' }}>
+        <Content style={{ 
+            padding: 0,
+            height: 'calc(100vh - 64px)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            backgroundColor: '#f5f5f5',
+        }}>
             {/* Tab 內容區域（Tab 本身已移到 TopHeader） */}
             {activeTab === 'overview' && (
-                <>
+                <div style={{ 
+                    flex: '1 1 auto',
+                    overflow: 'auto',
+                    padding: '16px',
+                }}>
                     {/* 時間範圍選擇器 */}
-                    <Card style={{ marginBottom: 16 }}>
+                    <Card style={{ marginBottom: 12 }}>
                         <Space size="middle" align="center" style={{ width: '100%' }}>
                             <span style={{ fontWeight: 500, fontSize: 14 }}>統計時間範圍：</span>
                             <Select
                                 value={timeRange}
                                 onChange={handleTimeRangeChange}
-                                size="large"
+                                size="middle"
                                 style={{ width: '300px' }}
                             >
                                 <Option value="today">今日</Option>
@@ -724,7 +741,7 @@ const RVTAnalysisPage = () => {
 
                     {/* 統計卡片 */}
                     <Spin spinning={statisticsLoading}>
-                        <Row gutter={16} style={{ marginBottom: 24 }}>
+                        <Row gutter={12} style={{ marginBottom: 16 }}>
                             <Col span={6}>
                                 <Card>
                                     <Statistic
@@ -768,163 +785,200 @@ const RVTAnalysisPage = () => {
                             </Col>
                         </Row>
                     </Spin>
-                </>
+                </div>
             )}
 
             {activeTab === 'details' && (
                 <>
-                    {/* Jenkins Server 和 View 選擇器 */}
-                    <Card style={{ marginBottom: 16 }}>
-                        <Row gutter={16} align="middle">
-                            <Col span={2}>
-                                <label style={{ fontWeight: 500, fontSize: 14 }}>Jenkins Server：</label>
-                            </Col>
-                            <Col span={10}>
-                                <Select
-                                    placeholder="請選擇 Jenkins Server（全部顯示所有 Server 的 Jobs）"
-                                    style={{ width: '100%' }}
-                                    allowClear
-                                    value={filters.server_id}
-                                    onChange={(value) => {
-                                        const newFilters = { ...filters, server_id: value, view_name: null };  // 清空 view_name
-                                        setFilters(newFilters);
-                                        updateURLParams(newFilters);
-                                        fetchAvailableViews(value);  // 重新載入 View 列表
-                                    }}
-                                    size="large"
-                                >
-                                    {servers.map(server => (
-                                        <Option key={server.id} value={server.id}>
-                                            <CloudServerOutlined style={{ marginRight: 8 }} />
-                                            {server.name} 
-                                            <span style={{ color: '#999', marginLeft: 8 }}>
-                                                ({server.url})
-                                            </span>
-                                        </Option>
-                                    ))}
-                                </Select>
-                            </Col>
-                            <Col span={2}>
-                                <label style={{ fontWeight: 500, fontSize: 14 }}>View 篩選：</label>
-                            </Col>
-                            <Col span={10}>
-                                <Select
-                                    placeholder="請選擇 View（全部顯示所有 View 的 Jobs）"
-                                    style={{ width: '100%' }}
-                                    allowClear
-                                    value={filters.view_name}
-                                    onChange={(value) => {
-                                        const newFilters = { ...filters, view_name: value };
-                                        setFilters(newFilters);
-                                        updateURLParams(newFilters);
-                                    }}
-                                    size="large"
-                                    showSearch
-                                    filterOption={(input, option) =>
-                                        option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
-                                    }
-                                >
-                                    {availableViews.map(view => (
-                                        <Option key={view} value={view}>
-                                            <FolderOutlined style={{ marginRight: 8 }} />
-                                            {view}
-                                        </Option>
-                                    ))}
-                                </Select>
-                            </Col>
-                        </Row>
-                    </Card>
-
-                    {/* 篩選區域 */}
-                    <Card style={{ marginBottom: 16 }}>
-                        <Row gutter={16}>
-                            <Col span={8}>
-                                <Select
-                                    placeholder="篩選狀態"
-                                    style={{ width: '100%' }}
-                                    allowClear
-                                    value={filters.status}
-                                    onChange={(value) => {
-                                        const newFilters = { ...filters, status: value };
-                                        setFilters(newFilters);
-                                        updateURLParams(newFilters);
-                                    }}
-                                >
-                                    <Option value="SUCCESS">Success</Option>
-                                    <Option value="FAILURE">Failure</Option>
-                                    <Option value="UNSTABLE">Unstable</Option>
-                                    <Option value="ABORTED">Aborted</Option>
-                                </Select>
-                            </Col>
-                            <Col span={8}>
-                                <RangePicker
-                                    style={{ width: '100%' }}
-                                    onChange={(dates) => {
-                                        const newFilters = { ...filters, date_range: dates };
-                                        setFilters(newFilters);
-                                        // date_range 不需要存到 URL（因為是 moment 對象）
-                                    }}
-                                    placeholder={['開始日期', '結束日期']}
-                                />
-                            </Col>
-                            
-                            <Col span={8}>
-                                <Input.Search
-                                    placeholder="搜尋 Job 名稱..."
-                                    allowClear
-                                    value={filters.search}
-                                    onSearch={(value) => {
-                                        const newFilters = { ...filters, search: value };
-                                        setFilters(newFilters);
-                                        updateURLParams(newFilters);
-                                    }}
-                                    onChange={(e) => {
-                                        // 實時更新搜尋框內容（但不觸發查詢）
-                                        setFilters({ ...filters, search: e.target.value });
-                                    }}
-                                    enterButton
-                                />
-                            </Col>
-                        </Row>
-                    </Card>
-
-                    {/* Tree Table */}
-                    <Card>
-                        <Table
-                            dataSource={treeData}
-                            columns={columns}
-                            rowKey="key"
-                            loading={loading}
-                            expandable={{
-                                expandedRowKeys,
-                                onExpandedRowsChange: setExpandedRowKeys,
-                                onExpand: handleExpand,
-                                indentSize: 0,
-                                expandIcon: ({ expanded, onExpand, record }) => {
-                                    if (record.type === 'job') {
-                                        return (
-                                            <Button
-                                                type="text"
-                                                size="small"
-                                                icon={expanded ? <DownOutlined /> : <RightOutlined />}
-                                                onClick={e => onExpand(record, e)}
-                                            />
-                                        );
-                                    }
-                                    return <span style={{ width: 24, display: 'inline-block' }} />;
-                                },
+                    {/* 固定篩選區域 - 緊湊單行佈局 */}
+                    <div style={{ 
+                        flex: '0 0 auto',
+                        padding: '12px 16px',
+                        backgroundColor: '#f5f5f5',
+                    }}>
+                        <Card 
+                            size="small"
+                            bodyStyle={{ padding: '10px 16px' }}
+                            style={{ 
+                                marginBottom: 0,
+                                boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
                             }}
-                            pagination={{
-                                pageSize: 10,
-                                pageSizeOptions: ['10', '20', '50', '100'],
-                                showSizeChanger: true,
-                                showQuickJumper: true,
-                                showTotal: (total, range) => `${range[0]}-${range[1]} of ${total}`,
-                            }}
-                            scroll={{ x: 1200 }}
-                            size="middle"
-                        />
-                    </Card>
+                        >
+                            <Row gutter={12} align="middle">
+                                {/* Jenkins Server */}
+                                <Col flex="auto" style={{ maxWidth: 280 }}>
+                                    <Space size={4} style={{ width: '100%', flexWrap: 'nowrap' }}>
+                                        <span style={{ fontSize: 13, color: '#666', whiteSpace: 'nowrap' }}>Server:</span>
+                                        <Select
+                                            placeholder="選擇 Server"
+                                            style={{ flex: 1, minWidth: 0 }}
+                                            allowClear
+                                            value={filters.server_id}
+                                            onChange={(value) => {
+                                                const newFilters = { ...filters, server_id: value, view_name: null };
+                                                setFilters(newFilters);
+                                                updateURLParams(newFilters);
+                                                fetchAvailableViews(value);
+                                            }}
+                                            size="small"
+                                            getPopupContainer={() => document.body}
+                                        >
+                                            {servers.map(server => (
+                                                <Option key={server.id} value={server.id}>
+                                                    <CloudServerOutlined style={{ marginRight: 6, fontSize: 12 }} />
+                                                    {server.name}
+                                                </Option>
+                                            ))}
+                                        </Select>
+                                    </Space>
+                                </Col>
+                                
+                                {/* View */}
+                                <Col flex="auto" style={{ maxWidth: 320 }}>
+                                    <Space size={4} style={{ width: '100%', flexWrap: 'nowrap' }}>
+                                        <span style={{ fontSize: 13, color: '#666', whiteSpace: 'nowrap' }}>View:</span>
+                                        <Select
+                                            placeholder="選擇 View"
+                                            style={{ flex: 1, minWidth: 0 }}
+                                            dropdownStyle={{ minWidth: 400 }}
+                                            allowClear
+                                            value={filters.view_name}
+                                            onChange={(value) => {
+                                                const newFilters = { ...filters, view_name: value };
+                                                setFilters(newFilters);
+                                                updateURLParams(newFilters);
+                                            }}
+                                            size="small"
+                                            showSearch
+                                            filterOption={(input, option) =>
+                                                option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+                                            }
+                                            getPopupContainer={() => document.body}
+                                        >
+                                            {availableViews.map(view => (
+                                                <Option key={view} value={view}>
+                                                    <FolderOutlined style={{ marginRight: 6, fontSize: 12 }} />
+                                                    {view}
+                                                </Option>
+                                            ))}
+                                        </Select>
+                                    </Space>
+                                </Col>
+                                
+                                {/* 狀態 */}
+                                <Col flex="auto" style={{ maxWidth: 140 }}>
+                                    <Select
+                                        placeholder="狀態"
+                                        style={{ width: '100%' }}
+                                        allowClear
+                                        value={filters.status}
+                                        onChange={(value) => {
+                                            const newFilters = { ...filters, status: value };
+                                            setFilters(newFilters);
+                                            updateURLParams(newFilters);
+                                        }}
+                                        size="small"
+                                        getPopupContainer={() => document.body}
+                                    >
+                                        <Option value="SUCCESS">Success</Option>
+                                        <Option value="FAILURE">Failure</Option>
+                                        <Option value="UNSTABLE">Unstable</Option>
+                                        <Option value="ABORTED">Aborted</Option>
+                                    </Select>
+                                </Col>
+                                
+                                {/* 日期範圍 */}
+                                <Col flex="auto" style={{ maxWidth: 260 }}>
+                                    <RangePicker
+                                        style={{ width: '100%' }}
+                                        onChange={(dates) => {
+                                            const newFilters = { ...filters, date_range: dates };
+                                            setFilters(newFilters);
+                                        }}
+                                        placeholder={['開始日期', '結束日期']}
+                                        size="small"
+                                        getPopupContainer={() => document.body}
+                                    />
+                                </Col>
+                                
+                                {/* 搜尋 */}
+                                <Col flex="1 1 auto" style={{ minWidth: 180 }}>
+                                    <Input.Search
+                                        placeholder="搜尋 Job 名稱..."
+                                        allowClear
+                                        value={filters.search}
+                                        onSearch={(value) => {
+                                            const newFilters = { ...filters, search: value };
+                                            setFilters(newFilters);
+                                            updateURLParams(newFilters);
+                                        }}
+                                        onChange={(e) => {
+                                            setFilters({ ...filters, search: e.target.value });
+                                        }}
+                                        size="small"
+                                        enterButton
+                                    />
+                                </Col>
+                            </Row>
+                        </Card>
+                    </div>
+
+                    {/* Table 區域 - 自適應高度並內部滾動 */}
+                    <div style={{ 
+                        flex: '1 1 auto',
+                        overflow: 'hidden',
+                        padding: '0 16px 16px',
+                    }}>
+                        <Card 
+                            style={{ height: '100%' }}
+                            bodyStyle={{ padding: 12, height: '100%', display: 'flex', flexDirection: 'column' }}
+                        >
+                            <Table
+                                dataSource={treeData}
+                                columns={columns}
+                                rowKey="key"
+                                loading={loading}
+                                expandable={{
+                                    expandedRowKeys,
+                                    onExpandedRowsChange: setExpandedRowKeys,
+                                    onExpand: handleExpand,
+                                    indentSize: 0,
+                                    expandIcon: ({ expanded, onExpand, record }) => {
+                                        if (record.type === 'job') {
+                                            return (
+                                                <Button
+                                                    type="text"
+                                                    size="small"
+                                                    icon={expanded ? <DownOutlined /> : <RightOutlined />}
+                                                    onClick={e => onExpand(record, e)}
+                                                />
+                                            );
+                                        }
+                                        return <span style={{ width: 24, display: 'inline-block' }} />;
+                                    },
+                                }}
+                                pagination={{
+                                    current: pagination.current,
+                                    pageSize: pagination.pageSize,
+                                    pageSizeOptions: ['10', '20', '50', '100'],
+                                    showSizeChanger: true,
+                                    showQuickJumper: true,
+                                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total}`,
+                                    onChange: (page, pageSize) => {
+                                        setPagination({ current: page, pageSize });
+                                    },
+                                    onShowSizeChange: (current, size) => {
+                                        setPagination({ current: 1, pageSize: size });
+                                    },
+                                }}
+                                scroll={{ 
+                                    x: 1200,
+                                    y: 'calc(100vh - 240px)',  // 自適應高度
+                                }}
+                                size="small"
+                            />
+                        </Card>
+                    </div>
                 </>
             )}
 
