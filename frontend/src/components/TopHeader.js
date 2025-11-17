@@ -13,7 +13,7 @@ import './TopHeader.css';
 const { Header } = Layout;
 const { Text } = Typography;
 
-const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions }) => {
+const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions, onTitleClick }) => {
     const { user, isAuthenticated, logout } = useAuth();
     const navigate = useNavigate();
 
@@ -73,7 +73,11 @@ const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions }) => {
                     className="toggle-button"
                 />
                 {pageTitle && (
-                    <div className="page-title-container">
+                    <div 
+                        className="page-title-container"
+                        onClick={onTitleClick}
+                        style={{ cursor: onTitleClick ? 'pointer' : 'default' }}
+                    >
                         <Text className="page-title">
                             {typeof pageTitle === 'object' ? pageTitle.text : pageTitle}
                         </Text>

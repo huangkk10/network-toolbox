@@ -58,6 +58,13 @@ function AppLayout() {
         navigate(`/rvt-analytics?tab=${tab}`);
     };
 
+    // 處理 RVT 頁面標題點擊（導航到概觀）
+    const handleRVTTitleClick = () => {
+        if (location.pathname.startsWith('/rvt-analytics')) {
+            navigate('/rvt-analytics'); // 移除所有 query parameters，回到概觀
+        }
+    };
+
     // 未登入且不在登入或註冊頁面，重定向到登入頁
     if (!loading && !isAuthenticated && location.pathname !== '/login' && location.pathname !== '/register') {
         return <Navigate to="/login" replace />;
@@ -111,8 +118,8 @@ function AppLayout() {
 
     const currentPageTitle = getPageTitle(location.pathname);
     
-    // 為 RVT Analytics 頁面準備 Tabs（放在 TopHeader 右側）
-    const rvtAnalyticsTabs = location.pathname.startsWith('/rvt-analytics') ? (
+    // 為 RVT Analytics 頁面準備 Tab（只有 Jenkins 詳細，且僅在 ?tab=details 時顯示）
+    const rvtAnalyticsTabs = location.pathname.startsWith('/rvt-analytics') && location.search.includes('tab=details') ? (
         <div style={{ 
             display: 'flex', 
             alignItems: 'center', 
@@ -124,28 +131,13 @@ function AppLayout() {
             top: 0
         }}>
             <Tabs 
-                activeKey={getRVTActiveTab()} 
-                onChange={handleRVTTabChange}
+                activeKey="details"
                 size="large"
                 style={{ 
                     marginBottom: 0,
                 }}
                 className="rvt-header-tabs"
             >
-                <Tabs.TabPane 
-                    tab={
-                        <span style={{ 
-                            padding: '10px 24px',
-                            display: 'inline-block',
-                            fontWeight: 500,
-                            fontSize: '15px'
-                        }}>
-                            <BarChartOutlined style={{ marginRight: 8, fontSize: '16px' }} />
-                            概觀
-                        </span>
-                    } 
-                    key="overview"
-                />
                 <Tabs.TabPane 
                     tab={
                         <span style={{ 
@@ -222,6 +214,7 @@ function AppLayout() {
                     onToggleSidebar={toggleSidebar}
                     pageTitle={currentPageTitle}
                     extraActions={rvtAnalyticsTabs}
+                    onTitleClick={location.pathname.startsWith('/rvt-analytics') ? handleRVTTitleClick : null}
                 />
 
                 <Content style={{

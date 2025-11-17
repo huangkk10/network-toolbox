@@ -226,6 +226,84 @@ class JenkinsServerViewSet(viewsets.ModelViewSet):
         finally:
             client.close()
     
+    @action(detail=False, methods=['get'], url_path='global-statistics')
+    def global_statistics(self, request):
+        """
+        獲取全局 Jenkins 統計資訊（支援時間範圍篩選）
+        
+        GET /api/jenkins-servers/global-statistics/?time_range=today
+        
+        Query Parameters:
+        - time_range: 'today' | 'week' | '2weeks' | 'month' | 'all' (預設: 'today')
+        
+        Response:
+        {
+            "total_servers": 6,
+            "total_jobs": 728,
+            "period_builds": 156,
+            "period_success": 89,
+            "period_failure": 67,
+            "success_rate": 57.1,
+            "period_label": "今日",
+            "period_start": "2025-11-17T00:00:00",
+            "period_end": "2025-11-17T15:50:00",
+            "time_range": "today"
+        }
+        """
+        time_range = request.query_params.get('time_range', 'today')
+        
+        # 計算時間範圍
+        end_time = timezone.now()
+        start_time = None
+        period_label = '全部'
+        
+        if time_range == 'today':
+            start_time = end_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            period_label = '今日'
+        elif time_range == 'week':
+            start_time = end_time - timedelta(days=7)
+            period_label = '最近 7 天'
+        elif time_range == '2weeks':
+            start_time = end_time - timedelta(days=14)
+            period_label = '最近 14 天'
+        elif time_range == 'month':
+            start_time = end_time - timedelta(days=30)
+            period_label = '最近 30 天'
+        else:  # 'all'
+            start_time = None
+            period_label = '全部'
+        
+        # 統計伺服器和 Jobs（不受時間範圍影響）
+        total_servers = JenkinsServer.objects.count()
+        total_jobs = JenkinsJob.objects.count()
+        
+        # 統計期間內的 Builds
+        builds_query = JenkinsBuild.objects.all()
+        if start_time:
+            builds_query = builds_query.filter(build_timestamp__gte=start_time)
+        
+        period_builds = builds_query.count()
+        period_success = builds_query.filter(result='SUCCESS').count()
+        period_failure = builds_query.exclude(result='SUCCESS').count()
+        
+        # 計算成功率
+        success_rate = (period_success / period_builds * 100) if period_builds > 0 else 0
+        
+        logger.info(f"全局統計查詢: time_range={time_range}, period_builds={period_builds}")
+        
+        return Response({
+            'total_servers': total_servers,
+            'total_jobs': total_jobs,
+            'period_builds': period_builds,
+            'period_success': period_success,
+            'period_failure': period_failure,
+            'success_rate': round(success_rate, 1),
+            'period_label': period_label,
+            'period_start': start_time.isoformat() if start_time else None,
+            'period_end': end_time.isoformat(),
+            'time_range': time_range,
+        })
+    
     @action(detail=True, methods=['get'])
     def statistics(self, request, pk=None):
         """

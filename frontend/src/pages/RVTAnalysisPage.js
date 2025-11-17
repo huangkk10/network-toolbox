@@ -98,6 +98,13 @@ const RVTAnalysisPage = () => {
     };
     const activeTab = getActiveTab();
     
+    // 從 URL 參數讀取時間範圍
+    const getTimeRangeFromURL = () => {
+        const params = new URLSearchParams(location.search);
+        return params.get('time_range') || 'today';
+    };
+    const [timeRange, setTimeRange] = useState(getTimeRangeFromURL());
+    
     // 從 URL 參數讀取篩選條件
     const getFiltersFromURL = () => {
         const params = new URLSearchParams(location.search);
@@ -111,11 +118,17 @@ const RVTAnalysisPage = () => {
     };
     
     const [loading, setLoading] = useState(false);
+    const [statisticsLoading, setStatisticsLoading] = useState(false);
     const [statistics, setStatistics] = useState({
         total_servers: 0,
         total_jobs: 0,
-        today_builds: 0,
+        period_builds: 0,
+        period_success: 0,
+        period_failure: 0,
         success_rate: 0,
+        period_label: '今日',
+        period_start: null,
+        period_end: null,
     });
     
     const [servers, setServers] = useState([]);
@@ -193,53 +206,48 @@ const RVTAnalysisPage = () => {
     // ========== API 調用 ==========
     
     // 載入統計資料
-    const fetchStatistics = async () => {
+    const fetchStatistics = async (range = timeRange) => {
+        setStatisticsLoading(true);
         try {
             // 獲取伺服器列表
             const serversRes = await axios.get('/api/jenkins-servers/');
             const serversData = serversRes.data;
-            
             setServers(serversData);
             
-            // 計算統計
-            const totalServers = serversData.length;
-            let totalJobs = 0;
-            let todayBuilds = 0;
-            let totalBuilds = 0;
-            let successBuilds = 0;
-            
-            // 獲取所有 Jobs
-            const jobsRes = await axios.get('/api/jenkins-jobs/');
-            totalJobs = jobsRes.data.length;
-            
-            // 獲取今日 Builds（簡化版，實際應該用日期過濾）
-            const buildsRes = await axios.get('/api/jenkins-builds/');
-            const today = new Date().toISOString().split('T')[0];
-            
-            buildsRes.data.forEach(build => {
-                const buildDate = build.build_timestamp.split(' ')[0];
-                if (buildDate === today) {
-                    todayBuilds++;
-                }
-                if (build.status === 'SUCCESS') {
-                    successBuilds++;
-                }
-                totalBuilds++;
-            });
-            
-            const successRate = totalBuilds > 0 
-                ? ((successBuilds / totalBuilds) * 100).toFixed(1)
-                : 0;
-            
-            setStatistics({
-                total_servers: totalServers,
-                total_jobs: totalJobs,
-                today_builds: todayBuilds,
-                success_rate: parseFloat(successRate),
-            });
+            // 調用新的 global-statistics API
+            const statsRes = await axios.get(`/api/jenkins-servers/global-statistics/?time_range=${range}`);
+            setStatistics(statsRes.data);
         } catch (error) {
             console.error('載入統計資料失敗:', error);
             message.error('載入統計資料失敗');
+        } finally {
+            setStatisticsLoading(false);
+        }
+    };
+    
+    // 處理時間範圍變更
+    const handleTimeRangeChange = (value) => {
+        setTimeRange(value);
+        updateTimeRangeURL(value);
+        fetchStatistics(value);
+    };
+    
+    // 更新 URL 參數
+    const updateTimeRangeURL = (range) => {
+        const params = new URLSearchParams(location.search);
+        params.set('time_range', range);
+        navigate(`${location.pathname}?${params.toString()}`, { replace: true });
+    };
+    
+    // 獲取時間範圍顯示文字
+    const getTimeRangeDisplay = () => {
+        switch (timeRange) {
+            case 'today': return '今日';
+            case 'week': return '最近 7 天';
+            case '2weeks': return '最近 14 天';
+            case 'month': return '最近 30 天';
+            case 'all': return '全部時間';
+            default: return '今日';
         }
     };
     
@@ -665,8 +673,10 @@ const RVTAnalysisPage = () => {
 
     // ========== 初始化 ==========
     useEffect(() => {
-        fetchStatistics();  // 這個函數內部已經包含了 setServers()
-        fetchAvailableViews(filters.server_id);  // ← 修改：根據當前選擇的伺服器載入 View 列表
+        const range = getTimeRangeFromURL();
+        setTimeRange(range);
+        fetchStatistics(range);  // 使用 URL 中的時間範圍
+        fetchAvailableViews(filters.server_id);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     
@@ -684,50 +694,80 @@ const RVTAnalysisPage = () => {
             {/* Tab 內容區域（Tab 本身已移到 TopHeader） */}
             {activeTab === 'overview' && (
                 <>
+                    {/* 時間範圍選擇器 */}
+                    <Card style={{ marginBottom: 16 }}>
+                        <Space size="middle" align="center" style={{ width: '100%' }}>
+                            <span style={{ fontWeight: 500, fontSize: 14 }}>統計時間範圍：</span>
+                            <Select
+                                value={timeRange}
+                                onChange={handleTimeRangeChange}
+                                size="large"
+                                style={{ width: '300px' }}
+                            >
+                                <Option value="today">今日</Option>
+                                <Option value="week">最近 7 天</Option>
+                                <Option value="2weeks">最近 14 天</Option>
+                                <Option value="month">最近 30 天</Option>
+                                <Option value="all">全部時間</Option>
+                            </Select>
+                            {statistics.period_start && statistics.period_end && (
+                                <span style={{ color: '#999', fontSize: 14 }}>
+                                    統計區間：{new Date(statistics.period_start).toLocaleString('zh-TW')} ~ {new Date(statistics.period_end).toLocaleString('zh-TW')}
+                                    <span style={{ marginLeft: 16, color: '#666' }}>
+                                        （成功：<span style={{ color: '#52c41a', fontWeight: 500 }}>{statistics.period_success}</span> | 
+                                        失敗：<span style={{ color: '#ff4d4f', fontWeight: 500 }}>{statistics.period_failure}</span>）
+                                    </span>
+                                </span>
+                            )}
+                        </Space>
+                    </Card>
+
                     {/* 統計卡片 */}
-                    <Row gutter={16} style={{ marginBottom: 24 }}>
-                        <Col span={6}>
-                            <Card>
-                                <Statistic
-                                    title="伺服器總數"
-                                    value={statistics.total_servers}
-                                    prefix={<CloudServerOutlined />}
-                                    valueStyle={{ color: '#1890ff' }}
-                                />
-                            </Card>
-                        </Col>
-                        <Col span={6}>
-                            <Card>
-                                <Statistic
-                                    title="Jobs 總數"
-                                    value={statistics.total_jobs}
-                                    prefix={<FolderOutlined />}
-                                    valueStyle={{ color: '#52c41a' }}
-                                />
-                            </Card>
-                        </Col>
-                        <Col span={6}>
-                            <Card>
-                                <Statistic
-                                    title="今日構建數"
-                                    value={statistics.today_builds}
-                                    prefix={<RocketOutlined />}
-                                    valueStyle={{ color: '#faad14' }}
-                                />
-                            </Card>
-                        </Col>
-                        <Col span={6}>
-                            <Card>
-                                <Statistic
-                                    title="成功率（總體）"
-                                    value={statistics.success_rate}
-                                    suffix="%"
-                                    prefix={<CheckCircleOutlined />}
-                                    valueStyle={{ color: '#52c41a' }}
-                                />
-                            </Card>
-                        </Col>
-                    </Row>
+                    <Spin spinning={statisticsLoading}>
+                        <Row gutter={16} style={{ marginBottom: 24 }}>
+                            <Col span={6}>
+                                <Card>
+                                    <Statistic
+                                        title="伺服器總數"
+                                        value={statistics.total_servers}
+                                        prefix={<CloudServerOutlined />}
+                                        valueStyle={{ color: '#1890ff' }}
+                                    />
+                                </Card>
+                            </Col>
+                            <Col span={6}>
+                                <Card>
+                                    <Statistic
+                                        title="Jobs 總數"
+                                        value={statistics.total_jobs}
+                                        prefix={<FolderOutlined />}
+                                        valueStyle={{ color: '#52c41a' }}
+                                    />
+                                </Card>
+                            </Col>
+                            <Col span={6}>
+                                <Card>
+                                    <Statistic
+                                        title={`${statistics.period_label}構建數`}
+                                        value={statistics.period_builds}
+                                        prefix={<RocketOutlined />}
+                                        valueStyle={{ color: '#faad14' }}
+                                    />
+                                </Card>
+                            </Col>
+                            <Col span={6}>
+                                <Card>
+                                    <Statistic
+                                        title={`${statistics.period_label}成功率`}
+                                        value={statistics.success_rate}
+                                        suffix="%"
+                                        prefix={<CheckCircleOutlined />}
+                                        valueStyle={{ color: '#52c41a' }}
+                                    />
+                                </Card>
+                            </Col>
+                        </Row>
+                    </Spin>
                 </>
             )}
 
