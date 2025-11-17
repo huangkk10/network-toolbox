@@ -137,11 +137,20 @@ const DHCPServerManagementPage = () => {
             title: '伺服器名稱',
             dataIndex: 'name',
             key: 'name',
+            sorter: (a, b) => a.name.localeCompare(b.name),
+            defaultSortOrder: 'ascend',  // 預設按名稱升序排列
         },
         {
             title: 'IP 位址',
             dataIndex: 'ip_address',
             key: 'ip_address',
+            sorter: (a, b) => {
+                // IP 地址排序：將 IP 轉換為數字進行比較
+                const ipToNumber = (ip) => {
+                    return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet), 0);
+                };
+                return ipToNumber(a.ip_address) - ipToNumber(b.ip_address);
+            },
         },
         {
             title: '狀態',

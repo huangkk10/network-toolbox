@@ -53,16 +53,16 @@ const { Content } = Layout;
 const { Option } = Select;
 const { RangePicker } = DatePicker;
 
-// 自訂表格表頭樣式（深色背景）
+// 自訂表格表頭樣式（淺灰背景、黑色文字）
 const tableHeaderStyles = `
     .ant-table-thead > tr > th {
-        background-color: #595959 !important;
-        color: #ffffff !important;
+        background-color: #d9d9d9 !important;
+        color: #000000 !important;
         font-weight: 600 !important;
-        border-bottom: 2px solid #434343 !important;
+        border-bottom: 2px solid #bfbfbf !important;
     }
     .ant-table-thead > tr > th:hover {
-        background-color: #434343 !important;
+        background-color: #e8e8e8 !important;
     }
 `;
 
