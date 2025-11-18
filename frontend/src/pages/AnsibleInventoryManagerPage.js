@@ -11,23 +11,27 @@ import {
     Divider,
     Descriptions,
     Tag,
-    Spin
+    Spin,
+    Space
 } from 'antd';
 import {
     UploadOutlined,
     UserOutlined,
     TeamOutlined,
     HistoryOutlined,
-    ReloadOutlined
+    ReloadOutlined,
+    CheckCircleOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 import InventoryFileEditor from '../components/InventoryFileEditor';
+import InventoryValidationDrawer from '../components/InventoryValidationDrawer';
 
 const AnsibleInventoryManagerPage = () => {
     // 狀態管理
     const [loading, setLoading] = useState(false);
     const [importing, setImporting] = useState(false);
     const [currentInventory, setCurrentInventory] = useState(null);
+    const [validationDrawerVisible, setValidationDrawerVisible] = useState(false);
     const [form] = Form.useForm();
 
     // 初始載入
@@ -76,6 +80,16 @@ const AnsibleInventoryManagerPage = () => {
     const handleEditorSaved = () => {
         // 重新載入 Inventory 資訊以更新統計數據
         loadCurrentInventory();
+    };
+
+    // 打開驗證抽屜
+    const handleOpenValidationDrawer = () => {
+        setValidationDrawerVisible(true);
+    };
+
+    // 關閉驗證抽屜
+    const handleCloseValidationDrawer = () => {
+        setValidationDrawerVisible(false);
     };
 
     return (
@@ -135,13 +149,22 @@ const AnsibleInventoryManagerPage = () => {
                         title={`當前 Inventory: ${currentInventory.nas_path}/${currentInventory.file_name}`}
                         style={{ marginBottom: 24 }}
                         extra={
-                            <Button
-                                icon={<ReloadOutlined />}
-                                onClick={loadCurrentInventory}
-                                loading={loading}
-                            >
-                                重新載入
-                            </Button>
+                            <Space>
+                                <Button
+                                    type="primary"
+                                    icon={<CheckCircleOutlined />}
+                                    onClick={handleOpenValidationDrawer}
+                                >
+                                    檢查配置
+                                </Button>
+                                <Button
+                                    icon={<ReloadOutlined />}
+                                    onClick={loadCurrentInventory}
+                                    loading={loading}
+                                >
+                                    重新載入
+                                </Button>
+                            </Space>
                         }
                     >
                         <Row gutter={16}>
@@ -220,6 +243,16 @@ const AnsibleInventoryManagerPage = () => {
                         <p style={{ marginTop: 16, color: '#8c8c8c' }}>載入中...</p>
                     </div>
                 </Card>
+            )}
+
+            {/* 配置驗證抽屜 */}
+            {currentInventory && (
+                <InventoryValidationDrawer
+                    visible={validationDrawerVisible}
+                    onClose={handleCloseValidationDrawer}
+                    inventoryId={currentInventory.id}
+                    inventoryName={`${currentInventory.nas_path}/${currentInventory.file_name}`}
+                />
             )}
         </div>
     );

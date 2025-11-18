@@ -104,16 +104,40 @@ class AnsibleInventoryService:
                 logger.error(error_msg)
                 return False, error_msg, {}
             
-            # 驗證語法
-            syntax_valid, syntax_error = self.validate_syntax(full_path)
-            if not syntax_valid:
-                logger.error(f"Syntax validation failed: {syntax_error}")
-                return False, syntax_error, {}
+            # 基本檔案檢查（不進行嚴格的語法驗證）
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    
+                # 簡單檢查：確保文件不是空的
+                if not content.strip():
+                    error_msg = "文件內容為空"
+                    logger.error(error_msg)
+                    return False, error_msg, {}
+                
+                logger.info(f"File loaded successfully: {len(content)} characters")
+                
+            except Exception as e:
+                error_msg = f"無法讀取文件: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                return False, error_msg, {}
             
-            # 解析 Inventory
-            parsed_data = self.parse_inventory(full_path)
+            # 嘗試解析 Inventory（使用寬鬆模式）
+            # 注意：即使有語法錯誤，也嘗試導入，讓驗證階段來處理
+            try:
+                parsed_data = self.parse_inventory(full_path)
+            except Exception as e:
+                logger.warning(f"Parse inventory with errors: {e}")
+                # 即使解析失敗，也回傳部分數據，允許導入
+                parsed_data = {
+                    'hosts': [],
+                    'groups': {},
+                    'total_hosts': 0,
+                    'total_groups': 0,
+                    'parse_error': str(e)
+                }
             
-            logger.info(f"Successfully imported inventory: {parsed_data['total_hosts']} hosts, {parsed_data['total_groups']} groups")
+            logger.info(f"Successfully imported inventory: {parsed_data.get('total_hosts', 0)} hosts, {parsed_data.get('total_groups', 0)} groups")
             return True, "", parsed_data
             
         except Exception as e:
@@ -141,11 +165,16 @@ class AnsibleInventoryService:
         try:
             logger.debug(f"Validating syntax for: {inventory_path}")
             
+            # 使用環境變數強制 Ansible 使用 INI 插件，避免將文件當作腳本執行
+            env = os.environ.copy()
+            env['ANSIBLE_INVENTORY_ENABLED'] = 'ini,yaml'  # 只啟用 ini 和 yaml 插件
+            
             result = subprocess.run(
                 ['ansible-inventory', '-i', inventory_path, '--list'],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env=env  # 使用修改後的環境變數
             )
             
             # 檢查 returncode（雖然通常是 0）
@@ -219,17 +248,42 @@ class AnsibleInventoryService:
         try:
             logger.info(f"Parsing inventory file: {inventory_path}")
             
+            # 使用環境變數強制 Ansible 使用 INI 插件
+            env = os.environ.copy()
+            env['ANSIBLE_INVENTORY_ENABLED'] = 'ini,yaml'
+            
             result = subprocess.run(
                 ['ansible-inventory', '-i', inventory_path, '--list'],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
+                env=env
             )
             
+            # 檢查命令執行狀態
             if result.returncode != 0:
-                raise Exception(f"ansible-inventory 命令失敗: {result.stderr}")
+                error_msg = result.stderr if result.stderr else "未知錯誤"
+                logger.warning(f"ansible-inventory 命令失敗: {error_msg}")
+                return {
+                    'hosts': [],
+                    'groups': {},
+                    'total_hosts': 0,
+                    'total_groups': 0,
+                    'parse_error': error_msg
+                }
             
-            inventory_data = json.loads(result.stdout)
+            # 嘗試解析 JSON 輸出
+            try:
+                inventory_data = json.loads(result.stdout)
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON parsing failed: {e}")
+                return {
+                    'hosts': [],
+                    'groups': {},
+                    'total_hosts': 0,
+                    'total_groups': 0,
+                    'parse_error': f"JSON 解析錯誤: {str(e)}"
+                }
             
             # 提取 Host 資訊
             hosts = []
@@ -289,14 +343,23 @@ class AnsibleInventoryService:
             return result_data
             
         except subprocess.TimeoutExpired:
-            logger.error("Parsing timeout")
-            raise Exception("解析 Inventory 超時（30秒）")
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed: {e}")
-            raise Exception(f"JSON 解析錯誤: {str(e)}")
+            logger.warning("Parsing timeout (30s)")
+            return {
+                'hosts': [],
+                'groups': {},
+                'total_hosts': 0,
+                'total_groups': 0,
+                'parse_error': '解析 Inventory 超時（30秒）'
+            }
         except Exception as e:
-            logger.error(f"Parsing failed: {e}", exc_info=True)
-            raise Exception(f"解析 Inventory 失敗: {str(e)}")
+            logger.warning(f"Parsing failed with exception: {e}", exc_info=True)
+            return {
+                'hosts': [],
+                'groups': {},
+                'total_hosts': 0,
+                'total_groups': 0,
+                'parse_error': f'解析 Inventory 失敗: {str(e)}'
+            }
     
     def create_backup(self, original_file_path: str) -> str:
         """
@@ -722,3 +785,216 @@ class AnsibleInventoryService:
             error_msg = f"驗證失敗: {str(e)}"
             logger.error(error_msg, exc_info=True)
             return False, error_msg, None
+    
+    def get_full_inventory(self, use_cache: bool = True) -> Dict:
+        """
+        獲取完整的 Inventory 數據（用於 Jenkins API）
+        
+        返回 ansible-inventory --list 的原始 JSON 格式，包含 _meta.hostvars
+        
+        Args:
+            use_cache: 是否使用快取（目前未實現快取，參數保留用於未來擴展）
+        
+        Returns:
+            Dict 包含:
+            {
+                'success': bool,
+                'cached': bool,  # 目前固定為 False（未實現快取）
+                'data': {
+                    '_meta': {
+                        'hostvars': {
+                            'hostname': {...}  # 主機變數
+                        }
+                    },
+                    'group_name': {
+                        'hosts': [...]  # 群組中的主機列表
+                    }
+                },
+                'error': str (optional)
+            }
+        """
+        try:
+            logger.info(f"Getting full inventory from: {self.nas_base_path}")
+            
+            # 檢查文件是否存在
+            if not os.path.exists(self.nas_base_path):
+                error_msg = f"Inventory 文件不存在: {self.nas_base_path}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'cached': False,
+                    'error': error_msg
+                }
+            
+            # 執行 ansible-inventory --list 獲取原始 JSON 格式
+            result = subprocess.run(
+                ['ansible-inventory', '-i', self.nas_base_path, '--list'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                error_msg = f"ansible-inventory 命令失敗: {result.stderr}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'cached': False,
+                    'error': error_msg
+                }
+            
+            # 解析 JSON 輸出
+            inventory_data = json.loads(result.stdout)
+            
+            # 統計資訊（用於日誌）
+            hostvars = inventory_data.get('_meta', {}).get('hostvars', {})
+            total_hosts = len(hostvars)
+            total_groups = len([k for k in inventory_data.keys() if k not in ['_meta', 'all']])
+            
+            logger.info(f"Successfully retrieved inventory: {total_hosts} hosts, {total_groups} groups")
+            
+            return {
+                'success': True,
+                'cached': False,  # 未實現快取機制
+                'data': inventory_data  # 返回原始的 ansible-inventory JSON 格式
+            }
+            
+        except subprocess.TimeoutExpired:
+            error_msg = f"獲取 Inventory 超時（30秒）"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'cached': False,
+                'error': error_msg
+            }
+        except json.JSONDecodeError as e:
+            error_msg = f"解析 Inventory JSON 失敗: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'cached': False,
+                'error': error_msg
+            }
+        except FileNotFoundError as e:
+            error_msg = f"找不到 Inventory 文件: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'cached': False,
+                'error': error_msg
+            }
+        except Exception as e:
+            error_msg = f"獲取 Inventory 失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {
+                'success': False,
+                'cached': False,
+                'error': error_msg
+            }
+    
+    def get_host_config(self, hostname: str, use_cache: bool = True) -> Dict:
+        """
+        獲取特定主機的完整配置
+        
+        Args:
+            hostname: 主機名稱
+            use_cache: 是否使用快取（目前未實現，參數保留）
+        
+        Returns:
+            Dict 包含:
+            {
+                'success': bool,
+                'cached': bool,
+                'hostname': str,
+                'config': Dict,  # 主機的所有變數
+                'groups': List[str],  # 主機所屬的群組
+                'error': str (optional)
+            }
+        """
+        try:
+            logger.info(f"Getting config for host: {hostname}")
+            
+            # 檢查文件是否存在
+            if not os.path.exists(self.nas_base_path):
+                error_msg = f"Inventory 文件不存在: {self.nas_base_path}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'cached': False,
+                    'error': error_msg
+                }
+            
+            # 執行 ansible-inventory 獲取主機配置
+            result = subprocess.run(
+                ['ansible-inventory', '-i', self.nas_base_path, '--host', hostname],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                error_msg = f"無法獲取主機配置: {result.stderr}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'cached': False,
+                    'error': error_msg
+                }
+            
+            # 解析 JSON 輸出
+            host_config = json.loads(result.stdout)
+            
+            # 獲取主機所屬的群組
+            # 需要再次獲取完整 inventory 來查找群組資訊
+            full_result = self.parse_inventory(self.nas_base_path)
+            host_groups = []
+            
+            for host in full_result.get('hosts', []):
+                if host['hostname'] == hostname:
+                    host_groups = host.get('groups', [])
+                    break
+            
+            logger.info(f"Successfully retrieved config for host: {hostname}, groups: {host_groups}")
+            
+            return {
+                'success': True,
+                'cached': False,
+                'hostname': hostname,
+                'config': host_config,
+                'groups': host_groups
+            }
+            
+        except subprocess.TimeoutExpired:
+            error_msg = f"獲取主機配置超時（30秒）: {hostname}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'cached': False,
+                'error': error_msg
+            }
+        except json.JSONDecodeError as e:
+            error_msg = f"解析主機配置失敗: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'cached': False,
+                'error': error_msg
+            }
+        except Exception as e:
+            error_msg = f"獲取主機配置失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {
+                'success': False,
+                'cached': False,
+                'error': error_msg
+            }
+    
+    def clear_cache(self, cache_type: str = 'all'):
+        """
+        清除快取（預留方法，目前未實現快取機制）
+        
+        Args:
+            cache_type: 快取類型（'all', 'inventory', 'validation' 等）
+        """
+        logger.info(f"clear_cache called with type: {cache_type} (cache not implemented yet)")
+        pass

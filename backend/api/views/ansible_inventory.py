@@ -605,3 +605,58 @@ class AnsibleInventoryViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @action(detail=True, methods=['post'], url_path='validate-config')
+    def validate_config(self, request, pk=None):
+        """
+        驗證 Ansible Inventory 配置（完整檢查）
+        
+        POST /api/ansible-inventory/{id}/validate-config/
+        
+        Body:
+            check_connectivity (bool): 是否執行網路連線測試（可選，默認 false）
+            check_dhcp (bool): 是否檢查 DHCP 記錄（可選，默認 false）
+            dhcp_server_ids (list): 指定 DHCP Server IDs（可選）
+        
+        Returns:
+            完整的驗證結果，包括：
+            - overall_status: 'success' | 'warning' | 'error' | 'unknown'
+            - checks: 各項檢查的詳細結果
+            - summary: 統計摘要
+        """
+        try:
+            inventory = self.get_object()
+            
+            # 獲取請求參數
+            check_connectivity = request.data.get('check_connectivity', False)
+            check_dhcp = request.data.get('check_dhcp', False)
+            dhcp_server_ids = request.data.get('dhcp_server_ids', [])
+            
+            logger.info(f"🔍 Validating Inventory {inventory.id}, connectivity={check_connectivity}, dhcp={check_dhcp}")
+            
+            # 導入驗證器
+            from library.services.inventory_config_validator import InventoryConfigValidator
+            
+            # 創建驗證器實例
+            validator = InventoryConfigValidator(
+                inventory_id=inventory.id,
+                check_connectivity=check_connectivity,
+                check_dhcp=check_dhcp
+            )
+            
+            # 執行驗證
+            result = validator.validate()
+            
+            logger.info(f"✅ Validation complete for Inventory {inventory.id}: {result['overall_status']}")
+            
+            return Response({
+                'success': True,
+                'data': result
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"❌ Validation failed for Inventory {pk}: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'message': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
