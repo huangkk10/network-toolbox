@@ -20,6 +20,9 @@ router.register(r'jenkins-servers', views.JenkinsServerViewSet)
 router.register(r'jenkins-jobs', views.JenkinsJobViewSet)
 router.register(r'jenkins-builds', views.JenkinsBuildViewSet)
 
+# Ansible Inventory API
+router.register(r'ansible-inventory', views.AnsibleInventoryViewSet)
+
 urlpatterns = [
     path('', views.api_root, name='api_root'),
     path('dashboard/stats/', views.dashboard_stats, name='dashboard_stats'),

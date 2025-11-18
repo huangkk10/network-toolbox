@@ -5,8 +5,10 @@ from .models import (
     DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, NTPSyncLog,
     IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality,
     NetworkSwitch, SwitchPort, GitLabConnection,
-    JenkinsServer, JenkinsJob, JenkinsBuild
+    JenkinsServer, JenkinsJob, JenkinsBuild,
+    AnsibleInventoryImport, AnsibleHostConfig, InventoryVersion, InventoryEditLog
 )
+
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -404,5 +406,69 @@ class NTPSyncLogSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = NTPSyncLog
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+
+class AnsibleInventoryImportSerializer(serializers.ModelSerializer):
+    """Ansible Inventory 導入記錄序列化器"""
+    
+    imported_by_username = serializers.CharField(source='imported_by.username', read_only=True)
+    locked_by_username = serializers.CharField(source='locked_by.username', read_only=True)
+    
+    class Meta:
+        model = AnsibleInventoryImport
+        fields = '__all__'
+        read_only_fields = (
+            'imported_at', 'updated_at', 'status', 'syntax_valid',
+            'syntax_error', 'total_hosts', 'total_groups',
+            'current_version', 'is_locked', 'locked_by', 'locked_at'
+        )
+
+
+class AnsibleHostConfigSerializer(serializers.ModelSerializer):
+    """Ansible Host 配置序列化器"""
+    
+    class Meta:
+        model = AnsibleHostConfig
+        fields = '__all__'
+        read_only_fields = (
+            'inventory', 'created_at', 'updated_at',
+            'validation_status', 'validation_results', 'last_validated_at'
+        )
+
+
+class AnsibleHostConfigListSerializer(serializers.ModelSerializer):
+    """Ansible Host 配置列表序列化器（簡化版）"""
+    
+    class Meta:
+        model = AnsibleHostConfig
+        fields = (
+            'id', 'hostname', 'ansible_host', 'ansible_user', 'ansible_port',
+            'mac_address', 'uart_host', 'groups',
+            'validation_status', 'last_validated_at', 'updated_at'
+        )
+        read_only_fields = fields
+
+
+class InventoryVersionSerializer(serializers.ModelSerializer):
+    """Inventory 版本記錄序列化器"""
+    
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    
+    class Meta:
+        model = InventoryVersion
+        fields = '__all__'
+        read_only_fields = ('created_at',)
+
+
+class InventoryEditLogSerializer(serializers.ModelSerializer):
+    """Inventory 編輯日誌序列化器"""
+    
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    host_hostname = serializers.CharField(source='host_config.hostname', read_only=True)
+    
+    class Meta:
+        model = InventoryEditLog
         fields = '__all__'
         read_only_fields = ('created_at',)

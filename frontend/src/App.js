@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import './App.css';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Layout, Tabs } from 'antd';
-import { BarChartOutlined, FolderOutlined } from '@ant-design/icons';
+import { BarChartOutlined, FolderOutlined, FileTextOutlined } from '@ant-design/icons';
 import Sidebar from './components/Sidebar';
 import TopHeader from './components/TopHeader';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -24,6 +24,7 @@ import SystemMonitorPage from './pages/SystemMonitorPage';
 import RVTAnalysisPage from './pages/RVTAnalysisPage';
 import RVTManagementPage from './pages/RVTManagementPage';
 import BuildConfigValidatorPage from './pages/BuildConfigValidatorPage';
+import AnsibleInventoryManagerPage from './pages/AnsibleInventoryManagerPage';
 
 const { Content } = Layout;
 
@@ -156,6 +157,20 @@ function AppLayout() {
                     } 
                     key="details"
                 />
+                <Tabs.TabPane 
+                    tab={
+                        <span style={{ 
+                            padding: '10px 24px',
+                            display: 'inline-block',
+                            fontWeight: 500,
+                            fontSize: '15px'
+                        }}>
+                            <FileTextOutlined style={{ marginRight: 8, fontSize: '16px' }} />
+                            Ansible Inventory
+                        </span>
+                    } 
+                    key="inventory"
+                />
             </Tabs>
             <style>{`
                 .rvt-header-tabs .ant-tabs-nav {
@@ -248,6 +263,9 @@ function AppLayout() {
                         {/* RVT Analytics 路由 - 僅 Admin 可訪問 */}
                         <Route path="/rvt-analytics" element={<RVTAnalysisPage />} />
                         <Route path="/rvt-analytics/build-config-validator/:buildId" element={<BuildConfigValidatorPage />} />
+                        
+                        {/* Ansible Inventory Manager 路由 */}
+                        <Route path="/ansible-inventory-manager" element={<AnsibleInventoryManagerPage />} />
                         
                         <Route path="/system-monitor" element={<SystemMonitorPage />} />
                         <Route path="/admin/dhcp-server-management" element={<DHCPServerManagementPage />} />

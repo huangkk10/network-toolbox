@@ -48,6 +48,7 @@ import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
+import AnsibleInventoryManagerPage from './AnsibleInventoryManagerPage';
 
 const { Content } = Layout;
 const { Option } = Select;
@@ -695,6 +696,12 @@ const RVTAnalysisPage = () => {
     }, [location.search]);
 
     // ========== 渲染 ==========
+    
+    // 如果 activeTab 是 'inventory'，則渲染 Ansible Inventory Manager
+    if (activeTab === 'inventory') {
+        return <AnsibleInventoryManagerPage />;
+    }
+    
     return (
         <Content style={{ 
             padding: 0,

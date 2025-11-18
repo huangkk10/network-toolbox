@@ -958,3 +958,238 @@ class NTPSyncLog(models.Model):
     
     def __str__(self):
         return f"[{self.status}] {self.timestamp} - {self.ntp_server}"
+
+
+class AnsibleInventoryImport(models.Model):
+    """Ansible Inventory 導入記錄"""
+    
+    STATUS_CHOICES = [
+        ('pending', '等待導入'),
+        ('importing', '導入中'),
+        ('success', '導入成功'),
+        ('failed', '導入失敗'),
+    ]
+    
+    # 基本資訊
+    nas_path = models.CharField(max_length=500, verbose_name='NAS 路徑')
+    file_name = models.CharField(max_length=255, default='hosts', verbose_name='檔案名稱')
+    
+    # 導入狀態
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        verbose_name='狀態'
+    )
+    
+    # 語法驗證結果
+    syntax_valid = models.BooleanField(default=False, verbose_name='語法有效')
+    syntax_error = models.TextField(blank=True, null=True, verbose_name='語法錯誤訊息')
+    
+    # 統計資訊
+    total_hosts = models.IntegerField(default=0, verbose_name='總 Host 數量')
+    total_groups = models.IntegerField(default=0, verbose_name='總 Group 數量')
+    
+    # 編輯鎖定（防止多人同時編輯）
+    is_locked = models.BooleanField(default=False, verbose_name='編輯鎖定')
+    locked_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='locked_inventories',
+        verbose_name='鎖定者'
+    )
+    locked_at = models.DateTimeField(null=True, blank=True, verbose_name='鎖定時間')
+    
+    # 當前版本
+    current_version = models.IntegerField(default=1, verbose_name='當前版本號')
+    
+    # 時間戳記
+    imported_at = models.DateTimeField(auto_now_add=True, verbose_name='導入時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    imported_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='imported_inventories',
+        verbose_name='導入者'
+    )
+    
+    class Meta:
+        db_table = 'ansible_inventory_import'
+        verbose_name = 'Ansible Inventory 導入'
+        verbose_name_plural = 'Ansible Inventory 導入記錄'
+        ordering = ['-imported_at']
+    
+    def __str__(self):
+        return f"{self.nas_path}/{self.file_name} - {self.status}"
+
+
+class AnsibleHostConfig(models.Model):
+    """Ansible Host 配置"""
+    
+    VALIDATION_STATUS_CHOICES = [
+        ('not_checked', '未檢查'),
+        ('passed', '通過'),
+        ('failed', '失敗'),
+        ('warning', '警告'),
+    ]
+    
+    # 關聯到導入記錄
+    inventory = models.ForeignKey(
+        AnsibleInventoryImport,
+        on_delete=models.CASCADE,
+        related_name='hosts',
+        verbose_name='所屬 Inventory'
+    )
+    
+    # Host 基本資訊
+    hostname = models.CharField(max_length=255, verbose_name='主機名稱')
+    groups = models.JSONField(default=list, verbose_name='所屬 Groups')
+    
+    # Ansible 變數
+    ansible_host = models.CharField(max_length=255, blank=True, null=True, verbose_name='IP 地址')
+    ansible_user = models.CharField(max_length=100, blank=True, null=True, verbose_name='SSH 使用者')
+    ansible_password = models.CharField(max_length=255, blank=True, null=True, verbose_name='SSH 密碼')
+    ansible_port = models.IntegerField(default=22, verbose_name='SSH 端口')
+    
+    # 自訂變數
+    mac_address = models.CharField(max_length=17, blank=True, null=True, verbose_name='MAC 地址')
+    uart_host = models.CharField(max_length=255, blank=True, null=True, verbose_name='UART 主機')
+    
+    # 其他所有變數存為 JSON
+    other_vars = models.JSONField(default=dict, verbose_name='其他變數')
+    
+    # 配置驗證結果
+    validation_status = models.CharField(
+        max_length=20,
+        choices=VALIDATION_STATUS_CHOICES,
+        default='not_checked',
+        verbose_name='驗證狀態'
+    )
+    validation_results = models.JSONField(default=dict, verbose_name='驗證結果')
+    
+    # 最後驗證時間
+    last_validated_at = models.DateTimeField(null=True, blank=True, verbose_name='最後驗證時間')
+    
+    # 時間戳記
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='創建時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    
+    class Meta:
+        db_table = 'ansible_host_config'
+        verbose_name = 'Ansible Host 配置'
+        verbose_name_plural = 'Ansible Host 配置'
+        ordering = ['hostname']
+        unique_together = [['inventory', 'hostname']]
+    
+    def __str__(self):
+        return f"{self.hostname} ({self.ansible_host})"
+
+
+class InventoryVersion(models.Model):
+    """Inventory 文件版本記錄"""
+    
+    # 關聯到導入記錄
+    inventory = models.ForeignKey(
+        AnsibleInventoryImport,
+        on_delete=models.CASCADE,
+        related_name='versions',
+        verbose_name='所屬 Inventory'
+    )
+    
+    # 版本資訊
+    version_number = models.IntegerField(verbose_name='版本號')
+    
+    # 備份文件路徑
+    backup_file_path = models.CharField(max_length=500, verbose_name='備份檔案路徑')
+    
+    # 文件內容快照（可選，用於快速預覽）
+    content_snapshot = models.TextField(blank=True, null=True, verbose_name='內容快照')
+    
+    # 變更摘要
+    change_summary = models.TextField(blank=True, null=True, verbose_name='變更摘要')
+    
+    # 時間和操作者
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='創建時間')
+    created_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        verbose_name='創建者'
+    )
+    
+    class Meta:
+        db_table = 'inventory_version'
+        verbose_name = 'Inventory 版本'
+        verbose_name_plural = 'Inventory 版本記錄'
+        ordering = ['-version_number']
+        unique_together = [['inventory', 'version_number']]
+    
+    def __str__(self):
+        return f"{self.inventory.file_name} v{self.version_number}"
+
+
+class InventoryEditLog(models.Model):
+    """Inventory 編輯操作日誌"""
+    
+    ACTION_CHOICES = [
+        ('import', '導入'),
+        ('edit', '編輯'),
+        ('save', '儲存'),
+        ('rollback', '回滾'),
+        ('validate', '驗證'),
+    ]
+    
+    # 關聯
+    inventory = models.ForeignKey(
+        AnsibleInventoryImport,
+        on_delete=models.CASCADE,
+        related_name='edit_logs',
+        verbose_name='所屬 Inventory'
+    )
+    
+    host_config = models.ForeignKey(
+        AnsibleHostConfig,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='edit_logs',
+        verbose_name='相關 Host'
+    )
+    
+    # 操作類型
+    action = models.CharField(
+        max_length=20,
+        choices=ACTION_CHOICES,
+        verbose_name='操作類型'
+    )
+    
+    # 變更詳情
+    changes = models.JSONField(default=dict, verbose_name='變更內容')
+    
+    # 操作結果
+    success = models.BooleanField(default=True, verbose_name='操作成功')
+    error_message = models.TextField(blank=True, null=True, verbose_name='錯誤訊息')
+    
+    # 時間和操作者
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='操作時間')
+    created_by = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        verbose_name='操作者'
+    )
+    
+    # IP 地址（追蹤來源）
+    ip_address = models.GenericIPAddressField(blank=True, null=True, verbose_name='來源 IP')
+    
+    class Meta:
+        db_table = 'inventory_edit_log'
+        verbose_name = 'Inventory 編輯日誌'
+        verbose_name_plural = 'Inventory 編輯日誌'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.action} by {self.created_by} at {self.created_at}"

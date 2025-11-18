@@ -1,647 +1,724 @@
 """
-Ansible Inventory 解析服務
+Ansible Inventory 管理服務
 
-提供 Ansible Inventory 文件的解析功能，支持快取機制以提升性能。
+提供 Ansible Inventory 文件的導入、解析、驗證、生成和儲存功能。
 """
 
 import os
-import json
-import logging
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+import re
 import subprocess
+import json
+import shutil
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 
 class AnsibleInventoryService:
-    """
-    Ansible Inventory 解析服務（帶快取支持）
+    """Ansible Inventory 管理服務"""
     
-    功能：
-    1. 解析 Ansible Inventory 文件（使用 ansible-inventory 命令）
-    2. 快取解析結果到 NAS 文件系統
-    3. 智能快取有效性檢查（版本、過期時間、文件修改時間）
-    4. 快取管理（清除、統計）
-    
-    快取策略：
-    - 保留時間：7 天
-    - 存儲位置：{build_dir}/cache/
-    - 有效性判斷：版本 + 過期時間 + inventory 文件 mtime
-    """
-    
-    CACHE_EXPIRY_DAYS = 7  # 快取保留 7 天
-    CACHE_VERSION = "1.0"
-    
-    def __init__(self, inventory_path: str):
+    def __init__(self, nas_base_path: str = '/mnt/mdt'):
         """
         初始化服務
         
         Args:
-            inventory_path: inventory/hosts 文件的絕對路徑
-                           例如: /mnt/mdt/.../10.252.170.171/Test-KVM01/148/artifacts/inventory/hosts
-        
-        Raises:
-            FileNotFoundError: 如果 inventory 文件不存在
+            nas_base_path: NAS 掛載的基礎路徑（預設 /mnt/mdt）
         """
-        self.inventory_path = Path(inventory_path)
-        
-        if not self.inventory_path.exists():
-            raise FileNotFoundError(f"Inventory 文件不存在: {inventory_path}")
-        
-        # 計算快取目錄路徑
-        # 從 /path/to/148/artifacts/inventory/hosts → /path/to/148/cache/
-        self.build_dir = self.inventory_path.parent.parent.parent  # 回到 148/ 目錄
-        self.cache_dir = self.build_dir / 'cache'
-        
-        logger.info(f"初始化 AnsibleInventoryService")
-        logger.info(f"  Inventory: {self.inventory_path}")
-        logger.info(f"  Cache Dir: {self.cache_dir}")
+        self.nas_base_path = nas_base_path
+        logger.info(f"AnsibleInventoryService initialized with nas_base_path: {nas_base_path}")
     
-    # ==================== 快取管理 ====================
-    
-    def _ensure_cache_dir(self):
-        """確保快取目錄存在"""
-        try:
-            self.cache_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            logger.error(f"創建快取目錄失敗: {e}", exc_info=True)
-    
-    def _get_cache_metadata_path(self) -> Path:
-        """獲取快取元數據文件路徑"""
-        return self.cache_dir / 'cache_metadata.json'
-    
-    def _get_cache_file_path(self, cache_type: str, hostname: str = None) -> Path:
+    def convert_windows_path_to_linux(self, windows_path: str) -> str:
         """
-        獲取快取文件路徑
+        將 Windows 網路路徑轉換為 Linux 掛載路徑
+        
+        範例:
+            \\\\10.250.0.1\\mdt\\Script\\test -> /mnt/mdt/Script/test
+            \\10.250.0.1\mdt\Script\test -> /mnt/mdt/Script/test
         
         Args:
-            cache_type: 'full_inventory' | 'hosts_list' | 'host_config'
-            hostname: 當 cache_type='host_config' 時指定主機名
-        
-        Returns:
-            Path: 快取文件路徑
-        """
-        if cache_type == 'full_inventory':
-            return self.cache_dir / 'ansible_inventory.json'
-        elif cache_type == 'hosts_list':
-            return self.cache_dir / 'ansible_hosts_list.json'
-        elif cache_type == 'host_config':
-            if not hostname:
-                raise ValueError("hostname is required for host_config cache")
-            return self.cache_dir / f'ansible_host_{hostname}.json'
-        else:
-            raise ValueError(f"Unknown cache_type: {cache_type}")
-    
-    def _load_cache_metadata(self) -> Optional[Dict[str, Any]]:
-        """
-        載入快取元數據
-        
-        Returns:
-            dict: 元數據內容，如果不存在或載入失敗返回 None
-        """
-        metadata_path = self._get_cache_metadata_path()
-        
-        if not metadata_path.exists():
-            return None
-        
-        try:
-            with open(metadata_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"載入快取元數據失敗: {e}")
-            return None
-    
-    def _save_cache_metadata(self, metadata: Dict[str, Any]):
-        """
-        保存快取元數據
-        
-        Args:
-            metadata: 元數據內容
-        """
-        self._ensure_cache_dir()
-        metadata_path = self._get_cache_metadata_path()
-        
-        try:
-            with open(metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-            logger.info(f"快取元數據已保存: {metadata_path}")
-        except Exception as e:
-            logger.error(f"保存快取元數據失敗: {e}", exc_info=True)
-    
-    def _is_cache_valid(self, metadata: Dict[str, Any]) -> bool:
-        """
-        判斷快取是否有效
-        
-        有效條件：
-        1. 快取版本匹配
-        2. 快取未過期
-        3. inventory 文件未被修改
-        
-        Args:
-            metadata: 快取元數據
-        
-        Returns:
-            bool: 快取是否有效
-        """
-        # 1. 檢查版本
-        if metadata.get('cache_version') != self.CACHE_VERSION:
-            logger.info("快取版本不匹配，快取失效")
-            return False
-        
-        # 2. 檢查是否過期
-        try:
-            expires_at = datetime.fromisoformat(metadata['cache_expires_at'])
-            if datetime.now() > expires_at:
-                logger.info("快取已過期")
-                return False
-        except (KeyError, ValueError) as e:
-            logger.warning(f"解析過期時間失敗: {e}")
-            return False
-        
-        # 3. 檢查原始文件是否被修改
-        try:
-            current_mtime = self.inventory_path.stat().st_mtime
-            cached_mtime_str = metadata.get('inventory_file_mtime')
+            windows_path: Windows 格式的路徑
             
-            if not cached_mtime_str:
-                return False
+        Returns:
+            Linux 格式的路徑
+        """
+        logger.debug(f"Converting Windows path: {windows_path}")
+        
+        # 統一使用正斜線
+        path = windows_path.replace('\\', '/')
+        logger.debug(f"After replacing backslashes: {path}")
+        
+        # 移除開頭的網路路徑格式
+        # 範例: //10.250.0.1/mdt/Script/test -> Script/test
+        # 支援格式: //IP/mdt/... 或 //IP/share/mdt/...
+        path = re.sub(r'^//[\d\.]+/[^/]+/', '', path)
+        logger.debug(f"After removing network prefix: {path}")
+        
+        # 如果路徑開頭還是 '/'，移除它
+        if path.startswith('/'):
+            path = path.lstrip('/')
+        
+        # 組合完整路徑
+        linux_path = os.path.join(self.nas_base_path, path)
+        
+        logger.info(f"Converted Windows path '{windows_path}' to Linux path '{linux_path}'")
+        return linux_path
+    
+    def import_from_nas(
+        self, 
+        nas_path: str, 
+        file_name: str = 'hosts'
+    ) -> Tuple[bool, str, Dict]:
+        """
+        從 NAS 導入 Inventory 文件
+        
+        Args:
+            nas_path: NAS 路徑（Windows 格式）
+            file_name: 檔案名稱（預設 'hosts'）
+        
+        Returns:
+            Tuple[success, error_message, parsed_data]
+            - success: 是否成功
+            - error_message: 錯誤訊息（成功時為空字串）
+            - parsed_data: 解析後的數據（包含 hosts, groups, total_hosts, total_groups）
+        """
+        try:
+            # 轉換路徑
+            linux_path = self.convert_windows_path_to_linux(nas_path)
             
-            cached_mtime = datetime.fromisoformat(cached_mtime_str).timestamp()
+            # 智能處理路徑：如果 nas_path 已經包含檔案名稱，就不再拼接
+            if linux_path.endswith(f'/{file_name}') or linux_path.endswith(f'\\{file_name}'):
+                full_path = linux_path
+                logger.info(f"nas_path already contains file_name, using: {full_path}")
+            else:
+                full_path = os.path.join(linux_path, file_name)
+                logger.info(f"Joining nas_path and file_name: {full_path}")
             
-            if current_mtime > cached_mtime:
-                logger.info("Inventory 文件已被修改，快取失效")
-                return False
+            logger.info(f"Attempting to import inventory from: {full_path}")
+            
+            # 檢查文件是否存在
+            if not os.path.exists(full_path):
+                error_msg = f"文件不存在: {full_path}"
+                logger.error(error_msg)
+                return False, error_msg, {}
+            
+            # 驗證語法
+            syntax_valid, syntax_error = self.validate_syntax(full_path)
+            if not syntax_valid:
+                logger.error(f"Syntax validation failed: {syntax_error}")
+                return False, syntax_error, {}
+            
+            # 解析 Inventory
+            parsed_data = self.parse_inventory(full_path)
+            
+            logger.info(f"Successfully imported inventory: {parsed_data['total_hosts']} hosts, {parsed_data['total_groups']} groups")
+            return True, "", parsed_data
+            
         except Exception as e:
-            logger.warning(f"檢查文件修改時間失敗: {e}")
-            return False
-        
-        return True
+            error_msg = f"導入失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg, {}
     
-    def _load_from_cache(self, cache_type: str, hostname: str = None) -> Optional[Dict[str, Any]]:
+    def validate_syntax(self, inventory_path: str) -> Tuple[bool, Optional[str]]:
         """
-        從快取載入數據
+        使用 ansible-inventory 驗證語法
+        
+        注意：ansible-inventory 在遇到語法錯誤時：
+        - exit code 仍然是 0（不會報錯退出）
+        - 但會在 stderr 輸出 WARNING 或錯誤訊息
+        - 因此需要檢查 stderr 內容來判斷是否有錯誤
         
         Args:
-            cache_type: 快取類型
-            hostname: 主機名（可選）
+            inventory_path: Inventory 文件的完整路徑
         
         Returns:
-            dict: 快取數據，如果快取無效返回 None
+            Tuple[is_valid, error_message]
+            - is_valid: 語法是否有效
+            - error_message: 錯誤訊息（有效時為 None）
         """
-        # 1. 載入元數據
-        metadata = self._load_cache_metadata()
-        if not metadata:
-            logger.debug("快取元數據不存在")
-            return None
-        
-        # 2. 檢查快取是否有效
-        if not self._is_cache_valid(metadata):
-            logger.debug("快取已失效")
-            return None
-        
-        # 3. 檢查該類型的快取是否存在
-        cache_file = self._get_cache_file_path(cache_type, hostname)
-        if not cache_file.exists():
-            logger.debug(f"快取文件不存在: {cache_file}")
-            return None
-        
-        # 4. 載入快取數據
         try:
-            with open(cache_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            logger.info(f"✅ 從快取載入: {cache_file.name}")
-            return data
-        except Exception as e:
-            logger.warning(f"載入快取文件失敗: {e}")
-            return None
-    
-    def _save_to_cache(self, cache_type: str, data: Dict[str, Any], hostname: str = None):
-        """
-        保存數據到快取
-        
-        Args:
-            cache_type: 快取類型
-            data: 要保存的數據
-            hostname: 主機名（可選）
-        """
-        self._ensure_cache_dir()
-        
-        # 1. 保存數據文件
-        cache_file = self._get_cache_file_path(cache_type, hostname)
-        try:
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            logger.info(f"✅ 快取已保存: {cache_file.name}")
-        except Exception as e:
-            logger.error(f"保存快取文件失敗: {e}", exc_info=True)
-            return
-        
-        # 2. 更新元數據
-        metadata = self._load_cache_metadata() or self._create_initial_metadata()
-        
-        # 更新快取項目記錄
-        if cache_type == 'full_inventory':
-            metadata['cached_items']['full_inventory'] = True
-        elif cache_type == 'hosts_list':
-            metadata['cached_items']['hosts_list'] = True
-        elif cache_type == 'host_config':
-            if 'individual_hosts' not in metadata['cached_items']:
-                metadata['cached_items']['individual_hosts'] = []
-            if hostname not in metadata['cached_items']['individual_hosts']:
-                metadata['cached_items']['individual_hosts'].append(hostname)
-        
-        self._save_cache_metadata(metadata)
-    
-    def _create_initial_metadata(self) -> Dict[str, Any]:
-        """
-        創建初始快取元數據
-        
-        Returns:
-            dict: 初始元數據
-        """
-        now = datetime.now()
-        expires_at = now + timedelta(days=self.CACHE_EXPIRY_DAYS)
-        
-        return {
-            'inventory_path': str(self.inventory_path),
-            'inventory_file_mtime': datetime.fromtimestamp(
-                self.inventory_path.stat().st_mtime
-            ).isoformat(),
-            'cache_created_at': now.isoformat(),
-            'cache_expires_at': expires_at.isoformat(),
-            'cache_version': self.CACHE_VERSION,
-            'cached_items': {
-                'full_inventory': False,
-                'hosts_list': False,
-                'individual_hosts': []
-            }
-        }
-    
-    # ==================== 主要功能（帶快取） ====================
-    
-    def get_full_inventory(self, use_cache: bool = True) -> Dict[str, Any]:
-        """
-        獲取完整的 Inventory 數據（支持快取）
-        
-        執行 ansible-inventory --list 命令獲取完整的 inventory 信息。
-        
-        Args:
-            use_cache: 是否使用快取（默認 True）
-        
-        Returns:
-            dict: {
-                "success": bool,
-                "cached": bool,  # 是否來自快取
-                "data": {...},   # ansible-inventory --list 的輸出
-                "message": str
-            }
-        """
-        # 1. 嘗試從快取載入
-        if use_cache:
-            cached_data = self._load_from_cache('full_inventory')
-            if cached_data:
-                return {
-                    'success': True,
-                    'cached': True,
-                    'data': cached_data,
-                    'message': '從快取載入'
-                }
-        
-        # 2. 執行 ansible-inventory 命令
-        logger.info("執行 ansible-inventory --list")
-        cmd = [
-            'ansible-inventory',
-            '-i', str(self.inventory_path),
-            '--list'
-        ]
-        
-        try:
+            logger.debug(f"Validating syntax for: {inventory_path}")
+            
             result = subprocess.run(
-                cmd,
+                ['ansible-inventory', '-i', inventory_path, '--list'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            # 檢查 returncode（雖然通常是 0）
+            if result.returncode != 0:
+                logger.warning(f"ansible-inventory command failed with return code {result.returncode}")
+                return False, result.stderr
+            
+            # **重點：檢查 stderr 是否包含錯誤訊息**
+            # Ansible 會在 stderr 輸出 WARNING 或錯誤
+            stderr_lower = result.stderr.lower()
+            error_indicators = [
+                'failed to parse',
+                'invalid section',
+                'expected key=value',
+                'not enough values to unpack',
+                'unable to parse'
+            ]
+            
+            has_error = any(indicator in stderr_lower for indicator in error_indicators)
+            
+            if has_error:
+                # 清理錯誤訊息，移除顏色代碼和多餘的換行
+                error_msg = result.stderr.strip()
+                # 提取第一個有意義的錯誤行
+                error_lines = [line for line in error_msg.split('\n') if 'WARNING' in line or 'caused by' in line or 'Failed' in line]
+                if error_lines:
+                    error_msg = '\n'.join(error_lines[:3])  # 最多顯示前 3 行
+                
+                logger.warning(f"Ansible inventory syntax error detected: {error_msg}")
+                return False, error_msg
+            
+            # 嘗試解析 JSON 輸出
+            try:
+                json.loads(result.stdout)
+                logger.debug("Syntax validation passed")
+                return True, None
+            except json.JSONDecodeError as e:
+                error_msg = f"JSON 解析錯誤: {str(e)}"
+                logger.error(error_msg)
+                return False, error_msg
+            
+        except subprocess.TimeoutExpired:
+            error_msg = "語法驗證超時（30秒）"
+            logger.error(error_msg)
+            return False, error_msg
+        except FileNotFoundError:
+            error_msg = "找不到 ansible-inventory 命令，請確認 Ansible 已安裝"
+            logger.error(error_msg)
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"驗證失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg
+    
+    def parse_inventory(self, inventory_path: str) -> Dict:
+        """
+        解析 Inventory 文件，提取所有 Host 和變數
+        
+        Args:
+            inventory_path: Inventory 文件的完整路徑
+        
+        Returns:
+            Dict 包含:
+            {
+                'hosts': List[Dict],  # Host 配置列表
+                'groups': Dict,       # Group 名稱 -> Host 列表的映射
+                'total_hosts': int,   # 總 Host 數量
+                'total_groups': int   # 總 Group 數量
+            }
+        """
+        try:
+            logger.info(f"Parsing inventory file: {inventory_path}")
+            
+            result = subprocess.run(
+                ['ansible-inventory', '-i', inventory_path, '--list'],
                 capture_output=True,
                 text=True,
                 timeout=30
             )
             
             if result.returncode != 0:
-                return {
-                    'success': False,
-                    'cached': False,
-                    'error': result.stderr,
-                    'message': 'ansible-inventory 執行失敗'
-                }
+                raise Exception(f"ansible-inventory 命令失敗: {result.stderr}")
             
-            # 3. 解析 JSON 輸出
             inventory_data = json.loads(result.stdout)
             
-            # 4. 保存到快取
-            self._save_to_cache('full_inventory', inventory_data)
+            # 提取 Host 資訊
+            hosts = []
+            groups = {}
             
-            return {
-                'success': True,
-                'cached': False,
-                'data': inventory_data,
-                'message': '從 Ansible 解析'
-            }
+            # 解析 _meta.hostvars
+            hostvars = inventory_data.get('_meta', {}).get('hostvars', {})
             
-        except subprocess.TimeoutExpired:
-            return {
-                'success': False,
-                'cached': False,
-                'error': '命令執行超時',
-                'message': 'ansible-inventory 執行超時'
-            }
-        except json.JSONDecodeError as e:
-            return {
-                'success': False,
-                'cached': False,
-                'error': f'JSON 解析失敗: {str(e)}',
-                'message': 'Ansible 輸出格式錯誤'
-            }
-        except Exception as e:
-            logger.error(f"執行 ansible-inventory 失敗: {e}", exc_info=True)
-            return {
-                'success': False,
-                'cached': False,
-                'error': str(e),
-                'message': '未知錯誤'
-            }
-    
-    def get_host_config(self, hostname: str, use_cache: bool = True) -> Dict[str, Any]:
-        """
-        獲取特定主機的完整配置（支持快取）
-        
-        執行 ansible-inventory --host <hostname> 命令獲取主機的所有變量
-        （包括從群組繼承的變量）。
-        
-        Args:
-            hostname: 主機名
-            use_cache: 是否使用快取
-        
-        Returns:
-            dict: {
-                "success": bool,
-                "cached": bool,
-                "hostname": str,
-                "config": {...},  # 主機的所有變量
-                "message": str
-            }
-        """
-        # 1. 嘗試從快取載入
-        if use_cache:
-            cached_data = self._load_from_cache('host_config', hostname)
-            if cached_data:
-                return {
-                    'success': True,
-                    'cached': True,
+            for hostname, vars_dict in hostvars.items():
+                # 提取標準 Ansible 變數
+                host_info = {
                     'hostname': hostname,
-                    'config': cached_data,
-                    'message': '從快取載入'
+                    'ansible_host': vars_dict.get('ansible_host'),
+                    'ansible_user': vars_dict.get('ansible_user'),
+                    'ansible_password': vars_dict.get('ansible_password'),
+                    'ansible_port': vars_dict.get('ansible_port', 22),
+                    'mac_address': vars_dict.get('mac_address'),
+                    'uart_host': vars_dict.get('uart_host'),
+                    'groups': []
                 }
-        
-        # 2. 執行 ansible-inventory --host 命令
-        logger.info(f"執行 ansible-inventory --host {hostname}")
-        cmd = [
-            'ansible-inventory',
-            '-i', str(self.inventory_path),
-            '--host', hostname
-        ]
-        
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                return {
-                    'success': False,
-                    'cached': False,
-                    'hostname': hostname,
-                    'error': result.stderr,
-                    'message': f'找不到主機: {hostname}'
-                }
-            
-            # 3. 解析 JSON 輸出
-            host_config = json.loads(result.stdout)
-            
-            # 4. 保存到快取
-            self._save_to_cache('host_config', host_config, hostname)
-            
-            return {
-                'success': True,
-                'cached': False,
-                'hostname': hostname,
-                'config': host_config,
-                'message': '從 Ansible 解析'
-            }
-            
-        except subprocess.TimeoutExpired:
-            return {
-                'success': False,
-                'cached': False,
-                'hostname': hostname,
-                'error': '命令執行超時',
-                'message': 'ansible-inventory 執行超時'
-            }
-        except json.JSONDecodeError as e:
-            return {
-                'success': False,
-                'cached': False,
-                'hostname': hostname,
-                'error': f'JSON 解析失敗: {str(e)}',
-                'message': 'Ansible 輸出格式錯誤'
-            }
-        except Exception as e:
-            logger.error(f"執行 ansible-inventory 失敗: {e}", exc_info=True)
-            return {
-                'success': False,
-                'cached': False,
-                'hostname': hostname,
-                'error': str(e),
-                'message': '未知錯誤'
-            }
-    
-    def list_all_hosts(self, use_cache: bool = True) -> Dict[str, Any]:
-        """
-        獲取所有主機列表（支持快取，自訂格式）
-        
-        提取主機摘要信息，包括主機名、IP、設備號、所屬群組等。
-        
-        Args:
-            use_cache: 是否使用快取
-        
-        Returns:
-            dict: {
-                "success": bool,
-                "cached": bool,
-                "total_hosts": int,
-                "hosts": [
-                    {
-                        "hostname": str,
-                        "ansible_host": str,
-                        "device_number": str,
-                        "groups": [str, ...]
-                    },
-                    ...
-                ]
-            }
-        """
-        # 1. 嘗試從快取載入
-        if use_cache:
-            cached_data = self._load_from_cache('hosts_list')
-            if cached_data:
-                return {
-                    'success': True,
-                    'cached': True,
-                    **cached_data
-                }
-        
-        # 2. 獲取完整 inventory（會使用快取）
-        full_result = self.get_full_inventory(use_cache=use_cache)
-        if not full_result['success']:
-            return {
-                'success': False,
-                'cached': False,
-                'error': full_result.get('error', 'Unknown error'),
-                'message': '無法獲取 inventory'
-            }
-        
-        inventory_data = full_result['data']
-        
-        # 3. 提取主機列表
-        hosts_list = []
-        hostvars = inventory_data.get('_meta', {}).get('hostvars', {})
-        
-        for hostname, vars_dict in hostvars.items():
-            # 獲取主機所屬的群組
-            groups = []
-            for group_name, group_data in inventory_data.items():
-                if group_name == '_meta':
-                    continue
-                if 'hosts' in group_data and hostname in group_data['hosts']:
-                    groups.append(group_name)
-            
-            hosts_list.append({
-                'hostname': hostname,
-                'ansible_host': vars_dict.get('ansible_host', 'N/A'),
-                'device_number': vars_dict.get('device_number', 'N/A'),
-                'groups': groups
-            })
-        
-        # 4. 構建結果
-        result_data = {
-            'total_hosts': len(hosts_list),
-            'hosts': hosts_list
-        }
-        
-        # 5. 保存到快取
-        self._save_to_cache('hosts_list', result_data)
-        
-        return {
-            'success': True,
-            'cached': False,
-            **result_data
-        }
-    
-    # ==================== 快取管理功能 ====================
-    
-    def clear_cache(self, cache_type: str = 'all', hostname: str = None) -> Dict[str, Any]:
-        """
-        清除快取
-        
-        Args:
-            cache_type: 'all' | 'full_inventory' | 'hosts_list' | 'host_config'
-            hostname: 當 cache_type='host_config' 時指定主機名
-        
-        Returns:
-            dict: {"success": bool, "message": str, "cleared": [str, ...]}
-        """
-        cleared_files = []
-        
-        try:
-            if cache_type == 'all':
-                # 刪除整個快取目錄
-                if self.cache_dir.exists():
-                    import shutil
-                    shutil.rmtree(self.cache_dir)
-                    cleared_files.append('all cache files')
-                    logger.info(f"✅ 已清除所有快取: {self.cache_dir}")
-            else:
-                # 刪除特定快取文件
-                cache_file = self._get_cache_file_path(cache_type, hostname)
-                if cache_file.exists():
-                    cache_file.unlink()
-                    cleared_files.append(cache_file.name)
-                    logger.info(f"✅ 已清除快取: {cache_file.name}")
                 
-                # 更新元數據
-                metadata = self._load_cache_metadata()
-                if metadata:
-                    if cache_type == 'full_inventory':
-                        metadata['cached_items']['full_inventory'] = False
-                    elif cache_type == 'hosts_list':
-                        metadata['cached_items']['hosts_list'] = False
-                    elif cache_type == 'host_config' and hostname:
-                        if hostname in metadata['cached_items'].get('individual_hosts', []):
-                            metadata['cached_items']['individual_hosts'].remove(hostname)
-                    
-                    self._save_cache_metadata(metadata)
+                # 提取其他自訂變數
+                excluded_keys = [
+                    'ansible_host', 'ansible_user', 'ansible_password',
+                    'ansible_port', 'mac_address', 'uart_host'
+                ]
+                host_info['other_vars'] = {
+                    k: v for k, v in vars_dict.items()
+                    if k not in excluded_keys
+                }
+                
+                hosts.append(host_info)
             
-            return {
-                'success': True,
-                'message': '快取已清除',
-                'cleared': cleared_files
+            # 解析 Groups
+            for group_name, group_data in inventory_data.items():
+                if group_name in ['_meta', 'all']:
+                    continue
+                
+                group_hosts = group_data.get('hosts', [])
+                groups[group_name] = group_hosts
+                
+                # 為每個 Host 添加所屬 Groups
+                for host_name in group_hosts:
+                    for host in hosts:
+                        if host['hostname'] == host_name:
+                            host['groups'].append(group_name)
+                            break
+            
+            result_data = {
+                'hosts': hosts,
+                'groups': groups,
+                'total_hosts': len(hosts),
+                'total_groups': len(groups)
             }
             
+            logger.info(f"Parsed {result_data['total_hosts']} hosts in {result_data['total_groups']} groups")
+            return result_data
+            
+        except subprocess.TimeoutExpired:
+            logger.error("Parsing timeout")
+            raise Exception("解析 Inventory 超時（30秒）")
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing failed: {e}")
+            raise Exception(f"JSON 解析錯誤: {str(e)}")
         except Exception as e:
-            logger.error(f"清除快取失敗: {e}", exc_info=True)
-            return {
-                'success': False,
-                'error': str(e),
-                'message': '清除快取失敗'
-            }
+            logger.error(f"Parsing failed: {e}", exc_info=True)
+            raise Exception(f"解析 Inventory 失敗: {str(e)}")
     
-    def get_cache_statistics(self) -> Dict[str, Any]:
+    def create_backup(self, original_file_path: str) -> str:
         """
-        獲取快取統計信息
+        創建備份檔案
+        
+        Args:
+            original_file_path: 原始文件路徑
         
         Returns:
-            dict: {
-                "cache_exists": bool,
-                "cache_valid": bool,
-                "cache_size_mb": float,
-                "cache_created_at": str,
-                "cache_expires_at": str,
-                "cached_items": {...}
-            }
+            備份文件路徑
         """
-        metadata = self._load_cache_metadata()
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        backup_path = f"{original_file_path}.backup.{timestamp}"
         
-        if not metadata:
-            return {
-                'cache_exists': False,
-                'cache_valid': False,
-                'cache_size_mb': 0,
-                'message': '快取不存在'
-            }
+        try:
+            shutil.copy2(original_file_path, backup_path)
+            logger.info(f"Created backup: {backup_path}")
+            return backup_path
+        except Exception as e:
+            logger.error(f"Failed to create backup: {e}", exc_info=True)
+            raise Exception(f"創建備份失敗: {str(e)}")
+    
+    def generate_inventory_content(self, hosts_config: List[Dict]) -> str:
+        """
+        從 Host 配置生成 Ansible Inventory 格式內容
         
-        # 計算快取大小
-        cache_size = 0
-        if self.cache_dir.exists():
-            for file in self.cache_dir.iterdir():
-                if file.is_file():
-                    cache_size += file.stat().st_size
+        Args:
+            hosts_config: Host 配置字典列表
         
-        return {
-            'cache_exists': True,
-            'cache_valid': self._is_cache_valid(metadata),
-            'cache_size_mb': round(cache_size / 1024 / 1024, 2),
-            'cache_created_at': metadata.get('cache_created_at'),
-            'cache_expires_at': metadata.get('cache_expires_at'),
-            'cached_items': metadata.get('cached_items', {})
-        }
+        Returns:
+            Ansible Inventory 格式的字串
+        """
+        try:
+            logger.debug(f"Generating inventory content for {len(hosts_config)} hosts")
+            
+            # 組織 Groups
+            groups_dict = {}
+            for host in hosts_config:
+                for group in host.get('groups', []):
+                    if group not in groups_dict:
+                        groups_dict[group] = []
+                    groups_dict[group].append(host)
+            
+            # 生成內容
+            lines = []
+            
+            for group_name, group_hosts in sorted(groups_dict.items()):
+                lines.append(f"[{group_name}]")
+                
+                for host in sorted(group_hosts, key=lambda h: h['hostname']):
+                    # 基本 Host 行
+                    host_line = host['hostname']
+                    
+                    # 添加變數
+                    if host.get('ansible_host'):
+                        host_line += f" ansible_host={host['ansible_host']}"
+                    if host.get('ansible_user'):
+                        host_line += f" ansible_user={host['ansible_user']}"
+                    if host.get('ansible_password'):
+                        host_line += f" ansible_password={host['ansible_password']}"
+                    if host.get('ansible_port') and host['ansible_port'] != 22:
+                        host_line += f" ansible_port={host['ansible_port']}"
+                    if host.get('mac_address'):
+                        host_line += f" mac_address={host['mac_address']}"
+                    if host.get('uart_host'):
+                        host_line += f" uart_host={host['uart_host']}"
+                    
+                    # 添加其他變數
+                    for key, value in host.get('other_vars', {}).items():
+                        if isinstance(value, str):
+                            host_line += f" {key}={value}"
+                        else:
+                            host_line += f" {key}={json.dumps(value)}"
+                    
+                    lines.append(host_line)
+                
+                lines.append("")  # 空行分隔 Groups
+            
+            content = "\n".join(lines)
+            logger.debug(f"Generated inventory content: {len(content)} characters")
+            return content
+            
+        except Exception as e:
+            logger.error(f"Failed to generate inventory content: {e}", exc_info=True)
+            raise Exception(f"生成 Inventory 內容失敗: {str(e)}")
+    
+    def save_to_nas(
+        self,
+        inventory_path: str,
+        content: str,
+        create_backup: bool = True
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        儲存 Inventory 到 NAS
+        
+        Args:
+            inventory_path: Inventory 文件路徑
+            content: 要儲存的內容
+            create_backup: 是否創建備份（預設 True）
+        
+        Returns:
+            Tuple[success, error_message, backup_file_path]
+            - success: 是否成功
+            - error_message: 錯誤訊息（成功時為空字串）
+            - backup_file_path: 備份文件路徑（如果創建了備份）
+        """
+        backup_path = None
+        temp_path = None
+        
+        try:
+            logger.info(f"Saving inventory to: {inventory_path}")
+            
+            # 創建備份
+            if create_backup and os.path.exists(inventory_path):
+                backup_path = self.create_backup(inventory_path)
+            
+            # 驗證生成的內容語法（寫入臨時文件測試）
+            temp_path = f"{inventory_path}.tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            logger.debug("Validating generated content syntax")
+            syntax_valid, syntax_error = self.validate_syntax(temp_path)
+            if not syntax_valid:
+                os.remove(temp_path)
+                error_msg = f"生成的內容語法錯誤: {syntax_error}"
+                logger.error(error_msg)
+                return False, error_msg, backup_path
+            
+            # 寫入正式文件
+            shutil.move(temp_path, inventory_path)
+            logger.info(f"Successfully saved inventory to NAS")
+            
+            return True, "", backup_path
+            
+        except Exception as e:
+            # 清理臨時文件
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+            
+            error_msg = f"儲存失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg, backup_path
+    
+    def rollback_to_backup(
+        self,
+        inventory_path: str,
+        backup_path: str
+    ) -> Tuple[bool, str]:
+        """
+        從備份回滾
+        
+        Args:
+            inventory_path: Inventory 文件路徑
+            backup_path: 備份文件路徑
+        
+        Returns:
+            Tuple[success, error_message]
+            - success: 是否成功
+            - error_message: 錯誤訊息（成功時為空字串）
+        """
+        current_backup = None
+        
+        try:
+            logger.info(f"Rolling back from backup: {backup_path}")
+            
+            if not os.path.exists(backup_path):
+                error_msg = f"備份檔案不存在: {backup_path}"
+                logger.error(error_msg)
+                return False, error_msg
+            
+            # 先創建當前版本的備份（防止回滾錯誤）
+            if os.path.exists(inventory_path):
+                current_backup = self.create_backup(inventory_path)
+            
+            # 複製備份檔案覆蓋當前檔案
+            shutil.copy2(backup_path, inventory_path)
+            
+            # 驗證語法
+            syntax_valid, syntax_error = self.validate_syntax(inventory_path)
+            if not syntax_valid:
+                # 回滾失敗，恢復當前版本
+                if current_backup:
+                    shutil.copy2(current_backup, inventory_path)
+                error_msg = f"回滾後語法錯誤: {syntax_error}"
+                logger.error(error_msg)
+                return False, error_msg
+            
+            logger.info("Successfully rolled back to backup")
+            return True, ""
+            
+        except Exception as e:
+            # 嘗試恢復當前版本
+            if current_backup:
+                try:
+                    shutil.copy2(current_backup, inventory_path)
+                except:
+                    pass
+            
+            error_msg = f"回滾失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg
+    
+    def cleanup_old_backups(
+        self,
+        inventory_path: str,
+        keep_count: int = 30
+    ) -> int:
+        """
+        清理舊備份文件
+        
+        Args:
+            inventory_path: Inventory 文件路徑
+            keep_count: 保留的備份數量（預設 30）
+        
+        Returns:
+            刪除的備份數量
+        """
+        try:
+            directory = os.path.dirname(inventory_path)
+            filename = os.path.basename(inventory_path)
+            
+            # 找出所有備份檔案
+            backups = []
+            
+            for file in os.listdir(directory):
+                if file.startswith(f"{filename}.backup."):
+                    full_path = os.path.join(directory, file)
+                    backups.append((full_path, os.path.getmtime(full_path)))
+            
+            # 按時間排序（最新的在前）
+            backups.sort(key=lambda x: x[1], reverse=True)
+            
+            # 刪除超過保留數量的備份
+            deleted_count = 0
+            for backup_path, _ in backups[keep_count:]:
+                try:
+                    os.remove(backup_path)
+                    deleted_count += 1
+                    logger.debug(f"Deleted old backup: {backup_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete backup {backup_path}: {e}")
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old backup(s), kept {keep_count} most recent")
+            
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Failed to cleanup old backups: {e}", exc_info=True)
+            return 0
+    
+    def get_file_content(self, inventory_path: str) -> Tuple[bool, str, Optional[str]]:
+        """
+        讀取 Inventory 文件內容（新增）
+        
+        Args:
+            inventory_path: Inventory 文件的完整路徑
+        
+        Returns:
+            Tuple[success, content, error_message]
+            - success: 是否成功
+            - content: 文件內容（失敗時為空字串）
+            - error_message: 錯誤訊息（成功時為 None）
+        """
+        try:
+            logger.info(f"Reading file content from: {inventory_path}")
+            
+            if not os.path.exists(inventory_path):
+                error_msg = f"文件不存在: {inventory_path}"
+                logger.error(error_msg)
+                return False, "", error_msg
+            
+            with open(inventory_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            logger.info(f"Successfully read {len(content)} characters from {inventory_path}")
+            return True, content, None
+            
+        except Exception as e:
+            error_msg = f"讀取文件失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, "", error_msg
+    
+    def update_file_content(
+        self, 
+        inventory_path: str, 
+        content: str,
+        create_backup: bool = True
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        更新 Inventory 文件內容（新增）
+        
+        Args:
+            inventory_path: Inventory 文件的完整路徑
+            content: 新的文件內容
+            create_backup: 是否創建備份（預設 True）
+        
+        Returns:
+            Tuple[success, error_message, backup_file_path]
+            - success: 是否成功
+            - error_message: 錯誤訊息（成功時為空字串）
+            - backup_file_path: 備份文件路徑（如果創建了備份）
+        """
+        import tempfile
+        
+        try:
+            logger.info(f"Updating file content: {inventory_path}")
+            
+            # 創建備份
+            backup_path = None
+            if create_backup and os.path.exists(inventory_path):
+                backup_path = self.create_backup(inventory_path)
+                logger.info(f"Created backup: {backup_path}")
+            
+            # 驗證內容語法（寫入臨時文件測試）
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.ini', encoding='utf-8') as f:
+                f.write(content)
+                temp_path = f.name
+            
+            try:
+                syntax_valid, syntax_error = self.validate_syntax(temp_path)
+                
+                if not syntax_valid:
+                    os.remove(temp_path)
+                    error_msg = f"語法錯誤: {syntax_error}"
+                    logger.error(error_msg)
+                    return False, error_msg, backup_path
+                
+                # 寫入正式文件
+                shutil.move(temp_path, inventory_path)
+                logger.info(f"Successfully updated file: {inventory_path}")
+                
+                # 清理舊備份（保留最近 30 個）
+                self.cleanup_old_backups(inventory_path, keep_count=30)
+                
+                return True, "", backup_path
+                
+            finally:
+                # 確保臨時文件被刪除
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            
+        except Exception as e:
+            error_msg = f"更新文件失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg, None
+    
+    def validate_content_syntax(self, content: str) -> Tuple[bool, Optional[str], Optional[Dict]]:
+        """
+        驗證文本內容的語法（使用增強版驗證器 + Ansible 雙重驗證）
+        
+        策略：
+        1. 先用增強版驗證器預檢查（可獲得精確行號）
+        2. 如果通過，再用 Ansible 最終驗證
+        3. 返回行號資訊（如果有錯誤）
+        
+        Args:
+            content: 要驗證的文本內容
+        
+        Returns:
+            Tuple[is_valid, error_message, parsed_stats]
+            - is_valid: 語法是否有效
+            - error_message: 錯誤訊息（語法正確時為 None）
+            - parsed_stats: 解析統計資訊（包含 total_hosts, total_groups, error_line）
+        """
+        import tempfile
+        from library.utils.enhanced_ini_validator import validate_ini_with_line_numbers
+        
+        try:
+            logger.info("Validating content syntax with enhanced validator")
+            
+            # 第一步：使用增強版驗證器預檢查（可獲得行號）
+            validation_result = validate_ini_with_line_numbers(content)
+            
+            if not validation_result['is_valid']:
+                # 驗證失敗，返回詳細的錯誤資訊（包含行號）
+                error_stats = {
+                    'error_line': validation_result.get('error_line'),
+                    'error_line_content': validation_result.get('error_line_content'),
+                    'validation_method': validation_result.get('validation_method')
+                }
+                logger.warning(f"Enhanced validation failed at line {validation_result.get('error_line')}: {validation_result['error_message']}")
+                return False, validation_result['error_message'], error_stats
+            
+            logger.info("Enhanced validation passed, proceeding to Ansible validation")
+            
+            # 第二步：創建臨時文件進行 Ansible 最終驗證
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.ini', encoding='utf-8') as f:
+                f.write(content)
+                temp_path = f.name
+            
+            try:
+                # 使用 Ansible 驗證（確保 Ansible 也能解析）
+                syntax_valid, syntax_error = self.validate_syntax(temp_path)
+                
+                # 如果語法正確，解析統計資訊
+                parsed_stats = None
+                if syntax_valid:
+                    try:
+                        parsed_data = self.parse_inventory(temp_path)
+                        parsed_stats = {
+                            'total_hosts': parsed_data['total_hosts'],
+                            'total_groups': parsed_data['total_groups']
+                        }
+                        logger.info(f"Content validation passed: {parsed_stats['total_hosts']} hosts, {parsed_stats['total_groups']} groups")
+                    except Exception as parse_error:
+                        logger.warning(f"Syntax valid but failed to parse inventory: {parse_error}")
+                else:
+                    logger.warning(f"Ansible validation failed: {syntax_error}")
+                
+                return syntax_valid, syntax_error, parsed_stats
+                
+            finally:
+                # 刪除臨時文件
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            
+        except Exception as e:
+            error_msg = f"驗證失敗: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg, None

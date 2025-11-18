@@ -58,6 +58,9 @@ from .jenkins import (
     JenkinsBuildViewSet,
 )
 
+# Ansible Inventory Views
+from .ansible_inventory import AnsibleInventoryViewSet
+
 # System Views
 from .system import (
     dashboard_stats,
@@ -111,6 +114,9 @@ __all__ = [
     'JenkinsServerViewSet',
     'JenkinsJobViewSet',
     'JenkinsBuildViewSet',
+    
+    # Ansible Inventory
+    'AnsibleInventoryViewSet',
     
     # System
     'dashboard_stats',
