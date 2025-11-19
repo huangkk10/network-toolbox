@@ -322,6 +322,7 @@ const RVTAnalysisPage = () => {
                 view_name: job.view_name || '',  // ← 添加 view_name 字段
                 status: job.status,
                 last_build_time: job.last_build_time || 'N/A',
+                last_build_status: job.last_build_status || null,  // ← 添加 last_build_status
                 avg_duration: '計算中...',  // 後續可以從統計 API 獲取
                 builds_count: job.builds_count || 0,
                 url: job.url,
@@ -497,6 +498,62 @@ const RVTAnalysisPage = () => {
             },
         });
     };
+    
+    // ========== 顏色映射函數 ==========
+    /**
+     * 根據 Build 狀態返回對應的樣式配置
+     * @param {string} status - Build 狀態 (SUCCESS, FAILURE, UNSTABLE, ABORTED, BUILDING, UNKNOWN)
+     * @returns {object} 樣式配置 { bg, border, color }
+     */
+    const getJobStatusStyle = (status) => {
+        const styleMap = {
+            'SUCCESS': { 
+                bg: '#f6ffed',      // 淺綠色背景
+                border: '#b7eb8f',  // 綠色邊框
+                color: '#52c41a',   // 深綠色文字
+                icon: '✅'
+            },
+            'FAILURE': { 
+                bg: '#fff2f0',      // 淺紅色背景
+                border: '#ffccc7',  // 紅色邊框
+                color: '#ff4d4f',   // 深紅色文字
+                icon: '❌'
+            },
+            'UNSTABLE': { 
+                bg: '#fffbe6',      // 淺黃色背景
+                border: '#ffe58f',  // 黃色邊框
+                color: '#faad14',   // 深黃色文字
+                icon: '⚠️'
+            },
+            'ABORTED': { 
+                bg: '#fafafa',      // 淺灰色背景
+                border: '#d9d9d9',  // 灰色邊框
+                color: '#8c8c8c',   // 深灰色文字
+                icon: '🚫'
+            },
+            'BUILDING': { 
+                bg: '#e6f7ff',      // 淺藍色背景
+                border: '#91d5ff',  // 藍色邊框
+                color: '#1890ff',   // 深藍色文字
+                icon: '🔄'
+            },
+            'UNKNOWN': { 
+                bg: '#f5f5f5',      // 淺灰色背景
+                border: '#d9d9d9',  // 灰色邊框
+                color: '#595959',   // 深灰色文字
+                icon: '❓'
+            },
+        };
+        
+        // 返回對應狀態的樣式，如果沒有匹配則返回默認樣式（無 Build）
+        return styleMap[status] || { 
+            bg: '#ffffff',          // 白色背景
+            border: '#e8e8e8',      // 淺灰邊框
+            color: '#000000',       // 黑色文字
+            icon: ''
+        };
+    };
+    
     // ========== Table Columns ==========
     const columns = [
         {
@@ -506,10 +563,25 @@ const RVTAnalysisPage = () => {
             width: 250,
             render: (text, record) => {
                 if (record.type === 'job') {
+                    // 獲取 Job 狀態對應的樣式
+                    const statusStyle = getJobStatusStyle(record.last_build_status);
+                    
                     return (
                         <Space>
-                            <FolderOutlined style={{ color: '#1890ff' }} />
-                            <span style={{ fontWeight: 500 }}>{text}</span>
+                            <FolderOutlined style={{ color: statusStyle.color }} />
+                            <span 
+                                style={{ 
+                                    fontWeight: 500,
+                                    padding: '4px 8px',
+                                    borderRadius: '4px',
+                                    backgroundColor: statusStyle.bg,
+                                    border: `1px solid ${statusStyle.border}`,
+                                    color: statusStyle.color,
+                                    display: 'inline-block'
+                                }}
+                            >
+                                {text}
+                            </span>
                             <Tag color="blue" style={{ fontSize: 11 }}>
                                 {record.builds_count} Builds
                             </Tag>

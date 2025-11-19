@@ -96,11 +96,14 @@ class InventoryConfigValidator:
             # 6. MAC 地址驗證（包含 DHCP 租約比對）
             self._check_mac_addresses()
             
-            # 7. 網路連線測試（可選）
+            # 7. UART SSH 連接檢查（新增）
+            self._check_uart_ssh_connections()
+            
+            # 8. 網路連線測試（可選）
             if self.check_connectivity:
                 self._check_network_connectivity()
             
-            # 8. 計算總體狀態
+            # 9. 計算總體狀態
             self._calculate_overall_status()
             
             logger.info(f"✅ Validation complete. Status: {self.validation_results['overall_status']}")
@@ -782,6 +785,250 @@ class InventoryConfigValidator:
             suggestions.append("MAC 地址配置正確" + ("且所有設備都在 DHCP 租約中" if dhcp_match_rate >= 95 else ""))
         
         return suggestions
+    
+    def _check_uart_ssh_connections(self):
+        """檢查所有 UART 主機的 SSH 連接"""
+        try:
+            logger.info("Checking UART SSH connections...")
+            
+            from api.models import AnsibleHostConfig
+            
+            # 獲取所有有 uart_host 配置的 Host
+            hosts_with_uart = AnsibleHostConfig.objects.filter(
+                inventory_id=self.inventory_id
+            ).exclude(uart_host__isnull=True).exclude(uart_host='')
+            
+            if not hosts_with_uart.exists():
+                self.validation_results['checks']['uart_ssh'] = {
+                    'status': 'warning',
+                    'message': '沒有配置 UART 的主機，跳過 SSH 檢查',
+                    'value': '0 個 UART 主機',
+                    'details': {},
+                    'suggestions': ['如需使用 UART 功能，請在 Inventory 中配置 uart_host']
+                }
+                return
+            
+            # 統計數據
+            total_uart_hosts = hosts_with_uart.count()
+            successful_connections = 0
+            failed_connections = 0
+            skipped_connections = 0
+            connection_details = []
+            
+            logger.info(f"Found {total_uart_hosts} hosts with UART configuration")
+            
+            # 逐個檢查 UART SSH 連接
+            for host in hosts_with_uart:
+                result = self._check_single_uart_ssh(host)
+                connection_details.append(result)
+                
+                if result['status'] == 'success':
+                    successful_connections += 1
+                elif result['status'] == 'warning':
+                    skipped_connections += 1
+                else:
+                    failed_connections += 1
+            
+            # 判斷整體狀態
+            if failed_connections > 0:
+                status = 'error'
+                message = f'UART SSH 檢查：{failed_connections}/{total_uart_hosts} 連接失敗'
+            elif skipped_connections == total_uart_hosts:
+                status = 'warning'
+                message = f'所有 UART SSH 檢查被跳過（缺少認證信息）'
+            elif successful_connections == total_uart_hosts:
+                status = 'success'
+                message = f'所有 UART SSH 連接成功（{total_uart_hosts}/{total_uart_hosts}）'
+            else:
+                status = 'warning'
+                message = f'UART SSH 檢查：{successful_connections} 成功，{skipped_connections} 跳過，{failed_connections} 失敗'
+            
+            # 生成建議
+            suggestions = []
+            if failed_connections > 0:
+                suggestions.append(f'⚠️ 有 {failed_connections} 個 UART 主機連接失敗')
+                suggestions.append('檢查 UART 主機是否在線上且 SSH 服務正常')
+                suggestions.append('驗證 ansible_user 和 ansible_password 是否正確')
+            if skipped_connections > 0:
+                suggestions.append(f'⚠️ 有 {skipped_connections} 個 UART 主機缺少認證信息')
+                suggestions.append('在 UART 主機配置中添加 ansible_user 和 ansible_password')
+            if successful_connections == total_uart_hosts:
+                suggestions.append('✅ 所有 UART SSH 連接正常')
+            
+            self.validation_results['checks']['uart_ssh'] = {
+                'status': status,
+                'message': message,
+                'value': f'{successful_connections}/{total_uart_hosts} 成功',
+                'details': {
+                    'total': total_uart_hosts,
+                    'successful': successful_connections,
+                    'failed': failed_connections,
+                    'skipped': skipped_connections,
+                    'connections': connection_details
+                },
+                'suggestions': suggestions
+            }
+            
+            logger.info(f"UART SSH check complete: {successful_connections} success, {failed_connections} failed, {skipped_connections} skipped")
+            
+        except Exception as e:
+            logger.error(f"UART SSH check exception: {e}", exc_info=True)
+            self.validation_results['checks']['uart_ssh'] = self._create_error_check('uart_ssh', str(e))
+    
+    def _check_single_uart_ssh(self, host) -> Dict:
+        """檢查單個主機的 UART SSH 連接"""
+        result = {
+            'hostname': host.hostname,
+            'uart_host': host.uart_host,
+            'status': 'unknown',
+            'message': '',
+            'details': {}
+        }
+        
+        try:
+            # 獲取 UART 主機的配置
+            uart_ip = None
+            uart_user = host.ansible_user
+            uart_password = host.ansible_password
+            uart_port = host.ansible_port or 22
+            
+            # 解析 uart_host（可能是 IP 或 hostname）
+            if self._is_valid_ip(host.uart_host):
+                # uart_host 已經是 IP
+                uart_ip = host.uart_host
+            else:
+                # uart_host 是 hostname，需要解析
+                from api.models import AnsibleHostConfig
+                uart_config = AnsibleHostConfig.objects.filter(
+                    inventory_id=self.inventory_id,
+                    hostname=host.uart_host
+                ).first()
+                
+                if uart_config and uart_config.ansible_host:
+                    uart_ip = uart_config.ansible_host
+                    # 從 UART 主機配置獲取認證信息
+                    if uart_config.ansible_user:
+                        uart_user = uart_config.ansible_user
+                    if uart_config.ansible_password:
+                        uart_password = uart_config.ansible_password
+                    if uart_config.ansible_port:
+                        uart_port = uart_config.ansible_port
+                else:
+                    result['status'] = 'warning'
+                    result['message'] = f'無法解析 UART hostname: {host.uart_host}'
+                    result['details'] = {
+                        'uart_hostname': host.uart_host,
+                        'reason': 'UART 主機在 Inventory 中找不到'
+                    }
+                    return result
+            
+            # 檢查必要信息
+            if not uart_ip:
+                result['status'] = 'warning'
+                result['message'] = 'UART IP 未設置'
+                return result
+            
+            if not uart_user:
+                result['status'] = 'warning'
+                result['message'] = f'UART 主機 {uart_ip} 未設置 ansible_user'
+                result['details'] = {'uart_ip': uart_ip}
+                return result
+            
+            if not uart_password:
+                result['status'] = 'warning'
+                result['message'] = f'UART 主機 {uart_ip} 未設置 ansible_password'
+                result['details'] = {'uart_ip': uart_ip, 'uart_user': uart_user}
+                return result
+            
+            # 嘗試 SSH 連接
+            logger.info(f"Testing SSH to UART: {uart_user}@{uart_ip}:{uart_port} for host {host.hostname}")
+            
+            import paramiko
+            import socket
+            
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            try:
+                ssh.connect(
+                    hostname=uart_ip,
+                    port=uart_port,
+                    username=uart_user,
+                    password=uart_password,
+                    timeout=10,
+                    banner_timeout=10,
+                    auth_timeout=10
+                )
+                
+                result['status'] = 'success'
+                result['message'] = f'SSH 連接成功: {uart_user}@{uart_ip}'
+                result['details'] = {
+                    'uart_ip': uart_ip,
+                    'uart_user': uart_user,
+                    'uart_port': uart_port,
+                    'connected': True
+                }
+                
+                logger.info(f"✅ SSH connection successful to {uart_ip} for host {host.hostname}")
+                ssh.close()
+                
+            except paramiko.AuthenticationException:
+                result['status'] = 'error'
+                result['message'] = f'SSH 認證失敗: {uart_user}@{uart_ip}'
+                result['details'] = {
+                    'uart_ip': uart_ip,
+                    'uart_user': uart_user,
+                    'uart_port': uart_port,
+                    'error': 'Authentication failed'
+                }
+                logger.error(f"❌ SSH auth failed for {uart_ip}")
+                
+            except socket.timeout:
+                result['status'] = 'error'
+                result['message'] = f'SSH 連接超時: {uart_ip}:{uart_port}'
+                result['details'] = {
+                    'uart_ip': uart_ip,
+                    'uart_user': uart_user,
+                    'uart_port': uart_port,
+                    'error': 'Connection timeout'
+                }
+                logger.error(f"❌ SSH timeout for {uart_ip}")
+                
+            except socket.error as e:
+                result['status'] = 'error'
+                result['message'] = f'SSH 連接錯誤: {str(e)}'
+                result['details'] = {
+                    'uart_ip': uart_ip,
+                    'uart_user': uart_user,
+                    'uart_port': uart_port,
+                    'error': str(e)
+                }
+                logger.error(f"❌ SSH error for {uart_ip}: {e}")
+                
+            except Exception as e:
+                result['status'] = 'error'
+                result['message'] = f'SSH 連接失敗: {str(e)}'
+                result['details'] = {
+                    'uart_ip': uart_ip,
+                    'error': str(e)
+                }
+                logger.error(f"❌ SSH failed for {uart_ip}: {e}")
+                
+        except Exception as e:
+            result['status'] = 'error'
+            result['message'] = f'檢查 UART SSH 時發生錯誤: {str(e)}'
+            result['details'] = {'error': str(e)}
+            logger.error(f"Exception checking UART SSH for {host.hostname}: {e}", exc_info=True)
+        
+        return result
+    
+    def _is_valid_ip(self, ip_string: str) -> bool:
+        """驗證 IPv4 地址格式"""
+        try:
+            ipaddress.IPv4Address(ip_string)
+            return True
+        except (ValueError, ipaddress.AddressValueError):
+            return False
     
     def _check_network_connectivity(self):
         """網路連線測試（可選，耗時）"""

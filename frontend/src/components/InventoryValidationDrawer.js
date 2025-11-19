@@ -151,6 +151,7 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             host_config: '主機配置檢查',
             ip_addresses: 'IP 地址驗證',
             mac_addresses: 'MAC 地址驗證',
+            uart_ssh: 'UART SSH 連線檢查',
             network_connectivity: '網路連線測試',
             ssh_authentication: 'SSH 認證測試',
             dhcp_records: 'DHCP 記錄比對',
@@ -207,12 +208,66 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             unique_macs: '唯一 MAC',
             invalid_macs: '無效 MAC',
             duplicates: 'MAC 重複',
+            // UART SSH 檢查相關
+            total: 'UART 主機總數',
+            successful: '成功連接',
+            failed: '失敗連接',
+            skipped: '跳過檢查',
+            connections: '連接詳情',
         };
         return labels[key] || key;
     };
 
     // 格式化詳細信息值
     const formatDetailValue = (key, value) => {
+        // UART SSH 連接詳情的特殊處理
+        if (key === 'connections' && Array.isArray(value)) {
+            return (
+                <div style={{ marginTop: 8 }}>
+                    {value.map((conn, index) => (
+                        <Card
+                            key={index}
+                            size="small"
+                            style={{
+                                marginBottom: 8,
+                                backgroundColor: conn.status === 'success' ? '#f6ffed' : 
+                                               conn.status === 'error' ? '#fff1f0' : '#fffbe6',
+                                border: `1px solid ${conn.status === 'success' ? '#b7eb8f' : 
+                                                     conn.status === 'error' ? '#ffccc7' : '#ffe58f'}`
+                            }}
+                        >
+                            <Space direction="vertical" style={{ width: '100%' }}>
+                                <div>
+                                    <Text strong>{conn.hostname}</Text>
+                                    {conn.status === 'success' && <CheckCircleOutlined style={{ color: '#52c41a', marginLeft: 8 }} />}
+                                    {conn.status === 'error' && <CloseCircleOutlined style={{ color: '#ff4d4f', marginLeft: 8 }} />}
+                                    {conn.status === 'warning' && <WarningOutlined style={{ color: '#faad14', marginLeft: 8 }} />}
+                                </div>
+                                <div>
+                                    <Text type="secondary">UART 主機: </Text>
+                                    <code style={{ backgroundColor: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>
+                                        {conn.uart_host}
+                                    </code>
+                                </div>
+                                <div>
+                                    <Text type="secondary">訊息: </Text>
+                                    <span>{conn.message}</span>
+                                </div>
+                                {conn.details && Object.keys(conn.details).length > 0 && (
+                                    <div style={{ fontSize: 12, color: '#8c8c8c' }}>
+                                        {conn.details.uart_ip && <div>IP: {conn.details.uart_ip}</div>}
+                                        {conn.details.uart_user && <div>User: {conn.details.uart_user}</div>}
+                                        {conn.details.uart_port && <div>Port: {conn.details.uart_port}</div>}
+                                        {conn.details.error && <div style={{ color: '#ff4d4f' }}>Error: {conn.details.error}</div>}
+                                    </div>
+                                )}
+                            </Space>
+                        </Card>
+                    ))}
+                </div>
+            );
+        }
+        
         if (Array.isArray(value)) {
             if (value.length === 0) return '無';
             if (value.length > 5) {
@@ -238,14 +293,15 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
                 <InfoCircleOutlined style={{ fontSize: 48, color: '#1890ff', marginBottom: 16 }} />
                 <Title level={4}>點擊「開始檢查」執行配置驗證</Title>
                 <p style={{ color: '#8c8c8c', marginBottom: 24 }}>
-                    檢查將包括：語法驗證、結構完整性、主機配置、IP/MAC 地址驗證等
+                    檢查將包括：語法驗證、結構完整性、主機配置、IP/MAC 地址驗證、UART SSH 連線等
                 </p>
                 <ul style={{ textAlign: 'left', display: 'inline-block', color: '#595959' }}>
                     <li>✓ 語法驗證（INI 格式、Jinja2 模板）</li>
                     <li>✓ 結構完整性（Group 層級、循環依賴）</li>
                     <li>✓ 主機配置檢查（必要變數）</li>
-                    <li>✓ IP 地址驗證（格式、衝突）</li>
-                    <li>✓ MAC 地址驗證（格式、重複）</li>
+                    <li>✓ IP 地址驗證（格式、衝突、DHCP 租約）</li>
+                    <li>✓ MAC 地址驗證（格式、重複、DHCP 租約）</li>
+                    <li>✓ UART SSH 連線檢查（認證、連接狀態）</li>
                 </ul>
             </div>
         </Card>

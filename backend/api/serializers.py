@@ -258,6 +258,7 @@ class JenkinsJobSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     builds_count = serializers.SerializerMethodField()
     last_build_info = serializers.SerializerMethodField()
+    last_build_time = serializers.DateTimeField(format='iso-8601', read_only=True)
     
     def get_builds_count(self, obj):
         """獲取 Build 數量"""
@@ -278,7 +279,7 @@ class JenkinsJobSerializer(serializers.ModelSerializer):
     class Meta:
         model = JenkinsJob
         fields = '__all__'
-        read_only_fields = ('created_at', 'updated_at', 'last_build_time')
+        read_only_fields = ('created_at', 'updated_at')
 
 
 class JenkinsBuildSerializer(serializers.ModelSerializer):
