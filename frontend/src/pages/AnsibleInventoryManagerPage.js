@@ -39,6 +39,30 @@ const AnsibleInventoryManagerPage = () => {
         loadCurrentInventory();
     }, []);
 
+    // 自動填充表單（從當前 Inventory 或 localStorage）
+    useEffect(() => {
+        if (currentInventory) {
+            // 優先使用當前 Inventory 的路徑
+            form.setFieldsValue({
+                nas_path: currentInventory.nas_path,
+                file_name: currentInventory.file_name
+            });
+            // 同時保存到 localStorage 作為備份
+            localStorage.setItem('lastNasPath', currentInventory.nas_path);
+            localStorage.setItem('lastFileName', currentInventory.file_name);
+        } else {
+            // 如果沒有當前 Inventory，嘗試從 localStorage 恢復
+            const savedPath = localStorage.getItem('lastNasPath');
+            const savedFile = localStorage.getItem('lastFileName');
+            if (savedPath) {
+                form.setFieldsValue({
+                    nas_path: savedPath,
+                    file_name: savedFile || 'hosts'
+                });
+            }
+        }
+    }, [currentInventory, form]);
+
     // 載入當前 Inventory
     const loadCurrentInventory = async () => {
         try {
@@ -67,7 +91,13 @@ const AnsibleInventoryManagerPage = () => {
             
             message.success(`成功導入 ${response.data.total_hosts} 台 Host！`);
             setCurrentInventory(response.data);
-            form.resetFields();
+            
+            // 保存成功的路徑到 localStorage
+            localStorage.setItem('lastNasPath', values.nas_path);
+            localStorage.setItem('lastFileName', values.file_name || 'hosts');
+            
+            // ✅ 不再清空表單，保留路徑以便重複使用
+            // form.resetFields();
         } catch (error) {
             console.error('導入失敗:', error);
             message.error('導入失敗：' + (error.response?.data?.error || error.message));
@@ -146,7 +176,7 @@ const AnsibleInventoryManagerPage = () => {
             {currentInventory && (
                 <>
                     <Card
-                        title={`當前 Inventory: ${currentInventory.nas_path}/${currentInventory.file_name}`}
+                        title={`當前 Inventory: ${currentInventory.nas_path}\\${currentInventory.file_name}`}
                         style={{ marginBottom: 24 }}
                         extra={
                             <Space>
@@ -205,7 +235,7 @@ const AnsibleInventoryManagerPage = () => {
 
                         <Descriptions size="small" column={1}>
                             <Descriptions.Item label="NAS 路徑">
-                                {currentInventory.nas_path}/{currentInventory.file_name}
+                                {currentInventory.nas_path}\{currentInventory.file_name}
                             </Descriptions.Item>
                             <Descriptions.Item label="最後更新">
                                 {new Date(currentInventory.updated_at).toLocaleString('zh-TW')}
@@ -251,7 +281,7 @@ const AnsibleInventoryManagerPage = () => {
                     visible={validationDrawerVisible}
                     onClose={handleCloseValidationDrawer}
                     inventoryId={currentInventory.id}
-                    inventoryName={`${currentInventory.nas_path}/${currentInventory.file_name}`}
+                    inventoryName={`${currentInventory.nas_path}\\${currentInventory.file_name}`}
                 />
             )}
         </div>

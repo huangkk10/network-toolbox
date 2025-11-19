@@ -37,6 +37,18 @@ class AnsibleInventoryViewSet(viewsets.ModelViewSet):
     serializer_class = AnsibleInventoryImportSerializer
     permission_classes = [AllowAny]  # 開發環境
     
+    def get_queryset(self):
+        """
+        返回當前用戶導入的 Inventory（個人空間模式）
+        如果用戶未登入，返回所有記錄（開發環境相容）
+        """
+        if self.request.user.is_authenticated:
+            return AnsibleInventoryImport.objects.filter(
+                imported_by=self.request.user
+            ).order_by('-imported_at')
+        # 開發環境：如果未登入，返回所有記錄
+        return AnsibleInventoryImport.objects.all().order_by('-imported_at')
+    
     @action(detail=False, methods=['post'], url_path='import')
     def import_inventory(self, request):
         """
