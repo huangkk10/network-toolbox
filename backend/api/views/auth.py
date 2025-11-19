@@ -8,6 +8,8 @@ from rest_framework.decorators import action, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.contrib.auth.models import User
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from ..serializers import UserSerializer
 import logging
 
@@ -21,6 +23,7 @@ class UserViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]  # 開發階段允許所有請求，生產環境應改為 IsAdminUser
     pagination_class = None  # 禁用分頁，直接返回所有用戶
     
+    @method_decorator(csrf_exempt)
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):
         """用戶註冊"""
@@ -71,6 +74,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @method_decorator(csrf_exempt)
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def login(self, request):
         """用戶登入"""

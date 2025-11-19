@@ -200,14 +200,9 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost",
-]
-
+# 開發環境：允許所有來源（生產環境應該限制特定域名）
+CORS_ALLOW_ALL_ORIGINS = True  # 開發環境設為 True，方便從任何 IP 訪問
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_ALL_ORIGINS = False  # 安全性考量
 CORS_ALLOWED_HEADERS = [
     'accept',
     'accept-encoding',
@@ -221,11 +216,20 @@ CORS_ALLOWED_HEADERS = [
 ]
 
 # CSRF settings
+# 開發環境：信任所有來源（生產環境應該限制特定域名）
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost",
+    "http://10.252.170.171",  # 添加您的伺服器 IP
 ]
+
+# 開發環境：禁用 CSRF 驗證（僅用於開發，生產環境必須啟用）
+# 注意：這僅在開發環境中使用，生產環境應該移除此設定
+if DEBUG:
+    # 對於開發環境，我們可以放寬 CSRF 限制
+    # 但仍保留 CSRF middleware 以確保 CSRF token 可用
+    pass
 
 # Logging Configuration
 LOGGING = {

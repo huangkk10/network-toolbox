@@ -31,11 +31,28 @@ export const AuthProvider = ({ children }) => {
 
     const login = async (credentials) => {
         try {
+            // 獲取 CSRF token
+            const getCsrfToken = () => {
+                const name = 'csrftoken';
+                const cookies = document.cookie.split(';');
+                for (let cookie of cookies) {
+                    const trimmed = cookie.trim();
+                    if (trimmed.startsWith(name + '=')) {
+                        return trimmed.substring(name.length + 1);
+                    }
+                }
+                return null;
+            };
+
+            const csrfToken = getCsrfToken();
+            
             const response = await fetch('/api/users/login/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...(csrfToken && { 'X-CSRFToken': csrfToken }),
                 },
+                credentials: 'include',  // 重要：包含 cookies
                 body: JSON.stringify(credentials),
             });
 
@@ -64,11 +81,28 @@ export const AuthProvider = ({ children }) => {
 
     const register = async (userData) => {
         try {
+            // 獲取 CSRF token
+            const getCsrfToken = () => {
+                const name = 'csrftoken';
+                const cookies = document.cookie.split(';');
+                for (let cookie of cookies) {
+                    const trimmed = cookie.trim();
+                    if (trimmed.startsWith(name + '=')) {
+                        return trimmed.substring(name.length + 1);
+                    }
+                }
+                return null;
+            };
+
+            const csrfToken = getCsrfToken();
+
             const response = await fetch('/api/users/register/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...(csrfToken && { 'X-CSRFToken': csrfToken }),
                 },
+                credentials: 'include',  // 重要：包含 cookies
                 body: JSON.stringify(userData),
             });
 

@@ -159,7 +159,7 @@ const Sidebar = ({ collapsed, onCollapse }) => {
         },
     ];
     
-    // RVT 分析菜單項（僅 Admin 可見）
+    // RVT 分析菜單項（所有登入使用者可見）
     const rvtMenuItem = {
         key: 'rvt-analytics',
         icon: <RocketOutlined />,
@@ -214,8 +214,8 @@ const Sidebar = ({ collapsed, onCollapse }) => {
     // 根據用戶權限組合選單項目
     const allMenuItems = [
         ...mainMenuItems,
-        // RVT 分析（僅 Admin 可見）
-        ...(isAuthenticated && user?.is_staff ? [rvtMenuItem] : []),
+        // RVT 分析（所有登入使用者可見）
+        ...(isAuthenticated ? [rvtMenuItem] : []),
         // 只有已登入且是 admin 的用戶才能看到管理功能和系統設定
         ...(isAuthenticated && user?.is_staff ? adminMenuItems : []),
         ...(isAuthenticated && user?.is_staff ? systemMenuItems : []),
