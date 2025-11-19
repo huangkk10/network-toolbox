@@ -76,6 +76,7 @@ class EnhancedINIValidator:
             (is_valid, error_message, error_line)
         """
         lines = content.split('\n')
+        current_section = None  # 追蹤當前所在的 section
         
         for i, line in enumerate(lines, start=1):
             stripped = line.strip()
@@ -92,15 +93,27 @@ class EnhancedINIValidator:
             if stripped.startswith('[') and not stripped.endswith(']'):
                 return False, f"第 {i} 行: 組標題缺少閉合的中括號 ']'", i
             
-            # 檢查是否為組標題
+            # 檢查是否為組標題，更新當前 section
             if stripped.startswith('['):
+                current_section = stripped[1:-1]  # 移除 [ 和 ]
                 continue
             
             # 檢查 YAML 語法（冒號後有空格）
             if ': ' in stripped and '=' not in stripped:
                 return False, f"第 {i} 行: 不允許使用 YAML 語法，請使用 INI 格式", i
             
-            # 檢查主機行的內聯變數
+            # 判斷當前行的類型
+            is_vars_section = current_section and current_section.endswith(':vars')
+            
+            # 如果在 :vars section 中，Ansible 允許 key=value with spaces 格式
+            # 只需要檢查至少有一個 = 號
+            if is_vars_section:
+                if '=' not in stripped:
+                    return False, f"第 {i} 行: 變數定義缺少等號，應為 'key=value' 格式", i
+                # :vars section 中允許值包含空格，不需要進一步檢查
+                continue
+            
+            # 檢查主機行的內聯變數（只在非 :vars section 中檢查）
             parts = stripped.split(None, 1)
             if len(parts) > 1:
                 # 有內聯變數
@@ -111,10 +124,18 @@ class EnhancedINIValidator:
                     # 包含 Jinja2 模板，跳過詳細檢查（Ansible 會處理）
                     continue
                 
-                # 簡單檢查：每個空格分隔的部分都應該有 =
-                for var_part in inline_vars.split():
+                # 在主機行中，每個空格分隔的變數都必須是 key=value 格式
+                # 但需要注意引號內的空格
+                var_parts = inline_vars.split()
+                
+                for var_part in var_parts:
+                    # 跳過引號內的內容（簡化處理）
+                    if var_part.startswith('"') or var_part.startswith("'"):
+                        continue
+                    
+                    # 檢查是否有 = 號
                     if '=' not in var_part:
-                        return False, f"第 {i} 行: 變數 '{var_part}' 缺少等號，應為 'key=value' 格式", i
+                        return False, f"第 {i} 行: 變數 '{var_part}' 缺少等號，應為 'key=value' 格式（或使用引號：key=\"value with spaces\"）", i
         
         return True, None, None
     
