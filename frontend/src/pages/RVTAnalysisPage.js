@@ -8,7 +8,7 @@
  * - Tree Table（兩層：Job → Build）
  * - Console Log Modal、Build 詳情 Drawer
  * 
- * 權限：僅 Admin 可訪問
+ * 權限：所有登入使用者可訪問
  */
 
 import React, { useState, useEffect } from 'react';
@@ -84,13 +84,8 @@ const RVTAnalysisPage = () => {
     const navigate = useNavigate();
     const location = useLocation();
     
-    // 權限檢查：非 Admin 跳轉
-    useEffect(() => {
-        if (user && !user.is_staff) {
-            message.error('您沒有權限訪問此頁面');
-            navigate('/dashboard');
-        }
-    }, [user, navigate]);
+    // ✅ 權限檢查已移除：所有登入使用者都可以訪問此頁面
+    // 如果未登入，由 PrivateRoute 處理跳轉
 
     // ========== State 管理 ==========
     // 從 URL 參數讀取當前 Tab
