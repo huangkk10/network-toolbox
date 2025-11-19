@@ -221,6 +221,12 @@ export const formatConfigForDisplay = (config) => {
         // UART_HOSTNAME 已移除（與 uart_host 重複）
         ansible_user: '使用者',
         ansible_password: '密碼',
+        // JTAG 配置（獨立區塊）
+        enable_jtag_dump: '啟用 JTAG Dump',
+        jtag_serial: 'JTAG 序列號',
+        firmware_sku_keyword: 'Firmware SKU 關鍵字',
+        jtag_dump_upload_dir: 'JTAG Dump 上傳目錄',
+        firmware_polling_dir: 'Firmware 輪詢目錄',
         // 其他 Ansible 變數
         ansible_shell_type: 'Shell 類型',
         // testcase_set 已移至測試案例配置區塊，不再顯示在這裡

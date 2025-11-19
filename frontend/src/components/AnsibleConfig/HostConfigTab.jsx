@@ -137,10 +137,26 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
         return false;
     });
     
+    // JTAG 相關配置（根據 key 識別）
+    const jtagItems = configItems.filter(item => {
+        const jtagKeys = [
+            'enable_jtag_dump', 
+            'jtag_serial', 
+            'firmware_sku_keyword',
+            'jtag_dump_upload_dir',
+            'firmware_polling_dir'
+        ];
+        return jtagKeys.includes(item.key);
+    });
+    
     const ansibleItems = configItems.filter(item => {
         // 排除已在 UART 區塊顯示的欄位
         const excludeKeys = ['ansible_host', 'ansible_user', 'ansible_password', 'uart_id', 'uart_host', 'UART_IP'];
         if (excludeKeys.includes(item.key)) return false;
+        
+        // 排除已在 JTAG 區塊顯示的欄位
+        const jtagKeys = ['enable_jtag_dump', 'jtag_serial', 'firmware_sku_keyword', 'jtag_dump_upload_dir', 'firmware_polling_dir'];
+        if (jtagKeys.includes(item.key)) return false;
         
         // 只保留 ansible_ 開頭的欄位
         return item.key.startsWith('ansible_');
@@ -154,6 +170,10 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
         // 排除 UART 資訊
         const uartKeys = ['uart_id', 'uart_host', 'UART_IP', 'ansible_user', 'ansible_password'];
         if (uartKeys.includes(item.key)) return false;
+        
+        // 排除 JTAG 資訊
+        const jtagKeys = ['enable_jtag_dump', 'jtag_serial', 'firmware_sku_keyword', 'jtag_dump_upload_dir', 'firmware_polling_dir'];
+        if (jtagKeys.includes(item.key)) return false;
         
         // 排除 Ansible 變數
         if (item.key.startsWith('ansible_')) return false;
@@ -287,6 +307,40 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
                                                 fontFamily: item.label === '密碼' ? 'monospace' : undefined
                                             }}
                                         >
+                                            {item.value}
+                                        </Text>
+                                    </Descriptions.Item>
+                                ))}
+                            </Descriptions>
+                        </Card>
+                    )}
+
+                    {/* JTAG 配置卡片 */}
+                    {jtagItems.length > 0 && (
+                        <Card 
+                            title={
+                                <Space>
+                                    <CodeOutlined />
+                                    JTAG 配置
+                                </Space>
+                            }
+                            size="small"
+                            style={{ 
+                                borderColor: '#722ed1',
+                                boxShadow: '0 2px 8px rgba(114, 46, 209, 0.1)'
+                            }}
+                        >
+                            <Descriptions 
+                                column={2} 
+                                bordered
+                                size="small"
+                            >
+                                {jtagItems.map(item => (
+                                    <Descriptions.Item 
+                                        key={item.key} 
+                                        label={<Text strong>{item.label}</Text>}
+                                    >
+                                        <Text copyable={item.value !== 'N/A'}>
                                             {item.value}
                                         </Text>
                                     </Descriptions.Item>
