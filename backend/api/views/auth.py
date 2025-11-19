@@ -74,7 +74,7 @@ class UserViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def login(self, request):
         """用戶登入"""
-        from django.contrib.auth import authenticate
+        from django.contrib.auth import authenticate, login
         
         username = request.data.get('username')
         password = request.data.get('password')
@@ -93,6 +93,9 @@ class UserViewSet(viewsets.ModelViewSet):
                 {'error': '用戶名或密碼錯誤'}, 
                 status=status.HTTP_401_UNAUTHORIZED
             )
+        
+        # 建立 Django session（重要：使 SessionAuthentication 正常工作）
+        login(request, user)
         
         return Response({
             'message': '登入成功！',

@@ -23,11 +23,11 @@ const TopHeader = ({ collapsed, onToggleSidebar, pageTitle, extraActions, onTitl
         switch (key) {
             case 'profile':
                 console.log('Navigate to profile');
-                // TODO: 導航到個人資料頁面
+                navigate('/profile');
                 break;
             case 'settings':
                 console.log('Navigate to settings');
-                // TODO: 導航到設定頁面
+                navigate('/settings');
                 break;
             case 'logout':
                 console.log('Logging out...');

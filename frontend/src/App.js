@@ -25,6 +25,7 @@ import RVTAnalysisPage from './pages/RVTAnalysisPage';
 import RVTManagementPage from './pages/RVTManagementPage';
 import BuildConfigValidatorPage from './pages/BuildConfigValidatorPage';
 import AnsibleInventoryManagerPage from './pages/AnsibleInventoryManagerPage';
+import UserProfilePage from './pages/UserProfilePage';
 
 const { Content } = Layout;
 
@@ -97,6 +98,8 @@ function AppLayout() {
                 return '註冊';
             case '/dashboard':
                 return 'Dashboard';
+            case '/profile':
+                return '個人資料';
             case '/nas-analytics':
                 return 'NAS 分析';
             case '/ntp-analytics':
@@ -245,6 +248,7 @@ function AppLayout() {
                     <Routes>
                         <Route path="/" element={<Navigate to="/dhcp-analytics" replace />} />
                         <Route path="/dashboard" element={<DashboardPage />} />
+                        <Route path="/profile" element={<UserProfilePage />} />
                         
                         {/* DHCP Analytics 路由 - 支援子路由 */}
                         <Route path="/dhcp-analytics" element={<DHCPAnalyticsPage />} />

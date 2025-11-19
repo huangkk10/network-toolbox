@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
+from .views.user_profile import UserProfileViewSet
 
 router = DefaultRouter()
 router.register(r'users', views.UserViewSet)
@@ -22,6 +23,9 @@ router.register(r'jenkins-builds', views.JenkinsBuildViewSet)
 
 # Ansible Inventory API
 router.register(r'ansible-inventory', views.AnsibleInventoryViewSet)
+
+# User Profile API
+router.register(r'user-profile', UserProfileViewSet, basename='user-profile')
 
 urlpatterns = [
     path('', views.api_root, name='api_root'),
