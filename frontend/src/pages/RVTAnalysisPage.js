@@ -49,6 +49,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
 import AnsibleInventoryManagerPage from './AnsibleInventoryManagerPage';
+import JenkinsStatisticsCharts from '../components/jenkins/JenkinsStatisticsCharts';
 
 const { Content } = Layout;
 const { Option } = Select;
@@ -792,6 +793,12 @@ const RVTAnalysisPage = () => {
                             </Col>
                         </Row>
                     </Spin>
+
+                    {/* Jenkins 趨勢圖表 */}
+                    <JenkinsStatisticsCharts 
+                        timeRange={timeRange} 
+                        serverId="all" 
+                    />
                 </div>
             )}
 

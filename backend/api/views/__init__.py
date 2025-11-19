@@ -56,6 +56,7 @@ from .jenkins import (
     JenkinsServerViewSet,
     JenkinsJobViewSet,
     JenkinsBuildViewSet,
+    jenkins_build_trend,
 )
 
 # Ansible Inventory Views
@@ -114,6 +115,7 @@ __all__ = [
     'JenkinsServerViewSet',
     'JenkinsJobViewSet',
     'JenkinsBuildViewSet',
+    'jenkins_build_trend',
     
     # Ansible Inventory
     'AnsibleInventoryViewSet',

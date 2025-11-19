@@ -47,6 +47,9 @@ urlpatterns = [
     path('ipxe-analytics/overview/', views.ipxe_analytics_overview, name='ipxe_analytics_overview'),
     path('ipxe-analytics/statistics/', views.ipxe_analytics_statistics, name='ipxe_analytics_statistics'),
     
+    # Jenkins Analytics API
+    path('jenkins-analytics/build-trend/', views.jenkins_build_trend, name='jenkins_build_trend'),
+    
     # MAC 地址查詢 API
     path('dhcp-leases/lookup/', views.dhcp_lease_lookup, name='dhcp_lease_lookup'),
     

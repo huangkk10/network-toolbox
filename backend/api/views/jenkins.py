@@ -1631,3 +1631,150 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'message': f'檢查失敗: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ========== Standalone API Functions ==========
+
+from rest_framework.decorators import api_view, permission_classes
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def jenkins_build_trend(request):
+    """
+    Jenkins Build 趨勢分析 API
+    
+    提供基於時間範圍的構建趨勢數據，支援按小時或按日聚合。
+    
+    Query Parameters:
+    - time_range: 'today' | 'week' | '2weeks' | 'month' | 'all' (預設: 'today')
+    - granularity: 'hourly' | 'daily' (預設: 根據 time_range 自動選擇)
+    - server_id: int | 'all' (預設: 'all')
+    
+    Returns:
+    [
+        {
+            'time': '2025-11-17 14:00',  # 或 '11/17' (daily)
+            'total_builds': 45,
+            'success_count': 32,
+            'failure_count': 13,
+            'success_rate': 71.1
+        },
+        ...
+    ]
+    """
+    time_range = request.query_params.get('time_range', 'today')
+    granularity = request.query_params.get('granularity', None)
+    server_id = request.query_params.get('server_id', 'all')
+    
+    try:
+        # 計算時間範圍
+        end_time = timezone.now()
+        start_time = None
+        
+        # 自動選擇粒度（如果未指定）
+        if not granularity:
+            if time_range in ['today']:
+                granularity = 'hourly'
+            else:
+                granularity = 'daily'
+        
+        if time_range == 'today':
+            start_time = end_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif time_range == 'week':
+            start_time = end_time - timedelta(days=7)
+        elif time_range == '2weeks':
+            start_time = end_time - timedelta(days=14)
+        elif time_range == 'month':
+            start_time = end_time - timedelta(days=30)
+        else:  # 'all'
+            # 對於 'all'，取最早的 Build 時間
+            earliest_build = JenkinsBuild.objects.order_by('build_timestamp').first()
+            if earliest_build:
+                start_time = earliest_build.build_timestamp
+            else:
+                start_time = end_time - timedelta(days=30)  # 預設 30 天
+        
+        # 構建查詢
+        builds_query = JenkinsBuild.objects.filter(build_timestamp__gte=start_time)
+        
+        # 按 server_id 過濾
+        if server_id != 'all':
+            try:
+                server_id_int = int(server_id)
+                builds_query = builds_query.filter(job__server_id=server_id_int)
+            except (ValueError, TypeError):
+                pass  # 忽略無效的 server_id
+        
+        # 生成趨勢數據
+        trend_data = []
+        
+        if granularity == 'hourly':
+            # 按小時聚合
+            current_time = start_time
+            while current_time <= end_time:
+                next_time = current_time + timedelta(hours=1)
+                
+                hour_builds = builds_query.filter(
+                    build_timestamp__gte=current_time,
+                    build_timestamp__lt=next_time
+                )
+                
+                total_builds = hour_builds.count()
+                success_count = hour_builds.filter(result='SUCCESS').count()
+                failure_count = total_builds - success_count
+                success_rate = (success_count / total_builds * 100) if total_builds > 0 else 0
+                
+                trend_data.append({
+                    'time': current_time.strftime('%m/%d %H:%M'),
+                    'total_builds': total_builds,
+                    'success_count': success_count,
+                    'failure_count': failure_count,
+                    'success_rate': round(success_rate, 1)
+                })
+                
+                current_time = next_time
+        
+        else:  # daily
+            # 按天聚合
+            current_date = start_time.date()
+            end_date = end_time.date()
+            
+            while current_date <= end_date:
+                date_start = timezone.make_aware(
+                    timezone.datetime.combine(current_date, timezone.datetime.min.time())
+                )
+                date_end = timezone.make_aware(
+                    timezone.datetime.combine(current_date, timezone.datetime.max.time())
+                )
+                
+                day_builds = builds_query.filter(
+                    build_timestamp__gte=date_start,
+                    build_timestamp__lte=date_end
+                )
+                
+                total_builds = day_builds.count()
+                success_count = day_builds.filter(result='SUCCESS').count()
+                failure_count = total_builds - success_count
+                success_rate = (success_count / total_builds * 100) if total_builds > 0 else 0
+                
+                trend_data.append({
+                    'time': current_date.strftime('%m/%d'),
+                    'total_builds': total_builds,
+                    'success_count': success_count,
+                    'failure_count': failure_count,
+                    'success_rate': round(success_rate, 1)
+                })
+                
+                current_date += timedelta(days=1)
+        
+        logger.info(f"Jenkins 趨勢查詢: time_range={time_range}, granularity={granularity}, points={len(trend_data)}")
+        
+        return Response(trend_data)
+    
+    except Exception as e:
+        logger.error(f'獲取 Jenkins 趨勢資料失敗: {str(e)}', exc_info=True)
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
