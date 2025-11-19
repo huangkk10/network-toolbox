@@ -580,14 +580,55 @@ const RVTAnalysisPage = () => {
             },
         },
         {
-            title: '開始時間',
+            title: '最新 Build 時間',
             dataIndex: 'last_build_time',
             key: 'time',
-            width: 180,
+            width: 200,
             render: (text, record) => {
                 if (record.type === 'job') {
-                    return <span>{text}</span>;
+                    // Job 行：顯示最新 Build 時間
+                    if (!text || text === 'N/A') {
+                        return <span style={{ color: '#999' }}>無 Build 記錄</span>;
+                    }
+                    
+                    // 格式化時間顯示
+                    try {
+                        const buildTime = new Date(text);
+                        const now = new Date();
+                        const diffMs = now - buildTime;
+                        const diffMins = Math.floor(diffMs / 60000);
+                        const diffHours = Math.floor(diffMs / 3600000);
+                        const diffDays = Math.floor(diffMs / 86400000);
+                        
+                        let relativeTime = '';
+                        if (diffMins < 1) {
+                            relativeTime = '剛剛';
+                        } else if (diffMins < 60) {
+                            relativeTime = `${diffMins} 分鐘前`;
+                        } else if (diffHours < 24) {
+                            relativeTime = `${diffHours} 小時前`;
+                        } else if (diffDays < 7) {
+                            relativeTime = `${diffDays} 天前`;
+                        } else {
+                            relativeTime = buildTime.toLocaleDateString('zh-TW', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit'
+                            });
+                        }
+                        
+                        return (
+                            <Tooltip title={buildTime.toLocaleString('zh-TW')}>
+                                <span style={{ color: diffDays > 7 ? '#ff4d4f' : '#666' }}>
+                                    {relativeTime}
+                                </span>
+                            </Tooltip>
+                        );
+                    } catch (e) {
+                        return <span>{text}</span>;
+                    }
                 } else {
+                    // Build 行：顯示構建開始時間
                     return <span>{record.build_timestamp}</span>;
                 }
             },

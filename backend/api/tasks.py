@@ -1874,6 +1874,14 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                 builds_created += 1
                                 logger.debug(f'[Celery]     ✅ 創建 Build: {job.name} #{build_number} ({result})')
                                 
+                                # 🆕 更新 Job 的 last_build_time（如果這個 Build 更新）
+                                if not job.last_build_time or build_timestamp > job.last_build_time:
+                                    job.last_build_time = build_timestamp
+                                    job.last_build_number = build_number
+                                    job.last_build_status = result or 'UNKNOWN'
+                                    job.save(update_fields=['last_build_time', 'last_build_number', 'last_build_status'])
+                                    logger.debug(f'[Celery]     🔄 更新 Job last_build_time: {build_timestamp}')
+                                
                                 # 🆕 同步 Pipeline Stages（如果是 FAILURE 狀態）
                                 if result == 'FAILURE':
                                     try:
