@@ -561,6 +561,13 @@ const RVTAnalysisPage = () => {
             dataIndex: 'name',
             key: 'name',
             width: 250,
+            sorter: (a, b) => {
+                // 只對 Job 行進行排序，Build 行跟隨 Job
+                if (a.type === 'job' && b.type === 'job') {
+                    return a.name.localeCompare(b.name, 'zh-TW');
+                }
+                return 0;
+            },
             render: (text, record) => {
                 if (record.type === 'job') {
                     // 獲取 Job 狀態對應的樣式
@@ -656,6 +663,20 @@ const RVTAnalysisPage = () => {
             dataIndex: 'last_build_time',
             key: 'time',
             width: 200,
+            sorter: (a, b) => {
+                // 只對 Job 行進行排序，Build 行跟隨 Job
+                if (a.type === 'job' && b.type === 'job') {
+                    // 處理無 Build 記錄的情況（排到最後）
+                    if (!a.last_build_time || a.last_build_time === 'N/A') return 1;
+                    if (!b.last_build_time || b.last_build_time === 'N/A') return -1;
+                    
+                    // 比較時間（新的排前面）
+                    const timeA = new Date(a.last_build_time).getTime();
+                    const timeB = new Date(b.last_build_time).getTime();
+                    return timeB - timeA;
+                }
+                return 0;
+            },
             render: (text, record) => {
                 if (record.type === 'job') {
                     // Job 行：顯示最新 Build 時間
