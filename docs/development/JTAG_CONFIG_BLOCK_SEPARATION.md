@@ -4,7 +4,9 @@
 
 根據用戶反饋，需要將 JTAG 相關的參數獨立成一個單獨的區塊（Block），類似於 UART 連接資訊和測試案例配置的顯示方式。
 
-### 涉及的參數
+**後續更新**：將 UART Logger 相關參數也移至 UART 連接資訊區塊。
+
+### JTAG 相關參數
 
 以下參數從「其他配置」移至獨立的「JTAG 配置」區塊：
 
@@ -15,6 +17,26 @@
 | `firmware_sku_keyword` | Firmware SKU 關鍵字 | 韌體 SKU 識別關鍵字 |
 | `jtag_dump_upload_dir` | JTAG Dump 上傳目錄 | JTAG 數據上傳目錄路徑 |
 | `firmware_polling_dir` | Firmware 輪詢目錄 | 韌體輪詢目錄路徑 |
+
+### UART Logger 相關參數
+
+以下參數從「其他配置」移至「UART 連接資訊」區塊：
+
+| 參數名稱 | 顯示標籤（英文） | 說明 |
+|---------|---------|------|
+| `uart_id` | UART ID | UART 設備 ID |
+| `uart_host` | UART Host | UART 主機名稱 |
+| `UART_IP` | UART IP | UART IP 地址 |
+| ~~`UART_HOSTNAME`~~ | ~~UART Hostname~~ | ~~已移除（與 uart_host 重複）~~ |
+| `ansible_user` | User | 使用者名稱 |
+| `ansible_password` | Password | 登入密碼 |
+| `uart_logger_lowpower_enabled` | UART Logger Low Power | 是否啟用 UART Logger 低功耗模式 |
+| `uart_logger_parser_hp_enabled` | UART Logger Parser HP | 是否啟用 UART Logger 解析器高性能模式 |
+| `uart_logger_upload_dir` | UART Logger Upload Dir | UART Logger 日誌上傳目錄路徑 |
+
+**注意**：
+- UART 區塊中的所有標籤已改為英文顯示，以保持一致性和國際化。
+- `UART_HOSTNAME` 已移除，因為它與 `uart_host` 顯示相同的內容，造成重複。
 
 ---
 
@@ -40,13 +62,63 @@ const jtagItems = configItems.filter(item => {
 });
 ```
 
-#### 1.2 更新 Ansible 變數過濾規則
+#### 1.2 更新 UART 配置項目過濾（新增 UART Logger 參數）
 
-排除 JTAG 相關欄位，避免重複顯示：
+```javascript
+// UART 相關配置（根據 key 或 label 識別）
+const uartItems = configItems.filter(item => {
+    const uartKeys = [
+        'uart_id', 
+        'uart_host', 
+        'UART_IP', 
+        'ansible_user', 
+        'ansible_password',
+        'uart_logger_lowpower_enabled',    // 新增
+        'uart_logger_parser_hp_enabled',   // 新增
+        'uart_logger_upload_dir'           // 新增
+        // UART_HOSTNAME 已移除（與 uart_host 重複）
+    ];
+    if (uartKeys.includes(item.key)) return true;
+    
+    // 根據 label 識別（英文）
+    const uartLabels = [
+        'UART ID', 
+        'UART Host', 
+        'UART IP',
+        'UART Logger Low Power',
+        'UART Logger Parser HP',
+        'UART Logger Upload Dir',
+        'User', 
+        'Password'
+    ];
+    if (uartLabels.includes(item.label)) return true;
+    
+    return false;
+});
+```
+
+#### 1.3 更新 Ansible 變數過濾規則
+
+#### 1.3 更新 Ansible 變數過濾規則
+
+排除 JTAG 和 UART Logger 相關欄位，避免重複顯示：
 
 ```javascript
 const ansibleItems = configItems.filter(item => {
-    // ... 其他排除邏輯
+    // 排除已在 UART 區塊顯示的欄位
+    const excludeKeys = [
+        'ansible_host', 
+        'ansible_user', 
+        'ansible_password', 
+        'uart_id', 
+        'uart_host', 
+        'UART_IP',
+        'uart_logger_lowpower_enabled',    // 新增
+        'uart_logger_parser_hp_enabled',   // 新增
+        'uart_logger_upload_dir',          // 新增
+        'UART_HOSTNAME'                    // 新增
+    ];
+    if (excludeKeys.includes(item.key)) return false;
     
     // 排除已在 JTAG 區塊顯示的欄位
     const jtagKeys = ['enable_jtag_dump', 'jtag_serial', 'firmware_sku_keyword', 'jtag_dump_upload_dir', 'firmware_polling_dir'];
@@ -56,11 +128,27 @@ const ansibleItems = configItems.filter(item => {
 });
 ```
 
-#### 1.3 更新「其他配置」過濾規則
+#### 1.4 更新「其他配置」過濾規則
+
+#### 1.4 更新「其他配置」過濾規則
 
 ```javascript
 const otherItems = configItems.filter(item => {
     // ... 其他排除邏輯
+    
+    // 排除 UART 資訊（包含 UART Logger 參數）
+    const uartKeys = [
+        'uart_id', 
+        'uart_host', 
+        'UART_IP', 
+        'ansible_user', 
+        'ansible_password',
+        'uart_logger_lowpower_enabled',    // 新增
+        'uart_logger_parser_hp_enabled',   // 新增
+        'uart_logger_upload_dir',          // 新增
+        'UART_HOSTNAME'                    // 新增
+    ];
+    if (uartKeys.includes(item.key)) return false;
     
     // 排除 JTAG 資訊
     const jtagKeys = ['enable_jtag_dump', 'jtag_serial', 'firmware_sku_keyword', 'jtag_dump_upload_dir', 'firmware_polling_dir'];
@@ -70,7 +158,7 @@ const otherItems = configItems.filter(item => {
 });
 ```
 
-#### 1.4 新增 JTAG 配置卡片渲染
+#### 1.5 新增 JTAG 配置卡片渲染
 
 在 UART 連接資訊卡片後新增：
 
@@ -118,11 +206,24 @@ const otherItems = configItems.filter(item => {
 
 #### 2.1 新增 JTAG 參數標籤定義
 
+#### 2.1 新增 JTAG 參數標籤定義
+
 在 `formatConfigForDisplay()` 函數的 `importantFields` 中新增：
 
 ```javascript
 const importantFields = {
     // ... 其他欄位
+    
+    // UART 連接資訊（獨立區塊）- 使用英文標籤
+    uart_id: 'UART ID',
+    uart_host: 'UART Host',
+    UART_IP: 'UART IP',
+    // UART_HOSTNAME 已移除（與 uart_host 重複，顯示相同內容）
+    uart_logger_lowpower_enabled: 'UART Logger Low Power',
+    uart_logger_parser_hp_enabled: 'UART Logger Parser HP',
+    uart_logger_upload_dir: 'UART Logger Upload Dir',
+    ansible_user: 'User',
+    ansible_password: 'Password',
     
     // JTAG 配置（獨立區塊）
     enable_jtag_dump: '啟用 JTAG Dump',
@@ -147,10 +248,15 @@ const importantFields = {
    - IP 地址、設備號、樣品號、MAC 地址
 
 2. **UART 連接資訊** 📱 (藍色邊框 `#1890ff`)
-   - UART ID、UART 主機、UART IP、使用者、密碼
+   - UART ID、UART Host、UART IP
+   - User、Password
+   - UART Logger Low Power、UART Logger Parser HP、UART Logger Upload Dir
+   - **標籤語言**：英文 🌐
+   - **注意**：已移除 UART Hostname（與 UART Host 重複）
 
 3. **JTAG 配置** 🔧 (紫色邊框 `#722ed1`) ✨ **NEW**
    - 啟用 JTAG Dump、JTAG 序列號、Firmware SKU 關鍵字、上傳目錄、輪詢目錄
+   - **標籤語言**：中文
 
 4. **測試案例配置** 🧪 (綠色邊框 `#52c41a`)
    - testcase_set、測試項目配置
@@ -187,7 +293,8 @@ const importantFields = {
 
 3. **檢查其他區塊**
    - ✅ 「其他配置」區塊不再包含 JTAG 參數
-   - ✅ 「Ansible 變數」區塊不再包含 JTAG 參數
+   - ✅ 「其他配置」區塊不再包含 UART Logger 參數
+   - ✅ 「Ansible 變數」區塊不再包含 JTAG 和 UART Logger 參數
    - ✅ 其他區塊顯示正常
 
 4. **功能測試**
@@ -217,12 +324,28 @@ const importantFields = {
 ## 📅 實施時間
 
 - **需求提出**：2025-11-20
-- **實施完成**：2025-11-20
+- **JTAG 配置獨立實施完成**：2025-11-20
+- **UART Logger 參數移至 UART 區塊**：2025-11-20
+- **UART 區塊標籤改為英文**：2025-11-20
+- **移除 UART_HOSTNAME 重複項目**：2025-11-20
 - **實施者**：GitHub Copilot
 
 ---
 
 ## 💡 設計考量
+
+### 為什麼移除 UART_HOSTNAME？
+
+- 🔄 **避免重複**：`UART_HOSTNAME` 與 `uart_host` 顯示相同的內容（如 `UART-HUB00`）
+- 🎯 **簡潔性**：移除重複項目可以讓界面更清晰
+- 📊 **數據一致性**：只保留一個主要的主機識別欄位
+
+### 為什麼 UART 區塊使用英文標籤？
+
+- 🌐 **國際化考量**：UART 是國際通用的技術術語
+- 📊 **數據一致性**：參數名稱本身就是英文（如 `uart_id`, `uart_host`）
+- 🔧 **技術專業性**：保持技術文檔的專業性和統一性
+- 👥 **用戶習慣**：技術人員更習慣使用英文術語
 
 ### 為什麼選擇紫色邊框？
 

@@ -1737,7 +1737,8 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
             'total_jobs': int,          # 處理的 Jobs 數量
             'total_builds_found': int,  # 從 Jenkins 找到的 Builds 數量
             'builds_created': int,      # 新增的 Builds 數量
-            'builds_skipped': int,      # 跳過的 Builds 數量（太舊或已存在）
+            'builds_updated': int,      # 更新的 Builds 數量（狀態變化）
+            'builds_skipped': int,      # 跳過的 Builds 數量（太舊）
             'errors': int,              # 錯誤數量
             'duration': float,          # 執行時間（秒）
         }
@@ -1783,6 +1784,7 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
         total_jobs_processed = 0
         total_builds_found = 0
         builds_created = 0
+        builds_updated = 0  # 🆕 新增：追蹤更新的 Builds 數量
         builds_skipped = 0
         errors = 0
         
@@ -1811,11 +1813,11 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                 # 處理每個 Job
                 for job in jobs:
                     try:
-                        # 🆕 先查詢該 Job 在資料庫中已有哪些 Build Numbers
-                        existing_build_numbers = set(
-                            JenkinsBuild.objects.filter(job=job)
-                            .values_list('build_number', flat=True)
-                        )
+                        # 🆕 先查詢該 Job 在資料庫中已有的 Builds
+                        existing_builds = {
+                            b.build_number: b
+                            for b in JenkinsBuild.objects.filter(job=job)
+                        }
                         
                         # 從 Jenkins API 獲取 Builds
                         jenkins_builds = client.get_job_builds(
@@ -1828,21 +1830,21 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                         
                         total_builds_found += len(jenkins_builds)
                         
-                        # 🆕 過濾掉已經存在的 Builds（減少不必要的處理）
-                        new_builds = [
-                            b for b in jenkins_builds 
-                            if b.get('number') not in existing_build_numbers
-                        ]
+                        # 🆕 分離新 Builds 和可能需要更新的 Builds
+                        new_builds = []
+                        builds_to_check = []
                         
-                        # 如果沒有新 Builds，跳過這個 Job
-                        if not new_builds:
-                            logger.debug(f'[Celery]     ⏭️  Job {job.name} 沒有新 Builds，跳過')
-                            total_jobs_processed += 1
-                            continue
+                        for b in jenkins_builds:
+                            build_num = b.get('number')
+                            if build_num in existing_builds:
+                                builds_to_check.append((b, existing_builds[build_num]))
+                            else:
+                                new_builds.append(b)
                         
-                        logger.info(f'[Celery]     🆕 Job {job.name} 發現 {len(new_builds)} 個新 Builds')
+                        logger.info(f'[Celery]     📊 Job {job.name}: {len(new_builds)} 個新 Builds, {len(builds_to_check)} 個需檢查')
                         
-                        # 處理每個 Build
+                        # 處理每個 Build（新建或更新）
+                        # 處理新 Builds（創建）
                         for build_data in new_builds:
                             try:
                                 build_number = build_data.get('number')
@@ -1860,7 +1862,7 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                     builds_skipped += 1
                                     continue
                                 
-                                # 🆕 直接創建 Build 記錄（因為已經過濾掉存在的）
+                                # 🆕 創建 Build 記錄
                                 build = JenkinsBuild.objects.create(
                                     job=job,
                                     build_number=build_number,
@@ -1907,7 +1909,77 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                 
                             except Exception as e:
                                 errors += 1
-                                logger.error(f'[Celery]     ❌ 處理 Build 失敗: {job.name} #{build_data.get("number")} - {e}')
+                                logger.error(f'[Celery]     ❌ 處理新 Build 失敗: {job.name} #{build_data.get("number")} - {e}')
+                        
+                        # 🔄 檢查並更新現有 Builds
+                        job_builds_updated = 0
+                        for build_data, existing_build in builds_to_check:
+                            try:
+                                build_number = build_data.get('number')
+                                result = build_data.get('result')
+                                building = build_data.get('building', False)
+                                duration = build_data.get('duration', 0)
+                                
+                                # 檢查是否需要更新
+                                needs_update = False
+                                updated_fields = []
+                                
+                                # 1. 檢查 result 是否變化（RUNNING → SUCCESS/FAILURE）
+                                if result and result != existing_build.result:
+                                    existing_build.result = result
+                                    updated_fields.append('result')
+                                    needs_update = True
+                                    logger.info(f'[Celery]     🔄 Build {job.name} #{build_number} 狀態變化: {existing_build.result} → {result}')
+                                
+                                # 2. 檢查 is_building 狀態（正在構建 → 已完成）
+                                if existing_build.is_building and not building:
+                                    existing_build.is_building = False
+                                    updated_fields.append('is_building')
+                                    needs_update = True
+                                    logger.info(f'[Celery]     ⏹️  Build {job.name} #{build_number} 構建完成')
+                                
+                                # 3. 檢查 duration（從 0 變為實際值）
+                                if duration > 0 and existing_build.duration != duration:
+                                    existing_build.duration = duration
+                                    updated_fields.append('duration')
+                                    needs_update = True
+                                
+                                # 4. 如果狀態變為 FAILURE，同步 failed_stage
+                                if result == 'FAILURE' and not existing_build.failed_stage:
+                                    try:
+                                        failed_stages = client.get_failed_stages(job.name, build_number)
+                                        if failed_stages:
+                                            existing_build.pipeline_stages = failed_stages
+                                            first_failed = failed_stages[0]
+                                            existing_build.failed_stage = (
+                                                first_failed.get('stage_name') or 
+                                                first_failed.get('displayName') or 
+                                                first_failed.get('name')
+                                            )
+                                            updated_fields.extend(['pipeline_stages', 'failed_stage'])
+                                            needs_update = True
+                                            logger.info(f'[Celery]     🎯 更新失敗 Stage: {existing_build.failed_stage}')
+                                    except Exception as e:
+                                        logger.error(f'[Celery]     ❌ 無法獲取 Pipeline Stages: {e}')
+                                
+                                # 執行更新
+                                if needs_update:
+                                    existing_build.save(update_fields=updated_fields)
+                                    job_builds_updated += 1
+                                    builds_updated += 1  # 🆕 累加到全局計數器
+                                    logger.info(f'[Celery]     ✅ 更新 Build: {job.name} #{build_number} (欄位: {", ".join(updated_fields)})')
+                                    
+                                    # 更新 Job 的最後 Build 資訊
+                                    if result and (not job.last_build_number or build_number >= job.last_build_number):
+                                        job.last_build_status = result
+                                        job.save(update_fields=['last_build_status'])
+                                
+                            except Exception as e:
+                                errors += 1
+                                logger.error(f'[Celery]     ❌ 更新 Build 失敗: {job.name} #{build_number} - {e}')
+                        
+                        if job_builds_updated > 0:
+                            logger.info(f'[Celery]     🔄 Job {job.name} 更新了 {job_builds_updated} 個 Builds')
                         
                         total_jobs_processed += 1
                         
@@ -1930,7 +2002,8 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
         logger.info(f'[Celery]   - 處理 Jobs: {total_jobs_processed} 個')
         logger.info(f'[Celery]   - 找到 Builds: {total_builds_found} 個')
         logger.info(f'[Celery]   - 創建 Builds: {builds_created} 個')
-        logger.info(f'[Celery]   - 跳過 Builds: {builds_skipped} 個（超過 {max_age_days} 天或已存在）')
+        logger.info(f'[Celery]   - 更新 Builds: {builds_updated} 個')  # 🆕 新增：顯示更新數量
+        logger.info(f'[Celery]   - 跳過 Builds: {builds_skipped} 個（超過 {max_age_days} 天）')
         logger.info(f'[Celery]   - 錯誤: {errors} 個')
         logger.info(f'[Celery]   - 執行時間: {duration:.1f} 秒')
         
@@ -1940,6 +2013,7 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
             'total_jobs': total_jobs_processed,
             'total_builds_found': total_builds_found,
             'builds_created': builds_created,
+            'builds_updated': builds_updated,  # 🆕 新增：返回更新數量
             'builds_skipped': builds_skipped,
             'errors': errors,
             'duration': duration,
@@ -1960,6 +2034,7 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                 'total_jobs': 0,
                 'total_builds_found': 0,
                 'builds_created': 0,
+                'builds_updated': 0,
                 'builds_skipped': 0,
                 'errors': 0,
                 'duration': duration,

@@ -126,12 +126,31 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     
     // UART 相關配置（根據 key 或 label 識別）
     const uartItems = configItems.filter(item => {
-        // 根據 key 識別（移除 UART_HOSTNAME，避免重複）
-        const uartKeys = ['uart_id', 'uart_host', 'UART_IP', 'ansible_user', 'ansible_password'];
+        // 根據 key 識別
+        const uartKeys = [
+            'uart_id', 
+            'uart_host', 
+            'UART_IP', 
+            'ansible_user', 
+            'ansible_password',
+            'uart_logger_lowpower_enabled',
+            'uart_logger_parser_hp_enabled',
+            'uart_logger_upload_dir'
+            // UART_HOSTNAME 已移除（與 uart_host 重複）
+        ];
         if (uartKeys.includes(item.key)) return true;
         
-        // 根據 label 識別（中文）
-        const uartLabels = ['UART ID', 'UART 主機', 'UART IP 地址', '使用者', '密碼'];
+        // 根據 label 識別（英文）
+        const uartLabels = [
+            'UART ID', 
+            'UART Host', 
+            'UART IP', 
+            'UART Logger Low Power',
+            'UART Logger Parser HP',
+            'UART Logger Upload Dir',
+            'User', 
+            'Password'
+        ];
         if (uartLabels.includes(item.label)) return true;
         
         return false;
@@ -151,7 +170,18 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     
     const ansibleItems = configItems.filter(item => {
         // 排除已在 UART 區塊顯示的欄位
-        const excludeKeys = ['ansible_host', 'ansible_user', 'ansible_password', 'uart_id', 'uart_host', 'UART_IP'];
+        const excludeKeys = [
+            'ansible_host', 
+            'ansible_user', 
+            'ansible_password', 
+            'uart_id', 
+            'uart_host', 
+            'UART_IP',
+            'uart_logger_lowpower_enabled',
+            'uart_logger_parser_hp_enabled',
+            'uart_logger_upload_dir'
+            // UART_HOSTNAME 已移除（與 uart_host 重複）
+        ];
         if (excludeKeys.includes(item.key)) return false;
         
         // 排除已在 JTAG 區塊顯示的欄位
@@ -168,7 +198,17 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
         if (basicKeys.includes(item.key)) return false;
         
         // 排除 UART 資訊
-        const uartKeys = ['uart_id', 'uart_host', 'UART_IP', 'ansible_user', 'ansible_password'];
+        const uartKeys = [
+            'uart_id', 
+            'uart_host', 
+            'UART_IP', 
+            'ansible_user', 
+            'ansible_password',
+            'uart_logger_lowpower_enabled',
+            'uart_logger_parser_hp_enabled',
+            'uart_logger_upload_dir'
+            // UART_HOSTNAME 已移除（與 uart_host 重複）
+        ];
         if (uartKeys.includes(item.key)) return false;
         
         // 排除 JTAG 資訊
@@ -303,8 +343,8 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
                                         <Text 
                                             copyable={item.value !== 'N/A'}
                                             style={{ 
-                                                color: item.label === '密碼' ? '#ff4d4f' : undefined,
-                                                fontFamily: item.label === '密碼' ? 'monospace' : undefined
+                                                color: item.label === 'Password' ? '#ff4d4f' : undefined,
+                                                fontFamily: item.label === 'Password' ? 'monospace' : undefined
                                             }}
                                         >
                                             {item.value}

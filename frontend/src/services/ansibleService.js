@@ -214,13 +214,16 @@ export const formatConfigForDisplay = (config) => {
         device_number: '設備號',
         sample_number: '樣品號',
         macaddress: 'MAC 地址',
-        // UART 連接資訊（獨立區塊）
+        // UART 連接資訊（獨立區塊）- 使用英文標籤
         uart_id: 'UART ID',
-        uart_host: 'UART 主機',
-        UART_IP: 'UART IP 地址',
-        // UART_HOSTNAME 已移除（與 uart_host 重複）
-        ansible_user: '使用者',
-        ansible_password: '密碼',
+        uart_host: 'UART Host',
+        UART_IP: 'UART IP',
+        // UART_HOSTNAME 已移除（與 uart_host 重複，顯示相同內容）
+        uart_logger_lowpower_enabled: 'UART Logger Low Power',
+        uart_logger_parser_hp_enabled: 'UART Logger Parser HP',
+        uart_logger_upload_dir: 'UART Logger Upload Dir',
+        ansible_user: 'User',
+        ansible_password: 'Password',
         // JTAG 配置（獨立區塊）
         enable_jtag_dump: '啟用 JTAG Dump',
         jtag_serial: 'JTAG 序列號',
