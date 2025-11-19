@@ -128,7 +128,7 @@ app.conf.beat_schedule = {
         },
         'options': {
             'expires': 540,    # 任務超時 9 分鐘
-            'queue': 'default',
+            # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
     
@@ -138,7 +138,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(minute=0),  # 每小時整點執行（00:00, 01:00, 02:00...）
         'options': {
             'expires': 3300,   # 任務超時 55 分鐘（避免與下次重疊）
-            'queue': 'default',
+            # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
     
@@ -151,7 +151,7 @@ app.conf.beat_schedule = {
         },
         'options': {
             'expires': 1500,   # 任務超時 25 分鐘（避免與下次重疊）
-            'queue': 'default',
+            # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
     
@@ -161,7 +161,7 @@ app.conf.beat_schedule = {
         'schedule': crontab(hour=3, minute=30),  # 每天 03:30 執行（DHCP 清理後 30 分鐘）
         'options': {
             'expires': 1800,   # 任務超時 30 分鐘
-            'queue': 'default',
+            # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
     
