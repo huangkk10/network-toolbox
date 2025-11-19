@@ -813,12 +813,13 @@ const RVTAnalysisPage = () => {
                         >
                             <Row gutter={12} align="middle">
                                 {/* Jenkins Server */}
-                                <Col flex="auto" style={{ maxWidth: 280 }}>
+                                <Col flex="auto" style={{ maxWidth: 400 }}>
                                     <Space size={4} style={{ width: '100%', flexWrap: 'nowrap' }}>
                                         <span style={{ fontSize: 13, color: '#666', whiteSpace: 'nowrap' }}>Server:</span>
                                         <Select
                                             placeholder="選擇 Server"
                                             style={{ flex: 1, minWidth: 0 }}
+                                            dropdownStyle={{ minWidth: 350 }}
                                             allowClear
                                             value={filters.server_id}
                                             onChange={(value) => {
