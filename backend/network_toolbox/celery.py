@@ -174,7 +174,7 @@ app.conf.beat_schedule = {
         },
         'options': {
             'expires': 3300,   # 任務超時 55 分鐘（避免與下次重疊）
-            'queue': 'default',
+            # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
 }
