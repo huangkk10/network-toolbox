@@ -198,6 +198,13 @@ const InventoryFileEditor = ({ inventoryId, onSaved }) => {
     const handleEditorDidMount = (editor, monaco) => {
         editorRef.current = editor;
         
+        // 自訂 INI 語言的註解符號（使用 ; 而不是 #）
+        monaco.languages.setLanguageConfiguration('ini', {
+            comments: {
+                lineComment: ';',  // 使用 ; 作為行註解
+            }
+        });
+        
         // 添加快捷鍵：Ctrl+S 儲存
         editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
             if (hasChanges) {
@@ -284,12 +291,16 @@ const InventoryFileEditor = ({ inventoryId, onSaved }) => {
                             lineNumbers: 'on',
                             scrollBeyondLastLine: false,
                             fontSize: 14,
-                            wordWrap: 'on',
+                            wordWrap: 'off',
                             automaticLayout: true,
                             tabSize: 2,
                             insertSpaces: true,
                             renderWhitespace: 'selection',
-                            bracketPairColorization: { enabled: true }
+                            bracketPairColorization: { enabled: true },
+                            scrollbar: {
+                                horizontal: 'visible',
+                                vertical: 'visible'
+                            }
                         }}
                     />
                 </div>
@@ -303,7 +314,7 @@ const InventoryFileEditor = ({ inventoryId, onSaved }) => {
                 justifyContent: 'space-between'
             }}>
                 <span>
-                    💡 提示：按 Ctrl+S 快速儲存，內容會自動儲存到本地草稿
+                    💡 提示：Ctrl+S 快速儲存 | Ctrl+/ 切換註解 (使用 ; 符號) | 內容會自動儲存到本地草稿
                 </span>
                 {hasChanges && (
                     <span style={{ color: '#faad14' }}>
