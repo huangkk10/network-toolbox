@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Progress, message, Spin } from 'antd';
+import { Card, Row, Col, Statistic, Progress, message, Spin, Select } from 'antd';
 import {
     HddOutlined,
     DatabaseOutlined,
@@ -18,11 +18,35 @@ import {
     Legend,
 } from 'recharts';
 
+const { Option } = Select;
+
 const SystemMonitorPage = () => {
     const [systemData, setSystemData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [historyData, setHistoryData] = useState([]);
     const [autoRefresh, setAutoRefresh] = useState(true);
+    const [timeRange, setTimeRange] = useState('1day'); // 新增：時間範圍狀態（1day, 3days, 1week）
+    const [historicalLoading, setHistoricalLoading] = useState(false);
+
+    // 獲取歷史數據（根據時間範圍）
+    const fetchHistoricalData = async (range = timeRange) => {
+        setHistoricalLoading(true);
+        try {
+            const response = await axios.get(`/api/system/history/?range=${range}`);
+            setHistoryData(response.data);
+        } catch (error) {
+            console.error('Error fetching historical data:', error);
+            message.error('獲取歷史數據失敗：' + error.message);
+        } finally {
+            setHistoricalLoading(false);
+        }
+    };
+
+    // 時間範圍改變處理
+    const handleTimeRangeChange = (value) => {
+        setTimeRange(value);
+        fetchHistoricalData(value);
+    };
 
     // 獲取系統狀態
     const fetchSystemStatus = async () => {
@@ -30,24 +54,6 @@ const SystemMonitorPage = () => {
         try {
             const response = await axios.get('/api/system/status/');
             setSystemData(response.data);
-
-            // 更新歷史數據（保留最近 20 筆）
-            const now = new Date();
-            const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-            
-            setHistoryData(prev => {
-                const newData = [
-                    ...prev,
-                    {
-                        time: timeStr,
-                        cpu: response.data.cpu.percent,
-                        ram: response.data.ram.percent,
-                        disk: response.data.disk.percent,
-                    }
-                ];
-                // 只保留最近 20 筆數據
-                return newData.slice(-20);
-            });
         } catch (error) {
             console.error('Error fetching system status:', error);
             message.error('獲取系統狀態失敗：' + error.message);
@@ -59,6 +65,7 @@ const SystemMonitorPage = () => {
     // 初始載入
     useEffect(() => {
         fetchSystemStatus();
+        fetchHistoricalData(); // 載入歷史數據
     }, []);
 
     // 自動刷新（每 5 秒）
@@ -66,10 +73,11 @@ const SystemMonitorPage = () => {
         if (autoRefresh) {
             const interval = setInterval(() => {
                 fetchSystemStatus();
+                fetchHistoricalData(); // 同時更新歷史數據
             }, 5000);
             return () => clearInterval(interval);
         }
-    }, [autoRefresh]);
+    }, [autoRefresh, timeRange]);
 
     // 根據使用率返回顏色
     const getStatusColor = (percent) => {
@@ -190,64 +198,89 @@ const SystemMonitorPage = () => {
             </Row>
 
             {/* 歷史趨勢圖 */}
-            {historyData.length > 0 && (
-                <Row gutter={[16, 16]}>
-                    <Col span={24}>
-                        <Card title="資源使用趨勢" extra={<span style={{ fontSize: '12px', color: '#666' }}>最近 {historyData.length} 筆數據</span>}>
-                            <ResponsiveContainer width="100%" height={400}>
-                                <AreaChart
-                                    data={historyData}
-                                    margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+            <Row gutter={[16, 16]}>
+                <Col span={24}>
+                    <Card 
+                        title="資源使用趨勢" 
+                        extra={
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span style={{ fontSize: '12px', color: '#666' }}>
+                                    顯示數據：{historyData.length} 筆
+                                </span>
+                                <Select
+                                    value={timeRange}
+                                    onChange={handleTimeRangeChange}
+                                    style={{ width: 120 }}
+                                    loading={historicalLoading}
                                 >
-                                    <defs>
-                                        <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#2196f3" stopOpacity={0.8} />
-                                            <stop offset="95%" stopColor="#2196f3" stopOpacity={0} />
-                                        </linearGradient>
-                                        <linearGradient id="colorRam" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#52c41a" stopOpacity={0.8} />
-                                            <stop offset="95%" stopColor="#52c41a" stopOpacity={0} />
-                                        </linearGradient>
-                                        <linearGradient id="colorDisk" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#faad14" stopOpacity={0.8} />
-                                            <stop offset="95%" stopColor="#faad14" stopOpacity={0} />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="time" />
-                                    <YAxis domain={[0, 100]} />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="cpu"
-                                        stroke="#2196f3"
-                                        fillOpacity={1}
-                                        fill="url(#colorCpu)"
-                                        name="CPU (%)"
-                                    />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="ram"
-                                        stroke="#52c41a"
-                                        fillOpacity={1}
-                                        fill="url(#colorRam)"
-                                        name="RAM (%)"
-                                    />
-                                    <Area
-                                        type="monotone"
-                                        dataKey="disk"
-                                        stroke="#faad14"
-                                        fillOpacity={1}
-                                        fill="url(#colorDisk)"
-                                        name="磁碟 (%)"
-                                    />
-                                </AreaChart>
-                            </ResponsiveContainer>
-                        </Card>
-                    </Col>
-                </Row>
-            )}
+                                    <Option value="1day">近 1 日</Option>
+                                    <Option value="3days">近 3 日</Option>
+                                    <Option value="1week">近 1 週</Option>
+                                </Select>
+                            </div>
+                        }
+                    >
+                        <Spin spinning={historicalLoading}>
+                            {historyData.length > 0 ? (
+                                <ResponsiveContainer width="100%" height={400}>
+                                    <AreaChart
+                                        data={historyData}
+                                        margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                                    >
+                                        <defs>
+                                            <linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#2196f3" stopOpacity={0.8} />
+                                                <stop offset="95%" stopColor="#2196f3" stopOpacity={0} />
+                                            </linearGradient>
+                                            <linearGradient id="colorRam" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#52c41a" stopOpacity={0.8} />
+                                                <stop offset="95%" stopColor="#52c41a" stopOpacity={0} />
+                                            </linearGradient>
+                                            <linearGradient id="colorDisk" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#faad14" stopOpacity={0.8} />
+                                                <stop offset="95%" stopColor="#faad14" stopOpacity={0} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" />
+                                        <XAxis dataKey="time" />
+                                        <YAxis domain={[0, 100]} />
+                                        <Tooltip />
+                                        <Legend />
+                                        <Area
+                                            type="monotone"
+                                            dataKey="cpu"
+                                            stroke="#2196f3"
+                                            fillOpacity={1}
+                                            fill="url(#colorCpu)"
+                                            name="CPU (%)"
+                                        />
+                                        <Area
+                                            type="monotone"
+                                            dataKey="ram"
+                                            stroke="#52c41a"
+                                            fillOpacity={1}
+                                            fill="url(#colorRam)"
+                                            name="RAM (%)"
+                                        />
+                                        <Area
+                                            type="monotone"
+                                            dataKey="disk"
+                                            stroke="#faad14"
+                                            fillOpacity={1}
+                                            fill="url(#colorDisk)"
+                                            name="磁碟 (%)"
+                                        />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div style={{ textAlign: 'center', padding: '60px 0', color: '#999' }}>
+                                    暫無歷史數據
+                                </div>
+                            )}
+                        </Spin>
+                    </Card>
+                </Col>
+            </Row>
         </div>
     );
 };

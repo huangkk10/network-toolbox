@@ -1193,3 +1193,38 @@ class InventoryEditLog(models.Model):
     
     def __str__(self):
         return f"{self.action} by {self.created_by} at {self.created_at}"
+
+
+class SystemMonitorHistory(models.Model):
+    """系統監控歷史數據模型"""
+    
+    # 時間戳記（允許手動設置時間，用於生成歷史數據）
+    timestamp = models.DateTimeField(db_index=True, verbose_name='時間戳記')
+    
+    # CPU 資訊
+    cpu_percent = models.FloatField(verbose_name='CPU 使用率 (%)')
+    cpu_count = models.IntegerField(verbose_name='CPU 核心數')
+    
+    # RAM 資訊
+    ram_percent = models.FloatField(verbose_name='記憶體使用率 (%)')
+    ram_total_gb = models.FloatField(verbose_name='總記憶體 (GB)')
+    ram_used_gb = models.FloatField(verbose_name='已使用記憶體 (GB)')
+    ram_available_gb = models.FloatField(verbose_name='可用記憶體 (GB)')
+    
+    # 磁碟資訊
+    disk_percent = models.FloatField(verbose_name='磁碟使用率 (%)')
+    disk_total_gb = models.FloatField(verbose_name='總磁碟空間 (GB)')
+    disk_used_gb = models.FloatField(verbose_name='已使用磁碟空間 (GB)')
+    disk_free_gb = models.FloatField(verbose_name='可用磁碟空間 (GB)')
+    
+    class Meta:
+        db_table = 'system_monitor_history'
+        verbose_name = '系統監控歷史'
+        verbose_name_plural = '系統監控歷史'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp']),
+        ]
+    
+    def __str__(self):
+        return f"系統監控 @ {self.timestamp}"

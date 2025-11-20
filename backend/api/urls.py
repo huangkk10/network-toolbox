@@ -55,6 +55,7 @@ urlpatterns = [
     
     # 系統監控 API
     path('system/status/', views.system_status, name='system_status'),
+    path('system/history/', views.system_history, name='system_history'),
     
     path('', include(router.urls)),
 ]

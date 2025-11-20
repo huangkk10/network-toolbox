@@ -66,6 +66,7 @@ from .ansible_inventory import AnsibleInventoryViewSet
 from .system import (
     dashboard_stats,
     system_status,
+    system_history,
 )
 
 # 明確導出所有公開的 API
@@ -123,4 +124,5 @@ __all__ = [
     # System
     'dashboard_stats',
     'system_status',
+    'system_history',
 ]
