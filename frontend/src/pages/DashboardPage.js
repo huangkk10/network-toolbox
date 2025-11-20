@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Button, Alert, Table, Tag, Space, Progress, message } from 'antd';
+import { Card, Row, Col, Statistic, Button, Alert, Table, Tag, Space, Progress, message, List, Avatar } from 'antd';
 import {
     DatabaseOutlined,
     CheckCircleOutlined,
@@ -8,9 +8,13 @@ import {
     CloseCircleOutlined,
     CloudUploadOutlined,
     CloudDownloadOutlined,
+    UserOutlined,
+    ApiOutlined,
+    TeamOutlined,
+    GlobalOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import './DashboardPage.css';
 
 const DashboardPage = () => {
@@ -32,6 +36,20 @@ const DashboardPage = () => {
         avgDownloadSpeed: 0,
         successRate: 0,
     });
+    // ✨ 網站使用統計狀態
+    const [websiteUsage, setWebsiteUsage] = useState({
+        today: {
+            total_page_views: 0,
+            unique_visitors: 0,
+            total_api_requests: 0,
+            error_count: 0,
+        },
+        trend: [],
+        page_distribution: {},
+        feature_usage: {},
+        top_pages: {},
+        top_api_endpoints: {},
+    });
 
     // 獲取 Dashboard 統計數據
     const fetchDashboardStats = async () => {
@@ -46,6 +64,11 @@ const DashboardPage = () => {
                 activeLeases: response.data.active_leases,
                 avgPoolUsage: response.data.avg_pool_usage,
             });
+            
+            // ✨ 設置網站使用統計數據
+            if (response.data.website_usage) {
+                setWebsiteUsage(response.data.website_usage);
+            }
         } catch (error) {
             console.error('獲取 Dashboard 統計失敗:', error);
             message.error('載入統計數據失敗：' + (error.response?.data?.error || error.message));
@@ -330,6 +353,166 @@ const DashboardPage = () => {
                     </Card>
                 </Col>
             </Row>
+
+            {/* ✨ 網站使用統計 */}
+            <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+                {/* 今日頁面瀏覽 */}
+                <Col xs={24} sm={8} md={6}>
+                    <Card>
+                        <Statistic
+                            title="今日頁面瀏覽"
+                            value={websiteUsage.today.total_page_views}
+                            prefix={<GlobalOutlined />}
+                            valueStyle={{ color: '#2196f3' }}
+                            suffix="次"
+                        />
+                        <div className="stat-footer">
+                            <UserOutlined style={{ color: '#2196f3' }} /> {websiteUsage.today.unique_visitors} 位訪客
+                        </div>
+                    </Card>
+                </Col>
+
+                {/* 今日API請求 */}
+                <Col xs={24} sm={8} md={6}>
+                    <Card>
+                        <Statistic
+                            title="今日 API 請求"
+                            value={websiteUsage.today.total_api_requests}
+                            prefix={<ApiOutlined />}
+                            valueStyle={{ color: '#673ab7' }}
+                            suffix="次"
+                        />
+                        <div className="stat-footer">
+                            <CheckCircleOutlined style={{ color: '#52c41a' }} /> 服務正常
+                        </div>
+                    </Card>
+                </Col>
+
+                {/* 唯一訪客數 */}
+                <Col xs={24} sm={8} md={6}>
+                    <Card>
+                        <Statistic
+                            title="唯一訪客數"
+                            value={websiteUsage.today.unique_visitors}
+                            prefix={<TeamOutlined />}
+                            valueStyle={{ color: '#ff9800' }}
+                            suffix="人"
+                        />
+                        <div className="stat-footer">
+                            <TeamOutlined style={{ color: '#ff9800' }} /> 今日訪客
+                        </div>
+                    </Card>
+                </Col>
+
+                {/* 錯誤次數 */}
+                <Col xs={24} sm={8} md={6}>
+                    <Card>
+                        <Statistic
+                            title="今日錯誤"
+                            value={websiteUsage.today.error_count}
+                            prefix={<WarningOutlined />}
+                            valueStyle={{ 
+                                color: websiteUsage.today.error_count > 50 ? '#f44336' : 
+                                       websiteUsage.today.error_count > 20 ? '#ff9800' : '#52c41a'
+                            }}
+                            suffix="次"
+                        />
+                        <div className="stat-footer">
+                            {websiteUsage.today.error_count > 50 ? (
+                                <WarningOutlined style={{ color: '#f44336' }} />
+                            ) : (
+                                <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                            )} 系統狀態
+                        </div>
+                    </Card>
+                </Col>
+            </Row>
+
+            {/* 過去7天頁面瀏覽趨勢 */}
+            {websiteUsage.trend && websiteUsage.trend.length > 0 && (
+                <Card
+                    title="📈 過去 7 天頁面瀏覽趨勢"
+                    style={{ marginTop: 16 }}
+                >
+                    <ResponsiveContainer width="100%" height={300}>
+                        <LineChart data={websiteUsage.trend}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis
+                                dataKey="date"
+                                tick={{ fontSize: 12 }}
+                            />
+                            <YAxis
+                                tick={{ fontSize: 12 }}
+                                label={{ value: '瀏覽次數', angle: -90, position: 'insideLeft' }}
+                            />
+                            <Tooltip
+                                contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
+                                formatter={(value) => [`${value} 次`, '頁面瀏覽']}
+                            />
+                            <Legend />
+                            <Line
+                                type="monotone"
+                                dataKey="page_views"
+                                stroke="#2196f3"
+                                strokeWidth={3}
+                                dot={{ fill: '#2196f3', r: 5 }}
+                                activeDot={{ r: 7 }}
+                                name="頁面瀏覽次數"
+                            />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </Card>
+            )}
+
+            {/* 功能使用統計 */}
+            {websiteUsage.feature_usage && Object.keys(websiteUsage.feature_usage).length > 0 && (
+                <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+                    <Col xs={24} sm={12} md={6}>
+                        <Card>
+                            <Statistic
+                                title="DHCP 同步"
+                                value={websiteUsage.feature_usage.dhcp_sync || 0}
+                                prefix={<DatabaseOutlined />}
+                                valueStyle={{ color: '#2196f3' }}
+                                suffix="次"
+                            />
+                        </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                        <Card>
+                            <Statistic
+                                title="iPXE 操作"
+                                value={websiteUsage.feature_usage.ipxe_operations || 0}
+                                prefix={<CloudUploadOutlined />}
+                                valueStyle={{ color: '#673ab7' }}
+                                suffix="次"
+                            />
+                        </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                        <Card>
+                            <Statistic
+                                title="Jenkins Build"
+                                value={websiteUsage.feature_usage.jenkins_builds || 0}
+                                prefix={<CheckCircleOutlined />}
+                                valueStyle={{ color: '#ff9800' }}
+                                suffix="次"
+                            />
+                        </Card>
+                    </Col>
+                    <Col xs={24} sm={12} md={6}>
+                        <Card>
+                            <Statistic
+                                title="Ansible 執行"
+                                value={websiteUsage.feature_usage.ansible_executions || 0}
+                                prefix={<ApiOutlined />}
+                                valueStyle={{ color: '#52c41a' }}
+                                suffix="次"
+                            />
+                        </Card>
+                    </Col>
+                </Row>
+            )}
 
             {/* DHCP Server 狀態一覽 */}
             <Card

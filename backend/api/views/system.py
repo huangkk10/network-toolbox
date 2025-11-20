@@ -8,13 +8,14 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
-from django.db.models import Avg
+from django.db.models import Avg, Sum, Count
+from django.db import models
 from datetime import timedelta
 import psutil
 import shutil
 import logging
 
-from ..models import DHCPServer, DHCPLease, SystemMonitorHistory
+from ..models import DHCPServer, DHCPLease, SystemMonitorHistory, WebsiteUsageStats
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,51 @@ def dashboard_stats(request):
             total_usage = sum(server.pool_usage for server in servers)
             avg_pool_usage = total_usage / total_servers
         
-        logger.info(f'儀表板統計查詢成功: servers={total_servers}, leases={total_leases}')
+        # ✨ 網站使用統計（今日）
+        today = timezone.now().date()
+        today_stats = WebsiteUsageStats.objects.filter(date=today).first()
+        
+        # 如果今天沒有統計記錄，創建一個空的
+        if not today_stats:
+            today_stats = WebsiteUsageStats.objects.create(date=today)
+        
+        # 過去7天的使用趨勢
+        seven_days_ago = today - timedelta(days=7)
+        recent_stats = WebsiteUsageStats.objects.filter(
+            date__gte=seven_days_ago
+        ).order_by('date')
+        
+        usage_trend = [
+            {
+                'date': str(stat.date),
+                'page_views': stat.total_page_views,
+                'api_requests': stat.total_api_requests,
+                'unique_visitors': stat.unique_visitors,
+            }
+            for stat in recent_stats
+        ]
+        
+        # 頁面訪問分佈
+        page_distribution = {
+            'dashboard': today_stats.dashboard_visits,
+            'dhcp': today_stats.dhcp_page_visits,
+            'ipxe': today_stats.ipxe_page_visits,
+            'jenkins': today_stats.jenkins_page_visits,
+            'ansible': today_stats.ansible_page_visits,
+        } if today_stats else {}
+        
+        # 功能使用統計
+        feature_usage = {
+            'dhcp_sync': today_stats.dhcp_sync_count,
+            'ipxe_operations': today_stats.ipxe_operations,
+            'jenkins_builds': today_stats.jenkins_builds,
+            'ansible_executions': today_stats.ansible_executions,
+        } if today_stats else {}
+        
+        logger.info(f'儀表板統計查詢成功: servers={total_servers}, leases={total_leases}, page_views={today_stats.total_page_views if today_stats else 0}')
         
         return Response({
+            # DHCP 統計
             'total_servers': total_servers,
             'online_servers': online_servers,
             'warning_servers': warning_servers,
@@ -52,6 +95,35 @@ def dashboard_stats(request):
             'total_leases': total_leases,
             'active_leases': active_leases,
             'avg_pool_usage': round(avg_pool_usage, 2),
+            
+            # ✨ 網站使用統計
+            'website_usage': {
+                # 今日統計
+                'today': {
+                    'total_page_views': today_stats.total_page_views if today_stats else 0,
+                    'unique_visitors': today_stats.unique_visitors if today_stats else 0,
+                    'total_api_requests': today_stats.total_api_requests if today_stats else 0,
+                    'error_count': today_stats.error_count if today_stats else 0,
+                },
+                # 過去7天趨勢
+                'trend': usage_trend,
+                # 頁面訪問分佈
+                'page_distribution': page_distribution,
+                # 功能使用統計
+                'feature_usage': feature_usage,
+                # 熱門頁面（前5名）
+                'top_pages': dict(sorted(
+                    (today_stats.top_pages if today_stats else {}).items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:5]) if today_stats else {},
+                # 熱門 API 端點（前5名）
+                'top_api_endpoints': dict(sorted(
+                    (today_stats.top_api_endpoints if today_stats else {}).items(),
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:5]) if today_stats else {},
+            }
         })
         
     except Exception as e:

@@ -1228,3 +1228,66 @@ class SystemMonitorHistory(models.Model):
     
     def __str__(self):
         return f"系統監控 @ {self.timestamp}"
+
+
+class WebsiteUsageStats(models.Model):
+    """
+    網站使用統計模型
+    記錄整個網站的總體使用次數和活動資訊（按日統計）
+    """
+    
+    # 統計日期（按日統計）
+    date = models.DateField(unique=True, db_index=True, verbose_name='統計日期')
+    
+    # 總體訪問統計
+    total_page_views = models.IntegerField(default=0, verbose_name='總頁面瀏覽次數')
+    unique_visitors = models.IntegerField(default=0, verbose_name='唯一訪客數')
+    
+    # API 請求統計
+    total_api_requests = models.IntegerField(default=0, verbose_name='API 總請求次數')
+    get_requests = models.IntegerField(default=0, verbose_name='GET 請求次數')
+    post_requests = models.IntegerField(default=0, verbose_name='POST 請求次數')
+    put_requests = models.IntegerField(default=0, verbose_name='PUT 請求次數')
+    delete_requests = models.IntegerField(default=0, verbose_name='DELETE 請求次數')
+    
+    # 頁面訪問統計
+    dashboard_visits = models.IntegerField(default=0, verbose_name='Dashboard 訪問次數')
+    dhcp_page_visits = models.IntegerField(default=0, verbose_name='DHCP 頁面訪問次數')
+    ipxe_page_visits = models.IntegerField(default=0, verbose_name='iPXE 頁面訪問次數')
+    jenkins_page_visits = models.IntegerField(default=0, verbose_name='Jenkins 頁面訪問次數')
+    ansible_page_visits = models.IntegerField(default=0, verbose_name='Ansible 頁面訪問次數')
+    
+    # 功能使用統計
+    dhcp_sync_count = models.IntegerField(default=0, verbose_name='DHCP 同步次數')
+    ipxe_operations = models.IntegerField(default=0, verbose_name='iPXE 操作次數')
+    jenkins_builds = models.IntegerField(default=0, verbose_name='Jenkins Build 觸發次數')
+    ansible_executions = models.IntegerField(default=0, verbose_name='Ansible 執行次數')
+    
+    # 錯誤統計
+    error_count = models.IntegerField(default=0, verbose_name='錯誤次數')
+    error_4xx = models.IntegerField(default=0, verbose_name='4xx 錯誤次數')
+    error_5xx = models.IntegerField(default=0, verbose_name='5xx 錯誤次數')
+    
+    # 熱門訪問路徑（JSON 格式，記錄前10個）
+    top_pages = models.JSONField(default=dict, verbose_name='熱門頁面統計')
+    top_api_endpoints = models.JSONField(default=dict, verbose_name='熱門 API 端點統計')
+    
+    # 使用者統計（記錄前5名最活躍使用者）
+    top_users = models.JSONField(default=list, verbose_name='最活躍使用者')
+    
+    # 時間戳記
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='建立時間')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新時間')
+    
+    class Meta:
+        db_table = 'website_usage_stats'
+        verbose_name = '網站使用統計'
+        verbose_name_plural = '網站使用統計'
+        ordering = ['-date']
+        indexes = [
+            models.Index(fields=['-date']),
+            models.Index(fields=['-total_page_views']),
+        ]
+    
+    def __str__(self):
+        return f"網站使用統計 @ {self.date} - 訪問: {self.total_page_views}, API: {self.total_api_requests}"
