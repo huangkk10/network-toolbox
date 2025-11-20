@@ -1788,6 +1788,15 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
         builds_skipped = 0
         errors = 0
         
+        # ✅ V2 優化統計：添加詳細計數器
+        total_builds_checked = 0      # 從 API 獲取的總 Build 數
+        total_builds_filtered = 0     # 智能過濾掉的 Build 數
+        total_api_calls = 0           # Jenkins API 調用次數
+        total_jobs_skipped = 0        # 跳過的穩定 Jobs 數
+        
+        # ✅ V2 優化：收集需要批量更新的 Jobs
+        jobs_to_update = []
+        
         logger.info(f'[Celery] 📡 找到 {total_servers} 個在線的 Jenkins Server')
         
         for server in servers:
@@ -1813,11 +1822,33 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                 # 處理每個 Job
                 for job in jobs:
                     try:
-                        # 🆕 先查詢該 Job 在資料庫中已有的 Builds
+                        # ✅ V2 優化：追蹤 Job 是否需要更新
+                        job_needs_update = False
+                        
+                        # ✅ 優化：只查詢最近的 Builds + 只加載需要的字段
                         existing_builds = {
                             b.build_number: b
                             for b in JenkinsBuild.objects.filter(job=job)
+                                .only(
+                                    'id', 'build_number', 'result', 'is_building', 
+                                    'duration', 'failed_stage', 'pipeline_stages', 'updated_at'
+                                )
+                                .order_by('-build_number')[:max_builds_per_job]
                         }
+                        
+                        # ✅ V2 優化 4：跳過穩定的 Jobs（無活躍 Builds 且 24 小時未更新）
+                        has_active_builds = any(
+                            b.is_building or b.result in ['UNKNOWN', None] 
+                            for b in existing_builds.values()
+                        )
+                        
+                        stable_time = dj_timezone.now() - timedelta(hours=24)
+                        
+                        if not has_active_builds and job.last_build_time and job.last_build_time < stable_time:
+                            # Job 穩定且無活躍 Builds，跳過 API 調用
+                            total_jobs_skipped += 1
+                            logger.debug(f'[Celery]     ⏭️  跳過穩定 Job: {job.name} (最後構建: {job.last_build_time})')
+                            continue
                         
                         # 從 Jenkins API 獲取 Builds
                         jenkins_builds = client.get_job_builds(
@@ -1825,23 +1856,48 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                             limit=max_builds_per_job
                         )
                         
+                        # ✅ V2 統計：記錄 API 調用
+                        total_api_calls += 1
+                        
                         if not jenkins_builds:
                             continue
                         
                         total_builds_found += len(jenkins_builds)
+                        total_builds_checked += len(jenkins_builds)  # ✅ V2 統計：記錄檢查數
                         
-                        # 🆕 分離新 Builds 和可能需要更新的 Builds
+                        # ✅ V2 優化：縮短智能過濾時間窗口（1小時 → 15分鐘）
+                        # Jenkins Build 通常在幾分鐘內完成，1 小時窗口過大
+                        recent_time = dj_timezone.now() - timedelta(minutes=15)
+                        
                         new_builds = []
                         builds_to_check = []
                         
                         for b in jenkins_builds:
                             build_num = b.get('number')
                             if build_num in existing_builds:
-                                builds_to_check.append((b, existing_builds[build_num]))
+                                db_build = existing_builds[build_num]
+                                
+                                # 只檢查活躍的 Builds：
+                                # 1. 正在構建的（is_building=True）
+                                # 2. 最近 15 分鐘內更新的（縮短窗口）
+                                # 3. 狀態未確定的（UNKNOWN/None）
+                                if (db_build.is_building or 
+                                    db_build.updated_at >= recent_time or 
+                                    db_build.result in ['UNKNOWN', None]):
+                                    builds_to_check.append((b, db_build))
+                                else:
+                                    # ✅ V2 統計：記錄被過濾掉的 Build
+                                    total_builds_filtered += 1
                             else:
                                 new_builds.append(b)
                         
-                        logger.info(f'[Celery]     📊 Job {job.name}: {len(new_builds)} 個新 Builds, {len(builds_to_check)} 個需檢查')
+                        logger.info(
+                            f'[Celery]     📊 Job {job.name}: '
+                            f'{len(new_builds)} 個新 Builds, '
+                            f'{len(builds_to_check)} 個需檢查, '
+                            f'{total_builds_filtered} 個已過濾'
+                        )
+
                         
                         # 處理每個 Build（新建或更新）
                         # 處理新 Builds（創建）
@@ -1876,43 +1932,56 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                 builds_created += 1
                                 logger.debug(f'[Celery]     ✅ 創建 Build: {job.name} #{build_number} ({result})')
                                 
-                                # 🆕 更新 Job 的 last_build_time（如果這個 Build 更新）
+                                # ✅ V2 優化：標記 Job 需要更新（不立即 save）
                                 if not job.last_build_time or build_timestamp > job.last_build_time:
                                     job.last_build_time = build_timestamp
                                     job.last_build_number = build_number
                                     job.last_build_status = result or 'UNKNOWN'
-                                    job.save(update_fields=['last_build_time', 'last_build_number', 'last_build_status'])
-                                    logger.debug(f'[Celery]     🔄 更新 Job last_build_time: {build_timestamp}')
+                                    job_needs_update = True
+                                    logger.debug(f'[Celery]     🔄 標記 Job 需要更新 last_build_time: {build_timestamp}')
                                 
-                                # 🆕 同步 Pipeline Stages（如果是 FAILURE 狀態）
+                                # ✅ 優化：同步 Pipeline Stages（如果是 FAILURE 狀態，使用緩存）
                                 if result == 'FAILURE':
-                                    try:
-                                        # 獲取 Pipeline Stages
-                                        failed_stages = client.get_failed_stages(job.name, build_number)
-                                        if failed_stages:
-                                            # 儲存 failed stages（Django JSONField 會自動處理）
-                                            build.pipeline_stages = failed_stages
-                                            
-                                            # 提取第一個失敗 Stage 的名稱
-                                            first_failed = failed_stages[0]
-                                            build.failed_stage = (
-                                                first_failed.get('stage_name') or 
-                                                first_failed.get('displayName') or 
-                                                first_failed.get('name')
-                                            )
-                                            
-                                            logger.info(f'[Celery]     🎯 發現失敗 Stage: {build.failed_stage}')
-                                            build.save(update_fields=['pipeline_stages', 'failed_stage'])
-                                            logger.info(f'[Celery]     ✅ 已儲存 Failed Stage: {build.failed_stage}')
-                                    except Exception as e:
-                                        logger.error(f'[Celery]     ❌ 無法獲取 Pipeline Stages: {e}', exc_info=True)
+                                    from django.core.cache import cache
+                                    
+                                    cache_key = f'failed_stages:{job.id}:{build_number}'
+                                    failed_stages = cache.get(cache_key)
+                                    
+                                    if not failed_stages:
+                                        try:
+                                            # 獲取 Pipeline Stages
+                                            failed_stages = client.get_failed_stages(job.name, build_number)
+                                            if failed_stages:
+                                                # 緩存 24 小時
+                                                cache.set(cache_key, failed_stages, timeout=86400)
+                                        except Exception as e:
+                                            logger.error(f'[Celery]     ❌ 無法獲取 Pipeline Stages: {e}', exc_info=True)
+                                    
+                                    if failed_stages:
+                                        # 儲存 failed stages（Django JSONField 會自動處理）
+                                        build.pipeline_stages = failed_stages
+                                        
+                                        # 提取第一個失敗 Stage 的名稱
+                                        first_failed = failed_stages[0]
+                                        build.failed_stage = (
+                                            first_failed.get('stage_name') or 
+                                            first_failed.get('displayName') or 
+                                            first_failed.get('name')
+                                        )
+                                        
+                                        logger.info(f'[Celery]     🎯 發現失敗 Stage: {build.failed_stage}')
+                                        build.save(update_fields=['pipeline_stages', 'failed_stage'])
+                                        logger.info(f'[Celery]     ✅ 已儲存 Failed Stage: {build.failed_stage}')
+
                                 
                             except Exception as e:
                                 errors += 1
                                 logger.error(f'[Celery]     ❌ 處理新 Build 失敗: {job.name} #{build_data.get("number")} - {e}')
                         
-                        # 🔄 檢查並更新現有 Builds
+                        # ✅ 優化：批量更新現有 Builds
+                        builds_to_update = []  # 收集需要更新的 Builds
                         job_builds_updated = 0
+                        
                         for build_data, existing_build in builds_to_check:
                             try:
                                 build_number = build_data.get('number')
@@ -1922,64 +1991,84 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                 
                                 # 檢查是否需要更新
                                 needs_update = False
-                                updated_fields = []
                                 
                                 # 1. 檢查 result 是否變化（RUNNING → SUCCESS/FAILURE）
                                 if result and result != existing_build.result:
                                     existing_build.result = result
-                                    updated_fields.append('result')
                                     needs_update = True
-                                    logger.info(f'[Celery]     🔄 Build {job.name} #{build_number} 狀態變化: {existing_build.result} → {result}')
+                                    logger.debug(f'[Celery]     🔄 Build {job.name} #{build_number} 狀態變化: {existing_build.result} → {result}')
                                 
                                 # 2. 檢查 is_building 狀態（正在構建 → 已完成）
                                 if existing_build.is_building and not building:
                                     existing_build.is_building = False
-                                    updated_fields.append('is_building')
                                     needs_update = True
-                                    logger.info(f'[Celery]     ⏹️  Build {job.name} #{build_number} 構建完成')
+                                    logger.debug(f'[Celery]     ⏹️  Build {job.name} #{build_number} 構建完成')
                                 
                                 # 3. 檢查 duration（從 0 變為實際值）
                                 if duration > 0 and existing_build.duration != duration:
                                     existing_build.duration = duration
-                                    updated_fields.append('duration')
                                     needs_update = True
                                 
-                                # 4. 如果狀態變為 FAILURE，同步 failed_stage
+                                # 4. ✅ 優化：如果狀態變為 FAILURE，同步 failed_stage（使用緩存）
                                 if result == 'FAILURE' and not existing_build.failed_stage:
-                                    try:
-                                        failed_stages = client.get_failed_stages(job.name, build_number)
-                                        if failed_stages:
-                                            existing_build.pipeline_stages = failed_stages
-                                            first_failed = failed_stages[0]
-                                            existing_build.failed_stage = (
-                                                first_failed.get('stage_name') or 
-                                                first_failed.get('displayName') or 
-                                                first_failed.get('name')
-                                            )
-                                            updated_fields.extend(['pipeline_stages', 'failed_stage'])
-                                            needs_update = True
-                                            logger.info(f'[Celery]     🎯 更新失敗 Stage: {existing_build.failed_stage}')
-                                    except Exception as e:
-                                        logger.error(f'[Celery]     ❌ 無法獲取 Pipeline Stages: {e}')
-                                
-                                # 執行更新
-                                if needs_update:
-                                    existing_build.save(update_fields=updated_fields)
-                                    job_builds_updated += 1
-                                    builds_updated += 1  # 🆕 累加到全局計數器
-                                    logger.info(f'[Celery]     ✅ 更新 Build: {job.name} #{build_number} (欄位: {", ".join(updated_fields)})')
+                                    from django.core.cache import cache
                                     
-                                    # 更新 Job 的最後 Build 資訊
+                                    cache_key = f'failed_stages:{job.id}:{build_number}'
+                                    failed_stages = cache.get(cache_key)
+                                    
+                                    if not failed_stages:
+                                        try:
+                                            failed_stages = client.get_failed_stages(job.name, build_number)
+                                            if failed_stages:
+                                                # 緩存 24 小時
+                                                cache.set(cache_key, failed_stages, timeout=86400)
+                                        except Exception as e:
+                                            logger.error(f'[Celery]     ❌ 無法獲取 Pipeline Stages: {e}')
+                                    
+                                    if failed_stages:
+                                        existing_build.pipeline_stages = failed_stages
+                                        first_failed = failed_stages[0]
+                                        existing_build.failed_stage = (
+                                            first_failed.get('stage_name') or 
+                                            first_failed.get('displayName') or 
+                                            first_failed.get('name')
+                                        )
+                                        needs_update = True
+                                        logger.debug(f'[Celery]     🎯 更新失敗 Stage: {existing_build.failed_stage}')
+
+                                
+                                # 收集需要更新的 Build
+                                if needs_update:
+                                    builds_to_update.append(existing_build)
+                                    job_builds_updated += 1
+                                    
+                                    # ✅ V2 優化：標記 Job 需要更新（不立即 save）
                                     if result and (not job.last_build_number or build_number >= job.last_build_number):
                                         job.last_build_status = result
-                                        job.save(update_fields=['last_build_status'])
+                                        job_needs_update = True
                                 
                             except Exception as e:
                                 errors += 1
-                                logger.error(f'[Celery]     ❌ 更新 Build 失敗: {job.name} #{build_number} - {e}')
+                                logger.error(f'[Celery]     ❌ 處理 Build 更新失敗: {job.name} #{build_number} - {e}')
                         
-                        if job_builds_updated > 0:
-                            logger.info(f'[Celery]     🔄 Job {job.name} 更新了 {job_builds_updated} 個 Builds')
+                        # ✅ 批量更新 Builds
+                        if builds_to_update:
+                            try:
+                                JenkinsBuild.objects.bulk_update(
+                                    builds_to_update,
+                                    ['result', 'is_building', 'duration', 'failed_stage', 'pipeline_stages'],
+                                    batch_size=100
+                                )
+                                builds_updated += len(builds_to_update)
+                                logger.info(f'[Celery]     ✅ 批量更新 {len(builds_to_update)} 個 Builds')
+                            except Exception as e:
+                                errors += 1
+                                logger.error(f'[Celery]     ❌ 批量更新 Builds 失敗: {job.name} - {e}')
+
+                        
+                        # ✅ V2 優化：收集需要更新的 Job
+                        if job_needs_update:
+                            jobs_to_update.append(job)
                         
                         total_jobs_processed += 1
                         
@@ -1994,16 +2083,38 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                 if client:
                     client.close()
         
+        # ✅ V2 優化：批量更新所有 Jobs
+        if jobs_to_update:
+            try:
+                JenkinsJob.objects.bulk_update(
+                    jobs_to_update,
+                    ['last_build_time', 'last_build_number', 'last_build_status'],
+                    batch_size=100
+                )
+                logger.info(f'[Celery] 📊 批量更新 {len(jobs_to_update)} 個 Jobs')
+            except Exception as e:
+                errors += 1
+                logger.error(f'[Celery] ❌ 批量更新 Jobs 失敗: {e}')
+        
         duration = time.time() - start_time
+        
+        # ✅ V2 優化：計算過濾效率
+        filter_rate = (total_builds_filtered / total_builds_checked * 100) if total_builds_checked > 0 else 0
         
         # 記錄結果
         logger.info('[Celery] ✅ Jenkins Builds 同步完成')
         logger.info(f'[Celery]   - 處理 Servers: {total_servers} 個')
         logger.info(f'[Celery]   - 處理 Jobs: {total_jobs_processed} 個')
+        logger.info(f'[Celery]   - 跳過穩定 Jobs: {total_jobs_skipped} 個')
         logger.info(f'[Celery]   - 找到 Builds: {total_builds_found} 個')
         logger.info(f'[Celery]   - 創建 Builds: {builds_created} 個')
-        logger.info(f'[Celery]   - 更新 Builds: {builds_updated} 個')  # 🆕 新增：顯示更新數量
+        logger.info(f'[Celery]   - 更新 Builds: {builds_updated} 個')
         logger.info(f'[Celery]   - 跳過 Builds: {builds_skipped} 個（超過 {max_age_days} 天）')
+        logger.info(f'[Celery]   📈 V2 統計:')
+        logger.info(f'[Celery]      - 總檢查數: {total_builds_checked} 個 Builds')
+        logger.info(f'[Celery]      - 智能過濾: {total_builds_filtered} 個 ({filter_rate:.1f}%)')
+        logger.info(f'[Celery]      - API 調用: {total_api_calls} 次')
+        logger.info(f'[Celery]      - 批量更新: {len(jobs_to_update)} 個 Jobs')
         logger.info(f'[Celery]   - 錯誤: {errors} 個')
         logger.info(f'[Celery]   - 執行時間: {duration:.1f} 秒')
         
@@ -2011,10 +2122,15 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
             'success': True,
             'total_servers': total_servers,
             'total_jobs': total_jobs_processed,
+            'total_jobs_skipped': total_jobs_skipped,          # ✅ V2 新增
             'total_builds_found': total_builds_found,
             'builds_created': builds_created,
-            'builds_updated': builds_updated,  # 🆕 新增：返回更新數量
+            'builds_updated': builds_updated,
             'builds_skipped': builds_skipped,
+            'total_builds_checked': total_builds_checked,      # ✅ V2 新增
+            'total_builds_filtered': total_builds_filtered,    # ✅ V2 新增
+            'total_api_calls': total_api_calls,                # ✅ V2 新增
+            'jobs_batch_updated': len(jobs_to_update),         # ✅ V2 新增
             'errors': errors,
             'duration': duration,
         }
