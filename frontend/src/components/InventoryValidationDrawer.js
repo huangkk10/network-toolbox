@@ -152,6 +152,7 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             ip_addresses: 'IP 地址驗證',
             mac_addresses: 'MAC 地址驗證',
             uart_ssh: 'UART SSH 連線檢查',
+            nas_connection: 'NAS 連線檢查',
             network_connectivity: '網路連線測試',
             ssh_authentication: 'SSH 認證測試',
             dhcp_records: 'DHCP 記錄比對',
@@ -214,6 +215,17 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             failed: '失敗連接',
             skipped: '跳過檢查',
             connections: '連接詳情',
+            // NAS 連線檢查相關
+            nas_path: 'NAS 路徑',
+            linux_path: 'Linux 掛載路徑',
+            full_path: '完整檔案路徑',
+            file_exists: '檔案存在',
+            file_readable: '檔案可讀',
+            connection_status: '連線狀態',
+            response_time_ms: '響應時間 (ms)',
+            upload_speed_mbps: '上傳速度 (MB/s)',
+            download_speed_mbps: '下載速度 (MB/s)',
+            error_message: '錯誤訊息',
         };
         return labels[key] || key;
     };

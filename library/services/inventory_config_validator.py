@@ -96,14 +96,17 @@ class InventoryConfigValidator:
             # 6. MAC 地址驗證（包含 DHCP 租約比對）
             self._check_mac_addresses()
             
-            # 7. UART SSH 連接檢查（新增）
+            # 7. UART SSH 連接檢查
             self._check_uart_ssh_connections()
             
-            # 8. 網路連線測試（可選）
+            # 8. NAS 連線檢查（新增）
+            self._check_nas_connection()
+            
+            # 9. 網路連線測試（可選）
             if self.check_connectivity:
                 self._check_network_connectivity()
             
-            # 9. 計算總體狀態
+            # 10. 計算總體狀態
             self._calculate_overall_status()
             
             logger.info(f"✅ Validation complete. Status: {self.validation_results['overall_status']}")
@@ -1021,6 +1024,120 @@ class InventoryConfigValidator:
             logger.error(f"Exception checking UART SSH for {host.hostname}: {e}", exc_info=True)
         
         return result
+    
+    def _check_nas_connection(self):
+        """
+        NAS 連線檢查
+        驗證 NAS 路徑是否可訪問，並測試連線狀態
+        """
+        try:
+            logger.info("🔍 Checking NAS connection...")
+            
+            result = {
+                'status': 'unknown',
+                'message': '',
+                'value': 'N/A',
+                'details': {},
+                'suggestions': []
+            }
+            
+            # 檢查 Inventory 是否有 NAS 路徑
+            if not self.inventory or not self.inventory.nas_path:
+                result['status'] = 'warning'
+                result['message'] = '未設定 NAS 路徑'
+                result['details'] = {'error': 'No NAS path configured'}
+                result['suggestions'] = ['請設定 NAS 路徑以啟用 NAS 連線檢查']
+                self.validation_results['checks']['nas_connection'] = result
+                logger.warning("⚠️ No NAS path configured")
+                return
+            
+            # 獲取 NAS 資訊
+            from library.services.ansible_inventory_service import AnsibleInventoryService
+            service = AnsibleInventoryService()
+            linux_path = service.convert_windows_path_to_linux(self.inventory.nas_path)
+            full_path = os.path.join(linux_path, self.inventory.file_name)
+            
+            # 檢查文件是否存在（基本檢查）
+            file_exists = os.path.exists(full_path)
+            file_readable = os.access(full_path, os.R_OK) if file_exists else False
+            
+            result['details'] = {
+                'nas_path': self.inventory.nas_path,
+                'linux_path': linux_path,
+                'full_path': full_path,
+                'file_exists': file_exists,
+                'file_readable': file_readable
+            }
+            
+            # 執行 NAS 連線測試（使用現有的 nas_service）
+            try:
+                from api.nas_service import check_nas_connection
+                
+                logger.info(f"Testing NAS connection to {full_path}...")
+                status, response_time, upload_speed, download_speed, error_message = check_nas_connection()
+                
+                result['details'].update({
+                    'connection_status': status,
+                    'response_time_ms': response_time,
+                    'upload_speed_mbps': upload_speed,
+                    'download_speed_mbps': download_speed,
+                    'error_message': error_message
+                })
+                
+                # 根據連線結果設定狀態
+                if status == 'success':
+                    if file_exists and file_readable:
+                        result['status'] = 'success'
+                        result['message'] = f'NAS 連線正常，文件可訪問 ({response_time:.1f}ms)' if response_time else 'NAS 連線正常，文件可訪問'
+                        result['value'] = '✓ 可用'
+                        logger.info(f"✓ NAS connection successful, file accessible")
+                    else:
+                        result['status'] = 'warning'
+                        result['message'] = 'NAS 連線正常，但文件不存在或不可讀'
+                        result['value'] = '⚠ 文件問題'
+                        result['suggestions'] = [
+                            f'文件路徑: {full_path}',
+                            '請檢查文件是否存在' if not file_exists else '請檢查文件讀取權限'
+                        ]
+                        logger.warning(f"⚠️ NAS connected but file issue: exists={file_exists}, readable={file_readable}")
+                else:
+                    result['status'] = 'error'
+                    result['message'] = f'NAS 連線失敗: {error_message}'
+                    result['value'] = '✗ 無法連線'
+                    result['suggestions'] = [
+                        '檢查 NAS 伺服器是否運行',
+                        '檢查網路連線',
+                        '檢查 SMB 共享權限',
+                        f'錯誤: {error_message}'
+                    ]
+                    logger.error(f"✗ NAS connection failed: {error_message}")
+                
+            except ImportError:
+                result['status'] = 'warning'
+                result['message'] = 'NAS 連線測試模組未安裝'
+                result['value'] = 'N/A'
+                result['suggestions'] = ['請安裝 pysmb 套件: pip install pysmb']
+                logger.warning("⚠️ NAS service module not available")
+            
+            except Exception as nas_error:
+                result['status'] = 'error'
+                result['message'] = f'NAS 連線測試失敗: {str(nas_error)}'
+                result['value'] = '✗ 測試失敗'
+                result['details']['test_error'] = str(nas_error)
+                result['suggestions'] = [f'測試過程發生錯誤: {str(nas_error)}']
+                logger.error(f"✗ NAS connection test failed: {nas_error}", exc_info=True)
+            
+            self.validation_results['checks']['nas_connection'] = result
+            
+        except Exception as e:
+            logger.error(f"❌ NAS connection check exception: {e}", exc_info=True)
+            self.validation_results['checks']['nas_connection'] = {
+                'status': 'error',
+                'message': f'NAS 檢查時發生錯誤: {str(e)}',
+                'value': '✗ 錯誤',
+                'details': {'exception': str(e)},
+                'suggestions': [f'檢查發生異常: {str(e)}']
+            }
     
     def _is_valid_ip(self, ip_string: str) -> bool:
         """驗證 IPv4 地址格式"""
