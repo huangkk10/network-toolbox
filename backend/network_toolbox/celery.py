@@ -177,6 +177,36 @@ app.conf.beat_schedule = {
             # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
+    
+    # 任務 15：Jenkins 資料一致性驗證（每天凌晨 3 點，僅檢測不清理）
+    'validate-jenkins-data-daily': {
+        'task': 'api.tasks.validate_jenkins_data',
+        'schedule': crontab(hour=3, minute=0),  # 每天 03:00 執行
+        'kwargs': {
+            'server_id': None,         # None 表示處理所有在線 Server
+            'auto_cleanup': False,     # 僅驗證，不自動清理（安全模式）
+            'keep_recent_days': None,  # 使用 settings 配置（預設 7 天）
+            'max_orphaned_threshold': None  # 使用 settings 配置（預設 100）
+        },
+        'options': {
+            'expires': 1800,   # 任務超時 30 分鐘
+        }
+    },
+    
+    # 任務 16：Jenkins 孤立資料自動清理（每週日凌晨 4 點）
+    'cleanup-orphaned-jenkins-data-weekly': {
+        'task': 'api.tasks.validate_jenkins_data',
+        'schedule': crontab(hour=4, minute=0, day_of_week=0),  # 每週日 04:00 執行
+        'kwargs': {
+            'server_id': None,         # None 表示處理所有在線 Server
+            'auto_cleanup': True,      # 自動清理孤立資料
+            'keep_recent_days': None,  # 使用 settings 配置（預設 7 天）
+            'max_orphaned_threshold': None  # 使用 settings 配置（預設 100）
+        },
+        'options': {
+            'expires': 3600,   # 任務超時 1 小時
+        }
+    },
 }
 
 

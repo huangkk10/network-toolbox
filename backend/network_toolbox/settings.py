@@ -392,3 +392,58 @@ JENKINS_STORAGE_POLICY = {
     'batch_size': 50,                        # 每次掃描處理的最大 Builds 數量（已從 20 改為 50）
 }
 
+# Jenkins 資料清理策略配置（Phase 2 保護機制）
+JENKINS_CLEANUP_CONFIG = {
+    # 時間保護：保留最近 N 天的資料（即使孤立也不刪除）
+    'keep_recent_days': 7,                   # 預設保護最近 7 天的資料
+    
+    # 自動清理閾值：孤立資料數量超過此值時拒絕自動清理
+    'auto_cleanup_threshold': 100,           # 超過 100 筆孤立資料時需要人工審查
+    
+    # 排除模式：符合這些模式的 Job 名稱不會被自動刪除（正則表達式）
+    'exclude_patterns': [
+        r'^IMPORTANT_.*',                    # 保留以 IMPORTANT_ 開頭的 Jobs
+        r'^ARCHIVE_.*',                      # 保留以 ARCHIVE_ 開頭的 Jobs
+        r'^BACKUP_.*',                       # 保留以 BACKUP_ 開頭的 Jobs
+        r'.*_KEEP$',                         # 保留以 _KEEP 結尾的 Jobs
+    ],
+    
+    # 批次刪除設置
+    'batch_delete_size': 100,                # 每次批次刪除的 Build 數量
+    
+    # 驗證任務設置
+    'validation_job_limit': 50,              # 驗證 Builds 時每個 Server 檢查的 Job 數量上限
+    'validation_build_limit': 100,           # 每個 Job 檢查的 Build 數量上限
+    
+    # 日誌設置
+    'log_orphaned_data': True,               # 是否記錄發現的孤立資料到日誌
+    'log_cleanup_actions': True,             # 是否記錄清理操作到日誌
+}
+
+# 🔒 Jenkins 同步保護配置（Phase 2 Task 2.4 多層保護機制）
+JENKINS_SYNC_PROTECTION = {
+    # 批次處理配置
+    'batch_size': 50,                        # 每批處理的 Jobs 數量
+    'batch_rest_seconds': 2,                 # 批次間休息時間（秒）
+    
+    # 資料量限制
+    'max_jobs_per_sync': 500,                # 單次同步最多處理的 Jobs 數量
+    'max_builds_per_job': 100,               # 每個 Job 最多同步的 Builds 數量
+    'max_builds_per_sync': 5000,             # 單次同步最多處理的 Builds 數量
+    
+    # API 請求限制
+    'api_rate_limit': 10,                    # 每秒最多 API 請求數
+    'api_timeout': 30,                       # API 請求超時（秒）
+    'api_max_retries': 3,                    # API 請求最大重試次數
+    
+    # 記憶體監控
+    'memory_threshold_mb': 1024,             # 記憶體使用閾值（MB）
+    'memory_check_interval': 100,            # 每處理 N 個 Jobs 檢查一次記憶體
+    
+    # CPU 監控
+    'cpu_threshold_percent': 80,             # CPU 使用率閾值（%）
+    
+    # 任務鎖配置
+    'task_lock_timeout': 3600,               # 任務鎖超時時間（秒）
+}
+

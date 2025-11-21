@@ -4078,3 +4078,317 @@ def sync_all_jenkins_jobs_task(self, server_id=None):
                 'duration': duration,
                 'error_message': str(exc)
             }
+
+
+# ============================================================
+# Phase 2: Jenkins 資料驗證與清理任務
+# ============================================================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.validate_jenkins_data',
+    max_retries=2,
+    default_retry_delay=300,  # 5 分鐘後重試
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_days=None, max_orphaned_threshold=None):
+    """
+    驗證 Jenkins 資料一致性並可選擇自動清理孤立資料
+    
+    定期執行此任務可以：
+    1. 檢查資料庫中的 Jobs 是否仍存在於 Jenkins
+    2. 檢查資料庫中的 Builds 是否仍存在於 Jenkins
+    3. 記錄異常情況到日誌
+    4. 可選：自動清理孤立資料（需謹慎使用）
+    
+    Args:
+        server_id (int, optional): Jenkins Server ID，不指定則檢查所有活躍伺服器
+        auto_cleanup (bool): 是否自動清理孤立資料（預設 False，只檢測不刪除）
+        keep_recent_days (int, optional): 保留最近 N 天的資料（None 則使用 settings 配置，預設 7 天）
+        max_orphaned_threshold (int, optional): 自動清理的閾值（None 則使用 settings 配置，預設 100）
+    
+    Returns:
+        dict: 驗證結果統計
+    """
+    from .models import JenkinsServer, JenkinsJob, JenkinsBuild
+    from library.services.jenkins_client import JenkinsClient
+    from django.db import transaction
+    from django.utils import timezone
+    from django.conf import settings
+    import re
+    
+    # 從 settings 讀取配置（如果未提供參數）
+    cleanup_config = getattr(settings, 'JENKINS_CLEANUP_CONFIG', {})
+    if keep_recent_days is None:
+        keep_recent_days = cleanup_config.get('keep_recent_days', 7)
+    if max_orphaned_threshold is None:
+        max_orphaned_threshold = cleanup_config.get('auto_cleanup_threshold', 100)
+    
+    exclude_patterns = cleanup_config.get('exclude_patterns', [])
+    batch_delete_size = cleanup_config.get('batch_delete_size', 100)
+    validation_job_limit = cleanup_config.get('validation_job_limit', 50)
+    validation_build_limit = cleanup_config.get('validation_build_limit', 100)
+    
+    start_time = time.time()
+    logger.info('[Celery] 🔍 開始驗證 Jenkins 資料一致性')
+    logger.info(f'[Celery] 📝 配置：keep_recent_days={keep_recent_days}, threshold={max_orphaned_threshold}')
+    
+    if auto_cleanup:
+        logger.warning('[Celery] ⚠️  自動清理模式已啟用')
+    
+    stats = {
+        'success': True,
+        'total_jobs_checked': 0,
+        'total_builds_checked': 0,
+        'orphaned_jobs_found': 0,
+        'orphaned_builds_found': 0,
+        'cleaned_jobs': 0,
+        'cleaned_builds': 0,
+        'servers_checked': 0,
+        'skipped_recent': 0,
+        'errors': 0,
+        'servers_details': []
+    }
+    
+    # 計算保留時間閾值
+    cutoff_time = timezone.now() - timedelta(days=keep_recent_days)
+    
+    try:
+        # 獲取要檢查的伺服器
+        if server_id:
+            servers = JenkinsServer.objects.filter(id=server_id, is_active=True)
+        else:
+            servers = JenkinsServer.objects.filter(is_active=True, status='online')
+        
+        total_servers = servers.count()
+        logger.info(f'[Celery] 📡 將檢查 {total_servers} 個 Jenkins Server')
+        
+        if total_servers == 0:
+            logger.warning('[Celery] ⚠️  沒有活躍的 Jenkins Server')
+            return stats
+        
+        for server in servers:
+            server_start = time.time()
+            logger.info(f'[Celery] 🖥️  檢查 Server: {server.name} ({server.url})')
+            
+            server_stats = {
+                'server_id': server.id,
+                'server_name': server.name,
+                'server_url': server.url,
+                'jobs_checked': 0,
+                'builds_checked': 0,
+                'orphaned_jobs': 0,
+                'orphaned_builds': 0,
+                'cleaned_jobs': 0,
+                'cleaned_builds': 0,
+                'success': True,
+                'duration': 0
+            }
+            
+            client = None
+            
+            try:
+                # 連接 Jenkins
+                client = JenkinsClient(
+                    base_url=server.url,
+                    username=server.username,
+                    api_token=server.api_token
+                )
+                
+                # ===== 檢查 Jobs =====
+                logger.info(f'[Celery]   📋 檢查 Jobs...')
+                
+                # 獲取 Jenkins 上所有 Job 名稱
+                jenkins_jobs = client.list_jobs()
+                jenkins_job_names = {job['name'] for job in jenkins_jobs}
+                logger.info(f'[Celery]     Jenkins 上有 {len(jenkins_job_names)} 個 Jobs')
+                
+                # 獲取資料庫中此 Server 的所有 Jobs
+                db_jobs = JenkinsJob.objects.filter(server=server)
+                server_stats['jobs_checked'] = db_jobs.count()
+                stats['total_jobs_checked'] += db_jobs.count()
+                logger.info(f'[Celery]     資料庫中有 {db_jobs.count()} 個 Jobs')
+                
+                # 比對找出孤立的 Jobs
+                orphaned_jobs = []
+                for job in db_jobs:
+                    if job.name not in jenkins_job_names:
+                        # 檢查是否為最近的資料（保護機制）
+                        if job.last_sync_at and job.last_sync_at > cutoff_time:
+                            stats['skipped_recent'] += 1
+                            logger.debug(f'[Celery]     ℹ️  跳過最近同步的 Job: {job.name}')
+                            continue
+                        
+                        # 檢查是否符合排除模式（保護機制）
+                        is_excluded = False
+                        for pattern in exclude_patterns:
+                            if re.match(pattern, job.name):
+                                is_excluded = True
+                                stats['skipped_recent'] += 1
+                                logger.debug(f'[Celery]     🛡️  跳過受保護的 Job: {job.name} (符合模式: {pattern})')
+                                break
+                        
+                        if is_excluded:
+                            continue
+                        
+                        orphaned_jobs.append(job)
+                        build_count = job.builds.count()
+                        server_stats['orphaned_jobs'] += 1
+                        stats['orphaned_jobs_found'] += 1
+                        
+                        logger.warning(
+                            f'[Celery]     ❌ 孤立 Job: {job.name} '
+                            f'(含 {build_count} 個 Builds, 最後同步: {job.last_sync_at})'
+                        )
+                
+                # 自動清理 Jobs（如果啟用且符合條件）
+                if auto_cleanup and orphaned_jobs:
+                    orphaned_count = len(orphaned_jobs)
+                    
+                    # 安全檢查：孤立資料過多時不自動清理
+                    if orphaned_count > max_orphaned_threshold:
+                        logger.error(
+                            f'[Celery]     ⚠️  孤立 Jobs 數量 ({orphaned_count}) 超過閾值 ({max_orphaned_threshold})，'
+                            f'跳過自動清理以確保安全'
+                        )
+                    else:
+                        logger.info(f'[Celery]     🗑️  準備清理 {orphaned_count} 個孤立 Jobs...')
+                        
+                        with transaction.atomic():
+                            for job in orphaned_jobs:
+                                build_count = job.builds.count()
+                                job_name = job.name
+                                job.delete()  # 級聯刪除相關 Builds
+                                
+                                server_stats['cleaned_jobs'] += 1
+                                server_stats['cleaned_builds'] += build_count
+                                stats['cleaned_jobs'] += 1
+                                stats['cleaned_builds'] += build_count
+                                
+                                logger.info(f'[Celery]       ✅ 已刪除孤立 Job: {job_name} (含 {build_count} builds)')
+                        
+                        logger.info(f'[Celery]     ✅ 清理完成: {orphaned_count} 個 Jobs')
+                
+                # ===== 檢查 Builds =====
+                logger.info(f'[Celery]   🔨 檢查 Builds（這可能需要較長時間）...')
+                
+                # 獲取非孤立的 Jobs
+                valid_jobs = db_jobs.exclude(id__in=[j.id for j in orphaned_jobs])
+                
+                builds_checked_count = 0
+                orphaned_builds = []
+                
+                # 使用配置的 validation_job_limit 限制檢查的 Job 數量
+                for job in valid_jobs[:validation_job_limit]:
+                    try:
+                        # 從 Jenkins 獲取 Builds，使用配置的 validation_build_limit
+                        builds_list = client.get_job_builds(job.name, limit=validation_build_limit)
+                        jenkins_build_numbers = {build['number'] for build in builds_list}
+                        
+                        # 獲取資料庫中的 Builds
+                        db_builds = JenkinsBuild.objects.filter(job=job)
+                        builds_checked_count += db_builds.count()
+                        
+                        # 比對找出孤立的 Builds
+                        for build in db_builds:
+                            if build.build_number not in jenkins_build_numbers:
+                                # 檢查是否為最近的資料（保護機制）
+                                if build.build_timestamp and build.build_timestamp > cutoff_time:
+                                    stats['skipped_recent'] += 1
+                                    continue
+                                
+                                orphaned_builds.append(build)
+                                server_stats['orphaned_builds'] += 1
+                                stats['orphaned_builds_found'] += 1
+                    
+                    except Exception as e:
+                        logger.error(f'[Celery]     ❌ 檢查 Job "{job.name}" 的 Builds 失敗: {e}')
+                
+                server_stats['builds_checked'] = builds_checked_count
+                stats['total_builds_checked'] += builds_checked_count
+                
+                if orphaned_builds:
+                    logger.warning(f'[Celery]     ⚠️  找到 {len(orphaned_builds)} 個孤立 Builds')
+                    
+                    # 自動清理 Builds（如果啟用且符合條件）
+                    if auto_cleanup:
+                        orphaned_count = len(orphaned_builds)
+                        
+                        if orphaned_count > max_orphaned_threshold:
+                            logger.error(
+                                f'[Celery]     ⚠️  孤立 Builds 數量 ({orphaned_count}) 超過閾值 ({max_orphaned_threshold})，'
+                                f'跳過自動清理'
+                            )
+                        else:
+                            logger.info(f'[Celery]     🗑️  準備清理 {orphaned_count} 個孤立 Builds...')
+                            
+                            # 使用配置的批次大小分批刪除
+                            for i in range(0, orphaned_count, batch_delete_size):
+                                batch = orphaned_builds[i:i+batch_delete_size]
+                                with transaction.atomic():
+                                    build_ids = [b.id for b in batch]
+                                    deleted_count = JenkinsBuild.objects.filter(id__in=build_ids).delete()[0]
+                                    server_stats['cleaned_builds'] += deleted_count
+                            
+                            logger.info(f'[Celery]     ✅ 清理完成: {orphaned_count} 個 Builds')
+                else:
+                    logger.info(f'[Celery]     ✅ 無孤立 Builds')
+                
+            except Exception as e:
+                logger.error(f'[Celery]   ❌ 檢查 Server "{server.name}" 失敗: {e}', exc_info=True)
+                server_stats['success'] = False
+                server_stats['error_message'] = str(e)
+                stats['errors'] += 1
+                stats['success'] = False
+            
+            finally:
+                if client:
+                    client.close()
+                
+                server_stats['duration'] = time.time() - server_start
+                stats['servers_details'].append(server_stats)
+                stats['servers_checked'] += 1
+                
+                logger.info(
+                    f'[Celery]   Server "{server.name}" 檢查完成 '
+                    f'(耗時: {server_stats["duration"]:.2f}s)'
+                )
+        
+        # 計算總執行時間
+        duration = time.time() - start_time
+        stats['duration'] = duration
+        
+        # 輸出總結
+        logger.info('[Celery] 🎉 Jenkins 資料驗證完成')
+        logger.info(f'[Celery]   - 檢查伺服器: {stats["servers_checked"]} 個')
+        logger.info(f'[Celery]   - 檢查 Jobs: {stats["total_jobs_checked"]} 個')
+        logger.info(f'[Celery]   - 檢查 Builds: {stats["total_builds_checked"]} 個')
+        logger.info(f'[Celery]   - 孤立 Jobs: {stats["orphaned_jobs_found"]} 個')
+        logger.info(f'[Celery]   - 孤立 Builds: {stats["orphaned_builds_found"]} 個')
+        
+        if auto_cleanup:
+            logger.info(f'[Celery]   - 已清理 Jobs: {stats["cleaned_jobs"]} 個')
+            logger.info(f'[Celery]   - 已清理 Builds: {stats["cleaned_builds"]} 個')
+        
+        if stats['skipped_recent'] > 0:
+            logger.info(f'[Celery]   - 跳過最近資料: {stats["skipped_recent"]} 筆')
+        
+        logger.info(f'[Celery]   - 錯誤數量: {stats["errors"]} 個')
+        logger.info(f'[Celery]   - 總耗時: {duration:.2f} 秒')
+        
+        return stats
+        
+    except Exception as exc:
+        logger.error('[Celery] 💥 Jenkins 資料驗證異常', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] Jenkins 資料驗證重試次數已達上限')
+            duration = time.time() - start_time
+            stats['success'] = False
+            stats['duration'] = duration
+            stats['error_message'] = str(exc)
+            return stats

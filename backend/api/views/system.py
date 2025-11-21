@@ -248,7 +248,7 @@ def system_history(request):
         # 如果記錄數量少於 10 筆，直接返回所有數據（方便開發測試）
         if history_records.count() < 10:
             sampled_data = [{
-                'time': record.timestamp.strftime('%m-%d %H:%M'),
+                'time': timezone.localtime(record.timestamp).strftime('%m-%d %H:%M'),
                 'cpu': round(record.cpu_percent, 1),
                 'ram': round(record.ram_percent, 1),
                 'disk': round(record.disk_percent, 1),
@@ -263,7 +263,7 @@ def system_history(request):
                 # 如果是第一筆記錄，直接添加
                 if last_timestamp is None:
                     sampled_data.append({
-                        'time': record.timestamp.strftime('%m-%d %H:%M'),
+                        'time': timezone.localtime(record.timestamp).strftime('%m-%d %H:%M'),
                         'cpu': round(record.cpu_percent, 1),
                         'ram': round(record.ram_percent, 1),
                         'disk': round(record.disk_percent, 1),
@@ -272,7 +272,7 @@ def system_history(request):
                 # 如果距離上次採樣已超過間隔時間，添加這筆記錄
                 elif (record.timestamp - last_timestamp).total_seconds() >= interval_seconds:
                     sampled_data.append({
-                        'time': record.timestamp.strftime('%m-%d %H:%M'),
+                        'time': timezone.localtime(record.timestamp).strftime('%m-%d %H:%M'),
                         'cpu': round(record.cpu_percent, 1),
                         'ram': round(record.ram_percent, 1),
                         'disk': round(record.disk_percent, 1),
