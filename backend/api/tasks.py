@@ -4344,6 +4344,128 @@ def sync_all_jenkins_jobs_task(self, server_id=None):
 # Phase 2: Jenkins 資料驗證與清理任務
 # ============================================================
 
+def get_folder_size(folder_path):
+    """
+    計算資料夾大小（遞迴）
+    
+    Args:
+        folder_path (str): 資料夾路徑
+        
+    Returns:
+        int: 資料夾大小（bytes）
+    """
+    import os
+    
+    total_size = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(folder_path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                if os.path.exists(filepath):
+                    try:
+                        total_size += os.path.getsize(filepath)
+                    except OSError:
+                        # 跳過無法訪問的檔案
+                        pass
+    except Exception as e:
+        logger.error(f"計算資料夾大小失敗 {folder_path}: {e}")
+    
+    return total_size
+
+
+def cleanup_nas_workspace(build, dry_run=False):
+    """
+    清理 Build 對應的 NAS Workspace 資料夾
+    
+    Args:
+        build: JenkinsBuild 實例
+        dry_run (bool): 試運行模式（只檢查不刪除）
+        
+    Returns:
+        dict: {
+            'success': bool,
+            'folder_path': str,
+            'size_freed': int,  # Bytes
+            'message': str,
+            'error': str (if failed)
+        }
+    """
+    import os
+    import shutil
+    
+    # 檢查是否有存儲的 Workspace
+    if not build.is_workspace_stored or not build.workspace_path:
+        return {
+            'success': True,
+            'size_freed': 0,
+            'message': 'No workspace stored'
+        }
+    
+    folder_path = build.workspace_path
+    
+    try:
+        # 檢查路徑是否存在
+        if not os.path.exists(folder_path):
+            logger.warning(f"[NAS Cleanup] Workspace path not found: {folder_path}")
+            return {
+                'success': True,
+                'folder_path': folder_path,
+                'size_freed': 0,
+                'message': 'Path not found (already deleted or never existed)'
+            }
+        
+        # 計算資料夾大小
+        size_freed = get_folder_size(folder_path)
+        
+        # 試運行模式
+        if dry_run:
+            logger.info(
+                f"[NAS Cleanup] [DRY-RUN] Would delete: {folder_path} "
+                f"({size_freed / 1024 / 1024:.2f} MB)"
+            )
+            return {
+                'success': True,
+                'folder_path': folder_path,
+                'size_freed': size_freed,
+                'message': 'Dry-run: would be deleted'
+            }
+        
+        # 實際刪除資料夾
+        shutil.rmtree(folder_path)
+        
+        logger.info(
+            f"[NAS Cleanup] ✅ Deleted workspace: {folder_path} "
+            f"({size_freed / 1024 / 1024:.2f} MB freed)"
+        )
+        
+        return {
+            'success': True,
+            'folder_path': folder_path,
+            'size_freed': size_freed,
+            'message': 'Successfully deleted'
+        }
+        
+    except PermissionError as e:
+        error_msg = f"Permission denied: {e}"
+        logger.error(f"[NAS Cleanup] ❌ {error_msg} - {folder_path}")
+        return {
+            'success': False,
+            'folder_path': folder_path,
+            'size_freed': 0,
+            'error': error_msg
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"[NAS Cleanup] ❌ Failed to delete {folder_path}: {e}", exc_info=True)
+        return {
+            'success': False,
+            'folder_path': folder_path,
+            'size_freed': 0,
+            'error': error_msg
+        }
+
+
 @shared_task(
     bind=True,
     name='api.tasks.validate_jenkins_data',
@@ -4352,7 +4474,7 @@ def sync_all_jenkins_jobs_task(self, server_id=None):
     time_limit=1800,  # 硬限制 30 分鐘
     soft_time_limit=1650  # 軟限制 27.5 分鐘
 )
-def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_days=None, max_orphaned_threshold=None):
+def validate_jenkins_data(self, server_id=None, auto_cleanup=False, cleanup_nas=True, keep_recent_days=None, max_orphaned_threshold=None, dry_run=False):
     """
     驗證 Jenkins 資料一致性並可選擇自動清理孤立資料
     
@@ -4361,12 +4483,15 @@ def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_
     2. 檢查資料庫中的 Builds 是否仍存在於 Jenkins
     3. 記錄異常情況到日誌
     4. 可選：自動清理孤立資料（需謹慎使用）
+    5. 可選：清理 NAS 上對應的 Workspace 資料夾
     
     Args:
         server_id (int, optional): Jenkins Server ID，不指定則檢查所有活躍伺服器
         auto_cleanup (bool): 是否自動清理孤立資料（預設 False，只檢測不刪除）
+        cleanup_nas (bool): 是否清理 NAS Workspace 資料夾（預設 True，當 auto_cleanup=True 時生效）
         keep_recent_days (int, optional): 保留最近 N 天的資料（None 則使用 settings 配置，預設 7 天）
         max_orphaned_threshold (int, optional): 自動清理的閾值（None 則使用 settings 配置，預設 100）
+        dry_run (bool): 試運行模式（只檢查不刪除，預設 False）
     
     Returns:
         dict: 驗證結果統計
@@ -4396,6 +4521,13 @@ def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_
     
     if auto_cleanup:
         logger.warning('[Celery] ⚠️  自動清理模式已啟用')
+        if cleanup_nas:
+            logger.info('[Celery] 🗑️  NAS Workspace 清理已啟用')
+        else:
+            logger.info('[Celery] ℹ️  NAS Workspace 清理已停用（只刪除資料庫記錄）')
+    
+    if dry_run:
+        logger.info('[Celery] 🔍 試運行模式：只檢查不刪除')
     
     stats = {
         'success': True,
@@ -4405,6 +4537,9 @@ def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_
         'orphaned_builds_found': 0,
         'cleaned_jobs': 0,
         'cleaned_builds': 0,
+        'nas_folders_deleted': 0,      # 新增：NAS 資料夾刪除數量
+        'nas_space_freed': 0,          # 新增：NAS 釋放空間（bytes）
+        'nas_errors': 0,               # 新增：NAS 清理錯誤數量
         'servers_checked': 0,
         'skipped_recent': 0,
         'errors': 0,
@@ -4442,6 +4577,9 @@ def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_
                 'orphaned_builds': 0,
                 'cleaned_jobs': 0,
                 'cleaned_builds': 0,
+                'nas_folders_deleted': 0,  # 新增
+                'nas_space_freed': 0,      # 新增
+                'nas_errors': 0,           # 新增
                 'success': True,
                 'duration': 0
             }
@@ -4572,26 +4710,59 @@ def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_
                     logger.warning(f'[Celery]     ⚠️  找到 {len(orphaned_builds)} 個孤立 Builds')
                     
                     # 自動清理 Builds（如果啟用且符合條件）
-                    if auto_cleanup:
+                    if auto_cleanup or dry_run:
                         orphaned_count = len(orphaned_builds)
                         
-                        if orphaned_count > max_orphaned_threshold:
+                        if orphaned_count > max_orphaned_threshold and not dry_run:
                             logger.error(
                                 f'[Celery]     ⚠️  孤立 Builds 數量 ({orphaned_count}) 超過閾值 ({max_orphaned_threshold})，'
                                 f'跳過自動清理'
                             )
                         else:
-                            logger.info(f'[Celery]     🗑️  準備清理 {orphaned_count} 個孤立 Builds...')
+                            action_text = '檢查' if dry_run else '清理'
+                            logger.info(f'[Celery]     🗑️  準備{action_text} {orphaned_count} 個孤立 Builds...')
                             
-                            # 使用配置的批次大小分批刪除
-                            for i in range(0, orphaned_count, batch_delete_size):
-                                batch = orphaned_builds[i:i+batch_delete_size]
-                                with transaction.atomic():
-                                    build_ids = [b.id for b in batch]
-                                    deleted_count = JenkinsBuild.objects.filter(id__in=build_ids).delete()[0]
-                                    server_stats['cleaned_builds'] += deleted_count
+                            # 先清理 NAS Workspace（如果啟用）
+                            if cleanup_nas:
+                                logger.info(f'[Celery]     📁 清理 NAS Workspace 資料夾...')
+                                
+                                for build in orphaned_builds:
+                                    # 清理 NAS
+                                    nas_result = cleanup_nas_workspace(build, dry_run=dry_run)
+                                    
+                                    if nas_result['success']:
+                                        if nas_result.get('size_freed', 0) > 0:
+                                            server_stats['nas_folders_deleted'] += 1
+                                            server_stats['nas_space_freed'] += nas_result['size_freed']
+                                            stats['nas_folders_deleted'] += 1
+                                            stats['nas_space_freed'] += nas_result['size_freed']
+                                    else:
+                                        server_stats['nas_errors'] += 1
+                                        stats['nas_errors'] += 1
+                                        logger.error(
+                                            f'[Celery]       ❌ NAS 清理失敗: {build.job.name} #{build.build_number}: '
+                                            f'{nas_result.get("error", "Unknown error")}'
+                                        )
+                                
+                                if not dry_run:
+                                    freed_gb = server_stats['nas_space_freed'] / 1024 / 1024 / 1024
+                                    logger.info(
+                                        f'[Celery]     ✅ NAS 清理完成: {server_stats["nas_folders_deleted"]} 資料夾, '
+                                        f'{freed_gb:.3f} GB 釋放'
+                                    )
                             
-                            logger.info(f'[Celery]     ✅ 清理完成: {orphaned_count} 個 Builds')
+                            # 再刪除資料庫記錄（使用配置的批次大小分批刪除）
+                            if not dry_run:
+                                for i in range(0, orphaned_count, batch_delete_size):
+                                    batch = orphaned_builds[i:i+batch_delete_size]
+                                    with transaction.atomic():
+                                        build_ids = [b.id for b in batch]
+                                        deleted_count = JenkinsBuild.objects.filter(id__in=build_ids).delete()[0]
+                                        server_stats['cleaned_builds'] += deleted_count
+                                
+                                logger.info(f'[Celery]     ✅ 資料庫清理完成: {orphaned_count} 個 Builds')
+                            else:
+                                logger.info(f'[Celery]     🔍 [DRY-RUN] 將刪除 {orphaned_count} 個 Builds')
                 else:
                     logger.info(f'[Celery]     ✅ 無孤立 Builds')
                 
@@ -4627,9 +4798,20 @@ def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_
         logger.info(f'[Celery]   - 孤立 Jobs: {stats["orphaned_jobs_found"]} 個')
         logger.info(f'[Celery]   - 孤立 Builds: {stats["orphaned_builds_found"]} 個')
         
-        if auto_cleanup:
+        if auto_cleanup and not dry_run:
             logger.info(f'[Celery]   - 已清理 Jobs: {stats["cleaned_jobs"]} 個')
             logger.info(f'[Celery]   - 已清理 Builds: {stats["cleaned_builds"]} 個')
+            
+            if cleanup_nas:
+                freed_gb = stats['nas_space_freed'] / 1024 / 1024 / 1024
+                logger.info(f'[Celery]   - NAS 資料夾已刪除: {stats["nas_folders_deleted"]} 個')
+                logger.info(f'[Celery]   - NAS 空間釋放: {freed_gb:.3f} GB')
+                
+                if stats['nas_errors'] > 0:
+                    logger.warning(f'[Celery]   - NAS 清理錯誤: {stats["nas_errors"]} 個')
+        
+        if dry_run:
+            logger.info('[Celery]   - 模式: 試運行（未執行實際刪除）')
         
         if stats['skipped_recent'] > 0:
             logger.info(f'[Celery]   - 跳過最近資料: {stats["skipped_recent"]} 筆')
@@ -4647,6 +4829,310 @@ def validate_jenkins_data(self, server_id=None, auto_cleanup=False, keep_recent_
             raise self.retry(exc=exc, countdown=300)
         except self.MaxRetriesExceededError:
             logger.error('[Celery] Jenkins 資料驗證重試次數已達上限')
+            duration = time.time() - start_time
+            stats['success'] = False
+            stats['duration'] = duration
+            stats['error_message'] = str(exc)
+            return stats
+
+
+# ============================================================================
+# 任務：按日期清理舊 Jenkins Builds
+# ============================================================================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.cleanup_old_jenkins_builds_task',
+    max_retries=2,
+    default_retry_delay=1800,
+    time_limit=7200,
+    soft_time_limit=6600
+)
+def cleanup_old_jenkins_builds_task(
+    self,
+    days=90,
+    only_stored=True,
+    exclude_patterns=None,
+    dry_run=False,
+    server_id=None
+):
+    """
+    清理過舊的 Jenkins Builds（按日期）
+    
+    此任務主動清理超過指定天數的 Builds，而不是等待 Jenkins 刪除後才清理。
+    可用於長期維護 NAS 空間和資料庫效能。
+    
+    Args:
+        days (int): 只保留最近 N 天的 Builds（預設 90 天）
+        only_stored (bool): 只清理已存儲到 NAS 的 Builds（預設 True）
+        exclude_patterns (list): 排除的 Job 名稱 regex 模式列表
+        dry_run (bool): 試運行模式，只檢查不實際刪除（預設 False）
+        server_id (int): 只處理特定 Jenkins Server（None 表示處理所有）
+    
+    Returns:
+        dict: 執行結果統計
+            {
+                'success': bool,
+                'total_checked': int,
+                'total_old_builds': int,
+                'deleted_builds': int,
+                'nas_folders_deleted': int,
+                'nas_space_freed': int,  # bytes
+                'skipped': int,
+                'errors': int,
+                'duration': float
+            }
+    
+    Examples:
+        # Dry-run 模式測試
+        cleanup_old_jenkins_builds_task(days=90, dry_run=True)
+        
+        # 清理 90 天前的 Builds
+        cleanup_old_jenkins_builds_task(days=90, only_stored=True)
+        
+        # 清理特定伺服器，排除特定 Job
+        cleanup_old_jenkins_builds_task(
+            server_id=1,
+            days=90,
+            exclude_patterns=[r'^seed.*', r'.*_test$']
+        )
+    """
+    from .models import JenkinsServer, JenkinsBuild
+    from django.utils import timezone
+    from django.db import transaction
+    import re
+    import time
+    
+    start_time = time.time()
+    
+    logger.info('[Celery] 🧹 開始清理舊 Jenkins Builds')
+    logger.info(f'[Celery] 📝 配置：保留最近 {days} 天，only_stored={only_stored}')
+    
+    if dry_run:
+        logger.warning('[Celery] 🔍 試運行模式：只檢查不刪除')
+    
+    exclude_patterns = exclude_patterns or []
+    cutoff_date = timezone.now() - timedelta(days=days)
+    
+    logger.info(f'[Celery] ⏰ 截止日期：{cutoff_date.strftime("%Y-%m-%d %H:%M:%S")}')
+    
+    stats = {
+        'success': True,
+        'total_checked': 0,
+        'total_old_builds': 0,
+        'deleted_builds': 0,
+        'nas_folders_deleted': 0,
+        'nas_space_freed': 0,
+        'skipped': 0,
+        'errors': 0,
+        'servers_checked': 0,
+        'servers_details': [],
+        'duration': 0
+    }
+    
+    try:
+        # 決定要處理的 Servers
+        if server_id:
+            servers = JenkinsServer.objects.filter(id=server_id, is_active=True)
+            logger.info(f'[Celery] 📡 將檢查指定 Server (ID: {server_id})')
+        else:
+            servers = JenkinsServer.objects.filter(is_active=True)
+            logger.info(f'[Celery] 📡 將檢查 {servers.count()} 個 Jenkins Servers')
+        
+        stats['servers_checked'] = servers.count()
+        
+        # 處理每個 Server
+        for server in servers:
+            server_start_time = time.time()
+            server_name = server.name or server.ip_address or server.url
+            
+            logger.info(f'[Celery] 🖥️  檢查 Server: {server_name} ({server.url})')
+            
+            server_stats = {
+                'server_id': server.id,
+                'server_name': server_name,
+                'server_url': server.url,
+                'checked': 0,
+                'old_builds': 0,
+                'deleted': 0,
+                'nas_deleted': 0,
+                'nas_freed': 0,
+                'skipped': 0,
+                'errors': 0,
+                'success': True,
+                'duration': 0
+            }
+            
+            try:
+                # 查詢舊 Builds
+                query = JenkinsBuild.objects.filter(
+                    job__server=server,
+                    build_timestamp__lt=cutoff_date
+                ).select_related('job')
+                
+                if only_stored:
+                    query = query.filter(is_workspace_stored=True)
+                
+                old_builds = list(query)
+                server_stats['old_builds'] = len(old_builds)
+                stats['total_old_builds'] += len(old_builds)
+                
+                logger.info(f'[Celery]   📊 找到 {len(old_builds)} 個舊 Builds（早於 {days} 天）')
+                
+                if len(old_builds) == 0:
+                    logger.info('[Celery]   ✅ 無需清理的舊 Builds')
+                    server_stats['duration'] = time.time() - server_start_time
+                    stats['servers_details'].append(server_stats)
+                    continue
+                
+                # 處理每個舊 Build
+                for build in old_builds:
+                    server_stats['checked'] += 1
+                    stats['total_checked'] += 1
+                    
+                    # 檢查排除模式
+                    is_excluded = False
+                    for pattern in exclude_patterns:
+                        try:
+                            if re.match(pattern, build.job.name):
+                                is_excluded = True
+                                server_stats['skipped'] += 1
+                                stats['skipped'] += 1
+                                logger.debug(
+                                    f'[Celery]     🛡️  跳過（符合排除模式）: {build.job.name} #{build.build_number}'
+                                )
+                                break
+                        except re.error as e:
+                            logger.warning(f'[Celery]     ⚠️  無效的 regex 模式 "{pattern}": {e}')
+                    
+                    if is_excluded:
+                        continue
+                    
+                    # 試運行模式
+                    if dry_run:
+                        age_days = (timezone.now() - build.build_timestamp).days
+                        logger.info(
+                            f'[Celery]     🔍 [DRY-RUN] 將刪除: {build.job.name} #{build.build_number} '
+                            f'({age_days} 天前)'
+                        )
+                        server_stats['deleted'] += 1
+                        stats['deleted_builds'] += 1
+                        
+                        # 計算可能釋放的空間
+                        if build.is_workspace_stored and build.workspace_path:
+                            nas_result = cleanup_nas_workspace(build, dry_run=True)
+                            if nas_result['success'] and nas_result.get('size_freed', 0) > 0:
+                                server_stats['nas_deleted'] += 1
+                                server_stats['nas_freed'] += nas_result['size_freed']
+                                stats['nas_folders_deleted'] += 1
+                                stats['nas_space_freed'] += nas_result['size_freed']
+                        
+                        continue
+                    
+                    # 實際清理
+                    try:
+                        build_info = f"{build.job.name} #{build.build_number}"
+                        age_days = (timezone.now() - build.build_timestamp).days
+                        
+                        # 1. 清理 NAS Workspace
+                        if build.is_workspace_stored and build.workspace_path:
+                            nas_result = cleanup_nas_workspace(build, dry_run=False)
+                            
+                            if nas_result['success']:
+                                if nas_result.get('size_freed', 0) > 0:
+                                    server_stats['nas_deleted'] += 1
+                                    server_stats['nas_freed'] += nas_result['size_freed']
+                                    stats['nas_folders_deleted'] += 1
+                                    stats['nas_space_freed'] += nas_result['size_freed']
+                                    
+                                    size_mb = nas_result['size_freed'] / 1024 / 1024
+                                    logger.info(
+                                        f'[Celery]     ✅ NAS 已清理: {build_info} ({age_days} 天前, {size_mb:.2f} MB)'
+                                    )
+                            else:
+                                server_stats['errors'] += 1
+                                stats['errors'] += 1
+                                logger.error(
+                                    f'[Celery]     ❌ NAS 清理失敗: {build_info}: '
+                                    f'{nas_result.get("error", "Unknown error")}'
+                                )
+                        
+                        # 2. 刪除資料庫記錄
+                        with transaction.atomic():
+                            build.delete()
+                            server_stats['deleted'] += 1
+                            stats['deleted_builds'] += 1
+                            logger.debug(f'[Celery]     ✅ DB 已刪除: {build_info}')
+                        
+                    except Exception as e:
+                        server_stats['errors'] += 1
+                        stats['errors'] += 1
+                        logger.error(
+                            f'[Celery]     ❌ 清理失敗: {build.job.name} #{build.build_number}: {e}',
+                            exc_info=True
+                        )
+                
+                # Server 完成統計
+                server_duration = time.time() - server_start_time
+                server_stats['duration'] = server_duration
+                
+                logger.info(f'[Celery]   ✅ Server "{server_name}" 處理完成 (耗時: {server_duration:.2f}s)')
+                logger.info(f'[Celery]     - 檢查: {server_stats["checked"]} 個')
+                logger.info(f'[Celery]     - 刪除: {server_stats["deleted"]} 個')
+                
+                if server_stats['nas_deleted'] > 0:
+                    freed_gb = server_stats['nas_freed'] / 1024 / 1024 / 1024
+                    logger.info(f'[Celery]     - NAS 釋放: {freed_gb:.3f} GB')
+                
+                if server_stats['skipped'] > 0:
+                    logger.info(f'[Celery]     - 跳過: {server_stats["skipped"]} 個')
+                
+                if server_stats['errors'] > 0:
+                    logger.warning(f'[Celery]     - 錯誤: {server_stats["errors"]} 個')
+                
+            except Exception as e:
+                server_stats['success'] = False
+                server_stats['duration'] = time.time() - server_start_time
+                logger.error(f'[Celery]   ❌ Server "{server_name}" 處理失敗: {e}', exc_info=True)
+            
+            stats['servers_details'].append(server_stats)
+        
+        # 最終統計
+        duration = time.time() - start_time
+        stats['duration'] = duration
+        
+        logger.info('[Celery] 🎉 舊 Builds 清理完成')
+        logger.info(f'[Celery]   - 檢查伺服器: {stats["servers_checked"]} 個')
+        logger.info(f'[Celery]   - 檢查 Builds: {stats["total_checked"]} 個')
+        logger.info(f'[Celery]   - 找到舊 Builds: {stats["total_old_builds"]} 個')
+        logger.info(f'[Celery]   - 已刪除 Builds: {stats["deleted_builds"]} 個')
+        
+        if stats['nas_folders_deleted'] > 0:
+            freed_gb = stats['nas_space_freed'] / 1024 / 1024 / 1024
+            logger.info(f'[Celery]   - NAS 資料夾已刪除: {stats["nas_folders_deleted"]} 個')
+            logger.info(f'[Celery]   - NAS 空間釋放: {freed_gb:.3f} GB')
+        
+        if dry_run:
+            logger.info('[Celery]   - 模式: 試運行（未執行實際刪除）')
+        
+        if stats['skipped'] > 0:
+            logger.info(f'[Celery]   - 跳過（排除模式）: {stats["skipped"]} 個')
+        
+        if stats['errors'] > 0:
+            logger.warning(f'[Celery]   - 錯誤數量: {stats["errors"]} 個')
+        
+        logger.info(f'[Celery]   - 總耗時: {duration:.2f} 秒')
+        
+        return stats
+        
+    except Exception as exc:
+        logger.error('[Celery] 💥 舊 Builds 清理任務異常', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=1800)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 舊 Builds 清理任務重試次數已達上限')
             duration = time.time() - start_time
             stats['success'] = False
             stats['duration'] = duration

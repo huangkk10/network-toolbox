@@ -197,8 +197,10 @@ app.conf.beat_schedule = {
         'kwargs': {
             'server_id': None,         # None 表示處理所有在線 Server
             'auto_cleanup': False,     # 僅驗證，不自動清理（安全模式）
+            'cleanup_nas': True,       # NAS 清理功能（當 auto_cleanup=True 時生效）
             'keep_recent_days': None,  # 使用 settings 配置（預設 7 天）
-            'max_orphaned_threshold': None  # 使用 settings 配置（預設 100）
+            'max_orphaned_threshold': None,  # 使用 settings 配置（預設 100）
+            'dry_run': False,          # 實際執行模式
         },
         'options': {
             'expires': 1800,   # 任務超時 30 分鐘
@@ -212,11 +214,29 @@ app.conf.beat_schedule = {
         'kwargs': {
             'server_id': None,         # None 表示處理所有在線 Server
             'auto_cleanup': True,      # 自動清理孤立資料
+            'cleanup_nas': True,       # ⭐ 同時清理 NAS Workspace 資料夾
             'keep_recent_days': None,  # 使用 settings 配置（預設 7 天）
-            'max_orphaned_threshold': None  # 使用 settings 配置（預設 100）
+            'max_orphaned_threshold': None,  # 使用 settings 配置（預設 100）
+            'dry_run': False,          # 實際執行模式
         },
         'options': {
             'expires': 3600,   # 任務超時 1 小時
+        }
+    },
+    
+    # 任務 17：清理舊 Jenkins Builds（每月 1 號凌晨 5 點）
+    'cleanup-old-jenkins-builds-monthly': {
+        'task': 'api.tasks.cleanup_old_jenkins_builds_task',
+        'schedule': crontab(hour=5, minute=0, day_of_month=1),  # 每月 1 號 05:00 執行
+        'kwargs': {
+            'days': 90,                # 只保留最近 90 天的 Builds
+            'only_stored': True,       # 只清理已存儲到 NAS 的 Builds
+            'exclude_patterns': [],    # 排除模式（空列表表示不排除）
+            'dry_run': False,          # 實際執行模式
+            'server_id': None,         # None 表示處理所有在線 Server
+        },
+        'options': {
+            'expires': 7200,   # 任務超時 2 小時
         }
     },
 }
