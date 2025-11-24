@@ -1975,6 +1975,10 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                 building = build_data.get('building', False)
                                 duration = build_data.get('duration', 0)
                                 
+                                # 轉換時間戳（用於更新 Job）
+                                timestamp = build_data.get('timestamp', 0) / 1000
+                                build_timestamp = datetime.fromtimestamp(timestamp, tz=pytz.UTC)
+                                
                                 # 檢查是否需要更新
                                 needs_update = False
                                 
@@ -2028,10 +2032,13 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                     builds_to_update.append(existing_build)
                                     job_builds_updated += 1
                                     
-                                    # ✅ V2 優化：標記 Job 需要更新（不立即 save）
-                                    if result and (not job.last_build_number or build_number >= job.last_build_number):
-                                        job.last_build_status = result
+                                    # ✅ V2 優化：標記 Job 需要更新（完整更新所有欄位）
+                                    if not job.last_build_time or build_timestamp >= job.last_build_time:
+                                        job.last_build_time = build_timestamp
+                                        job.last_build_number = build_number
+                                        job.last_build_status = result or 'UNKNOWN'
                                         job_needs_update = True
+                                        logger.debug(f'[Celery]     🔄 更新 Job last_build_time: {build_timestamp}, #{build_number}')
                                 
                             except Exception as e:
                                 errors += 1
