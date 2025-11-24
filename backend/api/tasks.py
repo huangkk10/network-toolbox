@@ -1836,20 +1836,6 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                 .order_by('-build_number')[:max_builds_per_job]
                         }
                         
-                        # ✅ V2 優化 4：跳過穩定的 Jobs（無活躍 Builds 且 24 小時未更新）
-                        has_active_builds = any(
-                            b.is_building or b.result in ['UNKNOWN', None] 
-                            for b in existing_builds.values()
-                        )
-                        
-                        stable_time = dj_timezone.now() - timedelta(hours=24)
-                        
-                        if not has_active_builds and job.last_build_time and job.last_build_time < stable_time:
-                            # Job 穩定且無活躍 Builds，跳過 API 調用
-                            total_jobs_skipped += 1
-                            logger.debug(f'[Celery]     ⏭️  跳過穩定 Job: {job.name} (最後構建: {job.last_build_time})')
-                            continue
-                        
                         # 從 Jenkins API 獲取 Builds
                         jenkins_builds = client.get_job_builds(
                             job.name, 
