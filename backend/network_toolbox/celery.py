@@ -78,12 +78,12 @@ app.conf.beat_schedule = {
         }
     },
     
-    # 任務 6：DHCP Scope 自動同步（每天凌晨 4 點）
+    # 任務 6：DHCP Scope 自動同步（每天凌晨 4 點 30 分）
     'sync-all-dhcp-scopes-daily': {
         'task': 'api.tasks.sync_all_dhcp_scopes_task',
-        'schedule': crontab(hour=4, minute=0),  # 每天 04:00 執行
+        'schedule': crontab(hour=4, minute=30),  # ✅ 改為每天 04:30 執行（錯開 30 分鐘）
         'options': {
-            'expires': 1800,   # 任務超時 30 分鐘
+            'expires': 1500,   # 任務超時 25 分鐘
         }
     },
     
@@ -144,33 +144,33 @@ app.conf.beat_schedule = {
         }
     },
     
-    # 任務 11：Jenkins Workspace 自動存儲（每小時整點）
+    # 任務 11：Jenkins Workspace 自動存儲（每小時 15 分）
     'auto-store-jenkins-workspaces-hourly': {
         'task': 'api.tasks.auto_store_workspaces',
-        'schedule': crontab(minute=0),  # 每小時整點執行（00:00, 01:00, 02:00...）
+        'schedule': crontab(minute=15),  # ✅ 改為每小時 XX:15 執行（錯開 NAS I/O）
         'options': {
-            'expires': 3300,   # 任務超時 55 分鐘（避免與下次重疊）
+            'expires': 2700,   # 任務超時 45 分鐘（避免與下次重疊）
             # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
     
-    # 任務 12：Jenkins Builds 自動存儲到 NAS（每 30 分鐘）
-    'auto-store-jenkins-builds-every-30-minutes': {
+    # 任務 12：Jenkins Builds 自動存儲到 NAS（每小時 45 分）
+    'auto-store-jenkins-builds-every-hour': {
         'task': 'api.tasks.auto_store_jenkins_builds_task',
-        'schedule': crontab(minute='*/30'),  # 每 30 分鐘執行一次
+        'schedule': crontab(minute=45),  # ✅ 改為每小時 XX:45 執行（降低頻率，錯開 NAS I/O）
         'kwargs': {
-            'limit': 50        # 每次最多處理 50 個 Builds（已從 20 改為 50）
+            'limit': 100        # ✅ 每次處理 100 個 Builds（因頻率降低而增加批次）
         },
         'options': {
-            'expires': 1500,   # 任務超時 25 分鐘（避免與下次重疊）
+            'expires': 900,   # 任務超時 15 分鐘（避免與下次重疊）
             # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
         }
     },
     
-    # 任務 13：清理過期的 Ansible Inventory 快取（每天凌晨 3 點）
+    # 任務 13：清理過期的 Ansible Inventory 快取（每天凌晨 5 點）
     'clean-expired-ansible-caches-daily': {
         'task': '清理過期的 Ansible Inventory 快取',
-        'schedule': crontab(hour=3, minute=30),  # 每天 03:30 執行（DHCP 清理後 30 分鐘）
+        'schedule': crontab(hour=5, minute=0),  # ✅ 改為每天 05:00 執行（延後到清晨）
         'options': {
             'expires': 1800,   # 任務超時 30 分鐘
             # 'queue': 'default',  # 已移除：使用默認隊列 'celery'
@@ -190,10 +190,10 @@ app.conf.beat_schedule = {
         }
     },
     
-    # 任務 15：Jenkins 資料一致性驗證（每天凌晨 3 點，僅檢測不清理）
+    # 任務 15：Jenkins 資料一致性驗證（每天凌晨 2 點，僅檢測不清理）
     'validate-jenkins-data-daily': {
         'task': 'api.tasks.validate_jenkins_data',
-        'schedule': crontab(hour=3, minute=0),  # 每天 03:00 執行
+        'schedule': crontab(hour=2, minute=0),  # ✅ 改為每天 02:00 執行（避免與其他任務衝突）
         'kwargs': {
             'server_id': None,         # None 表示處理所有在線 Server
             'auto_cleanup': False,     # 僅驗證，不自動清理（安全模式）
@@ -207,10 +207,10 @@ app.conf.beat_schedule = {
         }
     },
     
-    # 任務 16：Jenkins 孤立資料自動清理（每週日凌晨 4 點）
+    # 任務 16：Jenkins 孤立資料自動清理（每週日凌晨 1 點）
     'cleanup-orphaned-jenkins-data-weekly': {
         'task': 'api.tasks.validate_jenkins_data',
-        'schedule': crontab(hour=4, minute=0, day_of_week=0),  # 每週日 04:00 執行
+        'schedule': crontab(hour=1, minute=0, day_of_week=0),  # ✅ 改為每週日 01:00 執行（提前 3 小時）
         'kwargs': {
             'server_id': None,         # None 表示處理所有在線 Server
             'auto_cleanup': True,      # 自動清理孤立資料
