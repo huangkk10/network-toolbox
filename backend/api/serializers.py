@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.utils import timezone as django_timezone
 from .models import (
-    DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, NTPSyncLog,
+    DHCPServer, DHCPLease, DHCPLog, NASConnectionLog, NTPSyncLog, NTPSyncOperation,
     IPXEServer, IPXELog, IPXEStatistics, IPXENetworkQuality,
     NetworkSwitch, SwitchPort, GitLabConnection,
     JenkinsServer, JenkinsJob, JenkinsBuild,
@@ -409,6 +409,40 @@ class NTPSyncLogSerializer(serializers.ModelSerializer):
         model = NTPSyncLog
         fields = '__all__'
         read_only_fields = ('created_at',)
+
+
+class NTPSyncOperationSerializer(serializers.ModelSerializer):
+    """NTP 時間同步操作序列化器"""
+    
+    # 自訂序列化方法
+    timestamp = serializers.SerializerMethodField()
+    improvement_percentage = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    
+    def get_timestamp(self, obj):
+        """將 UTC 時間轉換為當前時區（Asia/Taipei）"""
+        if obj.timestamp:
+            local_time = django_timezone.localtime(obj.timestamp)
+            return local_time.strftime('%Y-%m-%d %H:%M:%S')
+        return None
+    
+    def get_improvement_percentage(self, obj):
+        """獲取改善百分比"""
+        return round(obj.improvement_percentage, 2)
+    
+    def get_status_display(self, obj):
+        """獲取狀態顯示"""
+        status_map = {
+            'success': {'text': '成功', 'icon': '✅', 'color': 'green'},
+            'failed': {'text': '失敗', 'icon': '❌', 'color': 'red'},
+            'pending': {'text': '進行中', 'icon': '⏳', 'color': 'orange'},
+        }
+        return status_map.get(obj.status, {'text': obj.status, 'icon': '❓', 'color': 'gray'})
+    
+    class Meta:
+        model = NTPSyncOperation
+        fields = '__all__'
+        read_only_fields = ('timestamp', 'improvement')
 
 
 class AnsibleInventoryImportSerializer(serializers.ModelSerializer):

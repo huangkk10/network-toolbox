@@ -14,7 +14,24 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     python3-dev \
     supervisor \
+    ntpsec-ntpdate \
+    sudo \
     && rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
+# NTP 自動時間同步配置
+# ============================================================================
+# 配置 sudo 無密碼執行 ntpdate
+RUN echo "# Allow root user to run ntpdate without password" > /etc/sudoers.d/ntpdate && \
+    echo "# Created: 2025-11-23" >> /etc/sudoers.d/ntpdate && \
+    echo "# Purpose: NTP auto sync system" >> /etc/sudoers.d/ntpdate && \
+    echo "" >> /etc/sudoers.d/ntpdate && \
+    echo "root ALL=(ALL) NOPASSWD: /usr/sbin/ntpdate" >> /etc/sudoers.d/ntpdate && \
+    echo "" >> /etc/sudoers.d/ntpdate && \
+    echo "# 防止 tty 要求問題" >> /etc/sudoers.d/ntpdate && \
+    echo "Defaults:root !requiretty" >> /etc/sudoers.d/ntpdate && \
+    chmod 0440 /etc/sudoers.d/ntpdate && \
+    visudo -c
 
 # 建立 Supervisor 日誌目錄
 RUN mkdir -p /var/log/supervisor

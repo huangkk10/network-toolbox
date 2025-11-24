@@ -132,6 +132,18 @@ app.conf.beat_schedule = {
         }
     },
     
+    # 任務 10-1：【即時監控】活躍 Jenkins Builds 高頻同步（每 1 分鐘執行一次）
+    'sync-active-jenkins-builds-every-1-minute': {
+        'task': 'api.tasks.sync_active_jenkins_builds',
+        'schedule': crontab(minute='*/1'),  # 每 1 分鐘執行一次
+        'kwargs': {
+            'server_id': None,  # None 表示處理所有 Server
+        },
+        'options': {
+            'expires': 55,    # 任務超時 55 秒（避免與下次重疊）
+        }
+    },
+    
     # 任務 11：Jenkins Workspace 自動存儲（每小時整點）
     'auto-store-jenkins-workspaces-hourly': {
         'task': 'api.tasks.auto_store_workspaces',

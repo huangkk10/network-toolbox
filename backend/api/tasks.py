@@ -2159,6 +2159,266 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
 
 
 # ============================================================================
+# 即時監控：高頻同步活躍 Jenkins Builds (1 分鐘)
+# ============================================================================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_active_jenkins_builds',
+    max_retries=2,
+    time_limit=60  # 1 分鐘超時
+)
+def sync_active_jenkins_builds(self, server_id=None):
+    """
+    高頻同步活躍的 Jenkins Builds（1 分鐘執行一次）
+    
+    【策略】
+    - 只同步 is_building=True 的 Builds（正在構建中的）
+    - 更新 Pipeline Stages、result、duration、failed_stage
+    - 不發現新 Builds（由 sync_jenkins_builds 負責）
+    - 輕量級、快速執行（預計 5-15 秒）
+    
+    【參數】
+    - server_id: 可選，指定特定伺服器（預設：所有活躍伺服器）
+    
+    【返回】
+    - success: 是否成功
+    - servers_checked: 檢查的伺服器數量
+    - active_builds_found: 找到的活躍 Builds 數量
+    - builds_updated: 更新的 Builds 數量
+    - builds_completed: 完成的 Builds 數量（is_building: True → False）
+    - api_calls: API 調用次數
+    - duration: 執行時間（秒）
+    """
+    start_time = time.time()
+    logger.info('[Celery] 🚀 開始高頻同步活躍 Jenkins Builds')
+    
+    servers_checked = 0
+    active_builds_found = 0
+    builds_updated = 0
+    builds_completed = 0
+    api_calls = 0
+    errors = 0
+    
+    try:
+        # 1️⃣ 獲取活躍伺服器
+        if server_id:
+            servers = JenkinsServer.objects.filter(id=server_id, is_active=True)
+        else:
+            servers = JenkinsServer.objects.filter(is_active=True)
+        
+        if not servers.exists():
+            logger.warning('[Celery] ⚠️ 沒有活躍的 Jenkins 伺服器')
+            return {
+                'success': True,
+                'servers_checked': 0,
+                'active_builds_found': 0,
+                'builds_updated': 0,
+                'builds_completed': 0,
+                'api_calls': 0,
+                'duration': time.time() - start_time,
+            }
+        
+        # 2️⃣ 查詢所有活躍的 Builds（is_building=True）
+        # 使用 select_related 優化查詢，避免 N+1 問題
+        active_builds = JenkinsBuild.objects.filter(
+            is_building=True,
+            job__server__is_active=True
+        ).select_related('job', 'job__server').order_by('-build_timestamp')
+        
+        active_builds_found = active_builds.count()
+        
+        if active_builds_found == 0:
+            logger.info('[Celery] ✅ 沒有活躍的 Builds，跳過同步')
+            return {
+                'success': True,
+                'servers_checked': servers.count(),
+                'active_builds_found': 0,
+                'builds_updated': 0,
+                'builds_completed': 0,
+                'api_calls': 0,
+                'duration': time.time() - start_time,
+            }
+        
+        logger.info(f'[Celery] 📊 找到 {active_builds_found} 個活躍 Builds')
+        
+        # 3️⃣ 按伺服器分組處理
+        builds_by_server = {}
+        for build in active_builds:
+            server_id = build.job.server.id
+            if server_id not in builds_by_server:
+                builds_by_server[server_id] = []
+            builds_by_server[server_id].append(build)
+        
+        # 4️⃣ 對每個伺服器進行同步
+        builds_to_update = []
+        
+        for server in servers:
+            if server.id not in builds_by_server:
+                continue
+            
+            servers_checked += 1
+            server_builds = builds_by_server[server.id]
+            
+            logger.info(f'[Celery] 🔄 同步伺服器: {server.name} ({len(server_builds)} 個活躍 Builds)')
+            
+            # 建立 Jenkins 客戶端連接
+            client = None
+            try:
+                from library.services.jenkins_client import JenkinsClient
+                client = JenkinsClient(server.url, server.username, server.api_token)
+                
+                # 5️⃣ 對每個活躍 Build 進行更新
+                for build in server_builds:
+                    try:
+                        # 從 Jenkins API 獲取最新狀態
+                        # get_job_builds 返回 Build 列表，我們只取第一個（最新的）
+                        build_list = client.get_job_builds(build.job.name, limit=1)
+                        api_calls += 1
+                        
+                        if not build_list:
+                            logger.warning(f'[Celery]   ⚠️ 無法獲取 Build 資訊: {build.job.name} #{build.build_number}')
+                            continue
+                        
+                        # 找到對應的 Build（可能返回的是最新 Build，不一定是我們要的）
+                        # 所以我們需要檢查 build_number 是否匹配
+                        build_info = None
+                        for b in client.get_job_builds(build.job.name, limit=5):
+                            if b.get('number') == build.build_number:
+                                build_info = b
+                                break
+                        
+                        if not build_info:
+                            logger.warning(f'[Celery]   ⚠️ 找不到對應的 Build: {build.job.name} #{build.build_number}')
+                            continue
+                        
+                        # 檢查是否有變化
+                        needs_update = False
+                        
+                        # 6️⃣ 更新基本資訊
+                        new_result = build_info.get('result')
+                        new_building = build_info.get('building', False)
+                        new_duration = build_info.get('duration', 0)
+                        
+                        # Result 變化
+                        if new_result and new_result != build.result:
+                            build.result = new_result
+                            needs_update = True
+                            logger.info(f'[Celery]   🔄 {build.job.name} #{build.build_number}: {build.result} → {new_result}')
+                        
+                        # Building 狀態變化（完成構建）
+                        if build.is_building and not new_building:
+                            build.is_building = False
+                            builds_completed += 1
+                            needs_update = True
+                            logger.info(f'[Celery]   ✅ {build.job.name} #{build.build_number} 構建完成')
+                        
+                        # Duration 更新
+                        if new_duration > 0 and build.duration != new_duration:
+                            build.duration = new_duration
+                            needs_update = True
+                        
+                        # 7️⃣ 同步 Pipeline Stages（所有活躍 Builds，不只 FAILURE）
+                        try:
+                            pipeline_nodes = client.get_blue_ocean_pipeline_nodes(build.job.name, build.build_number)
+                            
+                            if pipeline_nodes:
+                                build.pipeline_stages = pipeline_nodes
+                                needs_update = True
+                                
+                                # 如果有失敗的 Stage，提取第一個
+                                failed_stages = [
+                                    node for node in pipeline_nodes 
+                                    if node.get('result') in ['FAILURE', 'ABORTED', 'UNSTABLE']
+                                ]
+                                
+                                if failed_stages and not build.failed_stage:
+                                    first_failed = failed_stages[0]
+                                    build.failed_stage = (
+                                        first_failed.get('displayName') or 
+                                        first_failed.get('name')
+                                    )
+                                    logger.info(f'[Celery]   🎯 發現失敗 Stage: {build.failed_stage}')
+                        
+                        except Exception as e:
+                            # Pipeline Stages 同步失敗不影響其他更新
+                            logger.warning(f'[Celery]   ⚠️ 無法同步 Pipeline Stages: {e}')
+                        
+                        # 8️⃣ 收集需要更新的 Build
+                        if needs_update:
+                            builds_to_update.append(build)
+                    
+                    except Exception as e:
+                        errors += 1
+                        logger.error(f'[Celery]   ❌ 更新 Build 失敗: {build.job.name} #{build.build_number} - {e}')
+            
+            except Exception as e:
+                errors += 1
+                logger.error(f'[Celery] ❌ 連接伺服器失敗: {server.name} - {e}', exc_info=True)
+            
+            finally:
+                if client:
+                    client.close()
+        
+        # 9️⃣ 批量更新所有變化的 Builds
+        if builds_to_update:
+            try:
+                JenkinsBuild.objects.bulk_update(
+                    builds_to_update,
+                    ['result', 'is_building', 'duration', 'pipeline_stages', 'failed_stage'],
+                    batch_size=50
+                )
+                builds_updated = len(builds_to_update)
+                logger.info(f'[Celery] ✅ 批量更新 {builds_updated} 個活躍 Builds')
+            except Exception as e:
+                errors += 1
+                logger.error(f'[Celery] ❌ 批量更新失敗: {e}', exc_info=True)
+        
+        # 🔟 記錄結果
+        duration = time.time() - start_time
+        logger.info('[Celery] ✅ 高頻同步完成')
+        logger.info(f'[Celery]   - 檢查伺服器: {servers_checked} 個')
+        logger.info(f'[Celery]   - 活躍 Builds: {active_builds_found} 個')
+        logger.info(f'[Celery]   - 更新 Builds: {builds_updated} 個')
+        logger.info(f'[Celery]   - 完成 Builds: {builds_completed} 個')
+        logger.info(f'[Celery]   - API 調用: {api_calls} 次')
+        logger.info(f'[Celery]   - 錯誤: {errors} 個')
+        logger.info(f'[Celery]   - 執行時間: {duration:.2f} 秒')
+        
+        return {
+            'success': True,
+            'servers_checked': servers_checked,
+            'active_builds_found': active_builds_found,
+            'builds_updated': builds_updated,
+            'builds_completed': builds_completed,
+            'api_calls': api_calls,
+            'errors': errors,
+            'duration': duration,
+        }
+    
+    except Exception as exc:
+        duration = time.time() - start_time
+        logger.error(f'[Celery] ❌ 高頻同步失敗（執行 {duration:.2f} 秒）', exc_info=True)
+        
+        # 自動重試（最多 2 次，30 秒後重試）
+        try:
+            raise self.retry(exc=exc, countdown=30)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 高頻同步重試次數已達上限')
+            return {
+                'success': False,
+                'servers_checked': 0,
+                'active_builds_found': 0,
+                'builds_updated': 0,
+                'builds_completed': 0,
+                'api_calls': 0,
+                'errors': 0,
+                'duration': duration,
+                'error_message': str(exc),
+            }
+
+
+# ============================================================================
 # iPXE 日誌同步任務
 # ============================================================================
 

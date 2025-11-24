@@ -960,6 +960,118 @@ class NTPSyncLog(models.Model):
         return f"[{self.status}] {self.timestamp} - {self.ntp_server}"
 
 
+class NTPSyncOperation(models.Model):
+    """NTP 時間同步操作記錄 - 記錄每次自動/手動時間校正操作"""
+    
+    SYNC_METHOD_CHOICES = [
+        ('ntpdate', 'ntpdate'),
+        ('chrony', 'chronyd'),
+        ('manual', 'Manual'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('success', 'Success'),
+        ('failed', 'Failed'),
+    ]
+    
+    TRIGGERED_BY_CHOICES = [
+        ('auto', 'Auto'),
+        ('manual', 'Manual'),
+        ('alert', 'Alert'),
+    ]
+    
+    # 基本資訊
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name='操作時間', db_index=True)
+    ntp_server = models.CharField(max_length=100, verbose_name='NTP 服務器', default='10.10.10.51')
+    sync_method = models.CharField(
+        max_length=20,
+        choices=SYNC_METHOD_CHOICES,
+        default='ntpdate',
+        verbose_name='同步方法'
+    )
+    
+    # 同步前後狀態
+    offset_before = models.FloatField(verbose_name='同步前偏移 (ms)', help_text='同步前系統時間與 NTP 服務器的偏移量')
+    offset_after = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name='同步後偏移 (ms)',
+        help_text='同步後系統時間與 NTP 服務器的偏移量'
+    )
+    
+    # 執行結果
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='pending',
+        verbose_name='狀態',
+        db_index=True
+    )
+    duration = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name='執行時間 (秒)',
+        help_text='同步操作耗時'
+    )
+    
+    # 詳細資訊
+    command_output = models.TextField(blank=True, verbose_name='命令輸出', help_text='ntpdate 或 chrony 命令的輸出')
+    error_message = models.TextField(blank=True, verbose_name='錯誤訊息', help_text='同步失敗時的錯誤描述')
+    
+    # 決策資訊
+    triggered_by = models.CharField(
+        max_length=50,
+        choices=TRIGGERED_BY_CHOICES,
+        default='auto',
+        verbose_name='觸發方式',
+        help_text='auto: 自動觸發, manual: 手動觸發, alert: 告警觸發',
+        db_index=True
+    )
+    sync_decision_reason = models.TextField(
+        blank=True,
+        verbose_name='同步決策原因',
+        help_text='為什麼執行此次同步（例如：偏移超過閾值 200ms）'
+    )
+    
+    # 改善度量
+    improvement = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name='改善量 (ms)',
+        help_text='同步前後偏移量的改善值'
+    )
+    
+    class Meta:
+        verbose_name = 'NTP 同步操作'
+        verbose_name_plural = 'NTP 同步操作'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp'], name='idx_ntp_op_timestamp'),
+            models.Index(fields=['status'], name='idx_ntp_op_status'),
+            models.Index(fields=['triggered_by'], name='idx_ntp_op_trigger'),
+            models.Index(fields=['-timestamp', 'status'], name='idx_ntp_op_time_status'),
+        ]
+    
+    def __str__(self):
+        status_icon = '✅' if self.status == 'success' else '❌' if self.status == 'failed' else '⏳'
+        return f"{status_icon} {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')} - {self.sync_method} ({self.status})"
+    
+    def save(self, *args, **kwargs):
+        """保存前自動計算改善量"""
+        if self.offset_before is not None and self.offset_after is not None:
+            self.improvement = abs(self.offset_before) - abs(self.offset_after)
+        super().save(*args, **kwargs)
+    
+    @property
+    def improvement_percentage(self):
+        """計算改善百分比"""
+        if self.offset_before and self.offset_after and abs(self.offset_before) > 0:
+            improvement = abs(self.offset_before) - abs(self.offset_after)
+            return (improvement / abs(self.offset_before)) * 100
+        return 0
+
+
 class AnsibleInventoryImport(models.Model):
     """Ansible Inventory 導入記錄"""
     
