@@ -6,6 +6,7 @@ Celery 定時任務
 
 import logging
 import time
+from pathlib import Path
 from typing import Dict, Any
 from celery import shared_task
 from django.db.models import Count, Q
@@ -3139,17 +3140,22 @@ def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
                 'error': error_msg
             }
         
-        # 檢查是否已存儲
-        if build.is_workspace_stored:
-            logger.info(f'[Celery] Build 已存儲，跳過 - {build.job.name} #{build.build_number}')
+        # 檢查是否已存儲（Workspace + Console Log 都存在才算完整存儲）
+        if build.is_workspace_stored and build.log_file_path:
+            logger.info(f'[Celery] Build 已完整存儲（Workspace + Console Log），跳過 - {build.job.name} #{build.build_number}')
             return {
                 'success': True,
                 'build_id': build_id,
                 'job_name': build.job.name,
                 'build_number': build.build_number,
                 'already_stored': True,
-                'workspace_path': build.workspace_path
+                'workspace_path': build.workspace_path,
+                'log_file_path': build.log_file_path
             }
+        
+        # 如果只有 Workspace 但沒有 Console Log，記錄並繼續處理
+        if build.is_workspace_stored and not build.log_file_path:
+            logger.info(f'[Celery] Build 只有 Workspace，缺少 Console Log，補充下載 - {build.job.name} #{build.build_number}')
         
         # 檢查 Build 狀態（只存儲已完成的 Builds）
         if build.is_building:
@@ -3191,64 +3197,132 @@ def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
         # 構建 Workspace URL
         workspace_url = f"{build.url}ws/"
         
-        # 存儲 Workspace
-        logger.info(f'[Celery] 開始存儲 Workspace - {build.job.name} #{build.build_number}')
-        workspace_result = storage_service.store_workspace(
-            workspace_url=workspace_url,
-            username=server.username,
-            api_token=server.api_token
-        )
-        
         stored_items = []
         total_size = 0
         
-        if workspace_result['success']:
-            logger.info(f'[Celery] Workspace 存儲成功 - 大小: {workspace_result["workspace_size"]} bytes')
+        # 存儲 Workspace（如果尚未存儲）
+        if build.is_workspace_stored and build.workspace_path:
+            logger.info(f'[Celery] Workspace 已存在，跳過下載 - {build.job.name} #{build.build_number}')
             stored_items.append('workspace')
-            total_size += workspace_result['workspace_size']
-            
-            # 更新 Build 記錄
-            build.workspace_path = workspace_result['workspace_path']
-            build.workspace_size = workspace_result['workspace_size']
-            build.workspace_stored_at = timezone.now()
-            build.is_workspace_stored = True
-            build.save(update_fields=[
-                'workspace_path', 'workspace_size', 
-                'workspace_stored_at', 'is_workspace_stored'
-            ])
-            
-            logger.info(f'[Celery] Build 存儲完成 - {build.job.name} #{build.build_number}')
-            
-            return {
-                'success': True,
-                'build_id': build_id,
-                'job_name': build.job.name,
-                'build_number': build.build_number,
-                'server_ip': server_ip,
-                'workspace_path': workspace_result['workspace_path'],
-                'workspace_size': workspace_result['workspace_size'],
-                'stored_items': stored_items,
-                'total_size': total_size
-            }
+            # 從已存儲的 Workspace 計算大小
+            workspace_path = Path(build.workspace_path)
+            if workspace_path.exists():
+                workspace_size = sum(
+                    f.stat().st_size 
+                    for f in workspace_path.rglob('*') 
+                    if f.is_file()
+                )
+                total_size += workspace_size
         else:
-            error_msg = workspace_result.get('error', 'Unknown error')
-            logger.error(f'[Celery] Workspace 存儲失敗 - {error_msg}')
+            logger.info(f'[Celery] 開始存儲 Workspace - {build.job.name} #{build.build_number}')
+            workspace_result = storage_service.store_workspace(
+                workspace_url=workspace_url,
+                username=server.username,
+                api_token=server.api_token
+            )
             
-            # 根據錯誤類型決定是否重試
-            if '404' in error_msg or 'not found' in error_msg.lower():
-                # Workspace 不存在，不重試
-                return {
-                    'success': False,
-                    'build_id': build_id,
-                    'job_name': build.job.name,
-                    'build_number': build.build_number,
-                    'error': error_msg,
-                    'no_retry': True
-                }
+            if workspace_result['success']:
+                logger.info(f'[Celery] Workspace 存儲成功 - 大小: {workspace_result["workspace_size"]} bytes')
+                stored_items.append('workspace')
+                total_size += workspace_result['workspace_size']
             else:
-                # 其他錯誤，可以重試
-                raise Exception(error_msg)
+                logger.warning(
+                    f'[Celery] ⚠️  Workspace 存儲失敗: '
+                    f'{workspace_result.get("error")}'
+                )
         
+        # ===== 存儲 Console Log（無論 Workspace 是否成功都嘗試） =====
+        logger.info(f'[Celery] 📝 開始存儲 Console Log - {build.job.name} #{build.build_number}')
+        
+        try:
+            # 從 Jenkins API 獲取 Console Log
+            from library.services.jenkins_client import JenkinsClient
+            
+            client = JenkinsClient(
+                base_url=server.url,
+                username=server.username,
+                api_token=server.api_token
+            )
+            
+            try:
+                log_content = client.get_console_log(
+                    build.job.name,
+                    build.build_number
+                )
+                
+                # 存儲到 NAS
+                log_result = storage_service.store_console_log(log_content)
+                
+                if log_result['success']:
+                    stored_items.append('console_log')
+                    total_size += log_result['log_size']
+                    
+                    # 更新資料庫
+                    build.log_file_path = log_result['log_path']
+                    
+                    logger.info(
+                        f'[Celery] ✅ Console Log 存儲成功 - '
+                        f'{log_result["log_size"] / (1024**2):.2f} MB'
+                    )
+                else:
+                    logger.warning(
+                        f'[Celery] ⚠️  Console Log 存儲失敗: '
+                        f'{log_result.get("error")}'
+                    )
+                    
+            except requests.HTTPError as e:
+                # 404 錯誤：Console Log 不存在（可能已被清理）
+                if e.response and e.response.status_code == 404:
+                    logger.info(
+                        f'[Celery] Console Log 不存在（可能已被清理）- '
+                        f'{build.job.name} #{build.build_number}'
+                    )
+                else:
+                    logger.warning(
+                        f'[Celery] ⚠️  獲取 Console Log 失敗: {e}',
+                        exc_info=True
+                    )
+                    
+            finally:
+                client.close()
+                    
+        except Exception as e:
+            # Console Log 存儲失敗不影響整體流程
+            logger.warning(
+                f'[Celery] ⚠️  Console Log 處理失敗: {e}',
+                exc_info=True
+            )
+        
+        # 更新 Build 記錄
+        if 'workspace' in stored_items:
+            # 只有成功存儲 Workspace 才更新這些欄位
+            if not build.is_workspace_stored:
+                build.workspace_path = workspace_result['workspace_path']
+                build.workspace_size = workspace_result['workspace_size']
+                build.workspace_stored_at = timezone.now()
+                build.is_workspace_stored = True
+        
+        # 無論 Workspace 是否成功，都保存 log_file_path
+        build.save(update_fields=[
+            'workspace_path', 'workspace_size', 
+            'workspace_stored_at', 'is_workspace_stored',
+            'log_file_path',
+        ])
+        
+        logger.info(f'[Celery] Build 存儲完成 - {build.job.name} #{build.build_number}')
+        
+        return {
+            'success': True,
+            'build_id': build_id,
+            'job_name': build.job.name,
+            'build_number': build.build_number,
+            'server_ip': server_ip,
+            'workspace_path': build.workspace_path,
+            'workspace_size': build.workspace_size if build.workspace_size else 0,
+            'stored_items': stored_items,
+            'total_size': total_size
+        }
+    
     except Exception as exc:
         logger.error(f'[Celery] 存儲 Jenkins Build 失敗 - Build ID: {build_id}', exc_info=True)
         

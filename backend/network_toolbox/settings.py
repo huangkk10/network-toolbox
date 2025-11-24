@@ -375,8 +375,12 @@ JENKINS_STORAGE_POLICY = {
     
     # 存儲內容選擇
     'store_workspace': True,                 # 存儲 Workspace（默認：是）
+    'store_console_log': True,               # 🆕 存儲 Console Log（默認：是）
     'store_config': False,                   # 存儲 config.xml（默認：否，待實現）
-    'store_logs': False,                     # 存儲日誌（默認：否，待實現）
+    'store_logs': False,                     # 存儲日誌（默認：否，已廢棄）
+    
+    # Console Log 特定配置
+    'console_log_encoding': 'utf-8',         # 🆕 Console Log 編碼格式
     
     # 存儲條件過濾
     'store_results': ['SUCCESS', 'FAILURE', 'UNSTABLE', 'ABORTED'],  # 只存儲這些結果的 Builds

@@ -913,55 +913,105 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def console_log(self, request, pk=None):
         """
-        獲取 Build 的控制台日誌
+        獲取 Build 的控制台日誌（增強版）
         
         GET /api/jenkins-builds/{id}/console_log/
         
         支援參數：
-        - from_nas: 是否從 NAS 讀取（預設 false，從 Jenkins API 獲取）
+        - from_nas: 是否從 NAS 讀取（默認 false）
         - tail: 返回最後 N 行（可選）
+        - prefer_nas: 優先從 NAS 讀取，失敗則回退到 Jenkins API（默認 false）
         """
         build = self.get_object()
         from_nas = request.query_params.get('from_nas', 'false').lower() == 'true'
+        prefer_nas = request.query_params.get('prefer_nas', 'false').lower() == 'true'
         tail_lines = request.query_params.get('tail')
         
+        log_content = None
+        source = None
+        
         try:
-            if from_nas:
-                # 從 NAS 讀取（Phase 4 功能，尚未實現）
-                return Response({
-                    'success': False,
-                    'message': 'NAS 存儲服務功能尚未實現（Phase 4）'
-                }, status=status.HTTP_501_NOT_IMPLEMENTED)
-            else:
-                # 從 Jenkins API 獲取
+            # ===== 🆕 修改：支援從 NAS 讀取 =====
+            if from_nas or prefer_nas:
+                # 檢查是否有 NAS 路徑
+                if build.log_file_path:
+                    logger.info(f'嘗試從 NAS 讀取 Console Log: {build.log_file_path}')
+                    
+                    # 使用 JenkinsStorageService 讀取
+                    from library.services.jenkins_storage_service import JenkinsStorageService
+                    
+                    server = build.job.server
+                    server_ip = server.ip_address if server.ip_address else server.url.split('//')[1].split(':')[0]
+                    
+                    storage_service = JenkinsStorageService(
+                        jenkins_server_ip=server_ip,
+                        job_name=build.job.name,
+                        build_number=build.build_number
+                    )
+                    
+                    # 轉換 tail_lines
+                    tail = int(tail_lines) if tail_lines else None
+                    
+                    log_result = storage_service.read_console_log(tail_lines=tail)
+                    
+                    if log_result['success']:
+                        log_content = log_result['log_content']
+                        source = 'nas'
+                        logger.info(f'從 NAS 讀取成功: {log_result["log_size"]} bytes')
+                    else:
+                        logger.warning(f'從 NAS 讀取失敗: {log_result.get("error")}')
+                        
+                        # 如果是 from_nas=true，直接返回錯誤
+                        if from_nas:
+                            return Response({
+                                'success': False,
+                                'message': f'從 NAS 讀取失敗: {log_result.get("error")}'
+                            }, status=status.HTTP_404_NOT_FOUND)
+                else:
+                    # NAS 路徑不存在
+                    if from_nas:
+                        return Response({
+                            'success': False,
+                            'message': 'Console Log 尚未存儲到 NAS'
+                        }, status=status.HTTP_404_NOT_FOUND)
+            
+            # ===== 如果 NAS 讀取失敗或未啟用，從 Jenkins API 獲取 =====
+            if log_content is None:
+                logger.info(f'從 Jenkins API 獲取 Console Log')
+                
                 client = JenkinsClient(
                     base_url=build.job.server.url,
                     username=build.job.server.username,
                     api_token=build.job.server.api_token
                 )
+                
                 try:
                     log_content = client.get_console_log(
                         build.job.name,
                         build.build_number
                     )
+                    source = 'jenkins_api'
+                    
+                    # 如果指定了 tail，處理
+                    if tail_lines:
+                        try:
+                            tail = int(tail_lines)
+                            lines = log_content.split('\n')
+                            log_content = '\n'.join(lines[-tail:])
+                        except ValueError:
+                            pass
+                            
                 finally:
                     client.close()
             
-            # 如果指定了 tail，只返回最後 N 行
-            if tail_lines:
-                try:
-                    tail_lines = int(tail_lines)
-                    lines = log_content.split('\n')
-                    log_content = '\n'.join(lines[-tail_lines:])
-                except ValueError:
-                    pass
-            
             return Response({
+                'success': True,
                 'build_id': build.id,
                 'job_name': build.job.name,
                 'build_number': build.build_number,
                 'log_content': log_content,
-                'source': 'nas' if from_nas else 'jenkins_api'
+                'source': source,  # 'nas' 或 'jenkins_api'
+                'nas_available': bool(build.log_file_path)  # 是否有 NAS 備份
             })
             
         except Exception as e:

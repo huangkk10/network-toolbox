@@ -356,6 +356,60 @@ class JenkinsClient:
         logger.info(f"獲取 Build '{job_name}' #{build_number} 的 Artifacts: 共 {len(artifacts)} 個")
         return artifacts
     
+    def get_console_log(self, job_name: str, build_number: int) -> str:
+        """
+        獲取 Build 的 Console Log
+        
+        Args:
+            job_name: Job 名稱
+            build_number: Build 編號
+            
+        Returns:
+            str: Console Log 內容
+            
+        Raises:
+            requests.RequestException: 請求失敗
+            requests.HTTPError: 404 錯誤（Log 不存在）
+        """
+        url = f"{self.base_url}/job/{job_name}/{build_number}/consoleText"
+        
+        try:
+            response = self._make_request('GET', url)
+            log_content = response.text
+            
+            log_size_mb = len(log_content.encode('utf-8')) / (1024 * 1024)
+            
+            logger.info(
+                f"獲取 Console Log 成功: {job_name} #{build_number} "
+                f"({log_size_mb:.2f} MB)"
+            )
+            
+            # 如果日誌較大，記錄警告
+            if log_size_mb > 50:
+                logger.warning(
+                    f"Console Log 較大: {job_name} #{build_number} "
+                    f"({log_size_mb:.2f} MB)，下載時間可能較長"
+                )
+            
+            return log_content
+            
+        except requests.HTTPError as e:
+            if e.response and e.response.status_code == 404:
+                logger.warning(
+                    f"Console Log 不存在（可能已被清理）: {job_name} #{build_number}"
+                )
+                raise requests.HTTPError(
+                    f"404 Not Found: Console Log for {job_name} #{build_number}",
+                    response=e.response
+                )
+            raise
+        except requests.RequestException as e:
+            logger.error(
+                f"獲取 Console Log 失敗: {job_name} #{build_number} - {e}",
+                exc_info=True
+            )
+            raise
+    
     def get_artifact_size(self, job_name: str, build_number: int, artifact_path: str) -> int:
         """
         獲取 Artifact 檔案大小（使用 HEAD 請求）

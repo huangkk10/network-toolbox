@@ -18,6 +18,7 @@ import json
 
 line = sys.stdin.read()
 if not line:
+
     print('❌ 尚未執行任務（等待下次執行）')
     sys.exit(1)
 

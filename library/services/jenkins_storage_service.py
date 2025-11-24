@@ -752,3 +752,114 @@ class JenkinsStorageService:
                 'success': False,
                 'error': f'存儲失敗: {str(e)}'
             }
+    
+    def store_console_log(
+        self,
+        log_content: str,
+        filename: str = 'console.log'
+    ) -> Dict[str, Any]:
+        """
+        存儲 Console Log 到 NAS
+        
+        Args:
+            log_content: Console Log 內容
+            filename: 檔案名稱（默認：console.log）
+            
+        Returns:
+            dict: {
+                'success': bool,
+                'log_path': str,
+                'log_size': int,
+                'error': str (如果失敗)
+            }
+        """
+        try:
+            # 確保目錄存在
+            self.build_storage_path.mkdir(parents=True, exist_ok=True)
+            
+            # 構建檔案路徑
+            log_path = self.build_storage_path / filename
+            
+            # 寫入檔案
+            logger.info(f"開始存儲 Console Log: {log_path}")
+            
+            with open(log_path, 'w', encoding='utf-8', errors='replace') as f:
+                f.write(log_content)
+            
+            log_size = len(log_content.encode('utf-8'))
+            log_size_mb = log_size / (1024 * 1024)
+            
+            logger.info(
+                f"Console Log 存儲成功: {log_path} ({log_size_mb:.2f} MB)"
+            )
+            
+            return {
+                'success': True,
+                'log_path': str(log_path),
+                'log_size': log_size,
+                'stored_at': datetime.now().isoformat(),
+            }
+            
+        except Exception as e:
+            logger.error(f"存儲 Console Log 失敗: {e}", exc_info=True)
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def read_console_log(
+        self,
+        filename: str = 'console.log',
+        tail_lines: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        從 NAS 讀取 Console Log
+        
+        Args:
+            filename: 檔案名稱
+            tail_lines: 只返回最後 N 行（可選）
+            
+        Returns:
+            dict: {
+                'success': bool,
+                'log_content': str,
+                'log_size': int,
+                'error': str (如果失敗)
+            }
+        """
+        try:
+            log_path = self.build_storage_path / filename
+            
+            if not log_path.exists():
+                return {
+                    'success': False,
+                    'error': f'Console Log 不存在: {log_path}'
+                }
+            
+            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+                log_content = f.read()
+            
+            # 如果指定了 tail_lines
+            if tail_lines:
+                lines = log_content.split('\n')
+                log_content = '\n'.join(lines[-tail_lines:])
+            
+            log_size = len(log_content.encode('utf-8'))
+            
+            logger.info(
+                f"從 NAS 讀取 Console Log 成功: {log_path} "
+                f"({log_size / (1024 * 1024):.2f} MB)"
+            )
+            
+            return {
+                'success': True,
+                'log_content': log_content,
+                'log_size': log_size
+            }
+            
+        except Exception as e:
+            logger.error(f"讀取 Console Log 失敗: {e}", exc_info=True)
+            return {
+                'success': False,
+                'error': str(e)
+            }
