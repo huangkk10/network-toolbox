@@ -153,6 +153,7 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             mac_addresses: 'MAC 地址驗證',
             uart_ssh: 'UART SSH 連線檢查',
             nas_connection: 'NAS 連線檢查',
+            mdt_web: 'MDT Web 檢查',
             network_connectivity: '網路連線測試',
             ssh_authentication: 'SSH 認證測試',
             dhcp_records: 'DHCP 記錄比對',
@@ -226,6 +227,16 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             upload_speed_mbps: '上傳速度 (MB/s)',
             download_speed_mbps: '下載速度 (MB/s)',
             error_message: '錯誤訊息',
+            // MDT Web 檢查相關
+            dhcp_server_ip: 'DHCP Server IP',
+            mdt_web_ip: 'MDT Web IP',
+            mdt_web_accessible: 'MDT Web 可訪問',
+            total_devices: '設備總數',
+            matched_devices: '匹配設備',
+            not_found_count: '未找到設備數',
+            mismatched_count: '不一致設備數',
+            not_found_devices: '未找到的設備',
+            mismatched_devices: '配置不一致的設備',
         };
         return labels[key] || key;
     };
@@ -271,6 +282,84 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
                                         {conn.details.uart_user && <div>User: {conn.details.uart_user}</div>}
                                         {conn.details.uart_port && <div>Port: {conn.details.uart_port}</div>}
                                         {conn.details.error && <div style={{ color: '#ff4d4f' }}>Error: {conn.details.error}</div>}
+                                    </div>
+                                )}
+                            </Space>
+                        </Card>
+                    ))}
+                </div>
+            );
+        }
+        
+        // MDT Web 未找到設備的特殊處理
+        if (key === 'not_found_devices' && Array.isArray(value)) {
+            return (
+                <div style={{ marginTop: 8 }}>
+                    {value.map((device, index) => (
+                        <Card
+                            key={index}
+                            size="small"
+                            style={{
+                                marginBottom: 8,
+                                backgroundColor: '#fff1f0',
+                                border: '1px solid #ffccc7'
+                            }}
+                        >
+                            <Space direction="vertical" style={{ width: '100%' }}>
+                                <div>
+                                    <CloseCircleOutlined style={{ color: '#ff4d4f', marginRight: 8 }} />
+                                    <Text strong>{device.hostname}</Text>
+                                </div>
+                                <div>
+                                    <Text type="secondary">Device Number: </Text>
+                                    <code style={{ backgroundColor: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>
+                                        {device.device_number}
+                                    </code>
+                                </div>
+                            </Space>
+                        </Card>
+                    ))}
+                </div>
+            );
+        }
+        
+        // MDT Web 配置不一致設備的特殊處理
+        if (key === 'mismatched_devices' && Array.isArray(value)) {
+            return (
+                <div style={{ marginTop: 8 }}>
+                    {value.map((device, index) => (
+                        <Card
+                            key={index}
+                            size="small"
+                            style={{
+                                marginBottom: 8,
+                                backgroundColor: '#fffbe6',
+                                border: '1px solid #ffe58f'
+                            }}
+                        >
+                            <Space direction="vertical" style={{ width: '100%' }}>
+                                <div>
+                                    <WarningOutlined style={{ color: '#faad14', marginRight: 8 }} />
+                                    <Text strong>{device.hostname}</Text>
+                                </div>
+                                <div>
+                                    <Text type="secondary">Device Number: </Text>
+                                    <code style={{ backgroundColor: '#f5f5f5', padding: '2px 6px', borderRadius: 3 }}>
+                                        {device.device_number}
+                                    </code>
+                                </div>
+                                {device.differences && device.differences.length > 0 && (
+                                    <div style={{ marginTop: 8 }}>
+                                        <Text type="secondary" strong>配置差異:</Text>
+                                        {device.differences.map((diff, idx) => (
+                                            <div key={idx} style={{ marginTop: 4, fontSize: 12 }}>
+                                                <Tag color="warning">{diff.field}</Tag>
+                                                <div style={{ marginLeft: 20, color: '#8c8c8c' }}>
+                                                    <div>Inventory: <code>{diff.inventory_value}</code></div>
+                                                    <div>MDT Web: <code>{diff.mdt_web_value}</code></div>
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                             </Space>

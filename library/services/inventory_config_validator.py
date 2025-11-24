@@ -54,6 +54,10 @@ class InventoryConfigValidator:
         self.content = ""
         self.parsed_data = {}
         
+        # 快取的 DHCP Server 資訊（在 IP 地址檢查時設定）
+        self._cached_dhcp_server_ip = None
+        self._cached_dhcp_server = None
+        
         # 驗證結果
         self.validation_results = {
             'overall_status': 'unknown',
@@ -102,11 +106,14 @@ class InventoryConfigValidator:
             # 8. NAS 連線檢查（新增）
             self._check_nas_connection()
             
-            # 9. 網路連線測試（可選）
+            # 9. MDT Web 檢查（新增）
+            self._check_mdt_web()
+            
+            # 10. 網路連線測試（可選）
             if self.check_connectivity:
                 self._check_network_connectivity()
             
-            # 10. 計算總體狀態
+            # 11. 計算總體狀態
             self._calculate_overall_status()
             
             logger.info(f"✅ Validation complete. Status: {self.validation_results['overall_status']}")
@@ -518,10 +525,46 @@ class InventoryConfigValidator:
             
             if self.check_dhcp:
                 try:
-                    from api.models import DHCPLease
+                    from api.models import DHCPLease, DHCPServer
                     
-                    # 查詢 DHCP 租約
-                    dhcp_leases = DHCPLease.objects.filter(is_active=True)
+                    # 收集 Inventory 中的所有 IP
+                    inventory_ips = set(ip_map.keys())
+                    
+                    # 找出包含最多匹配 IP 的 DHCP Server
+                    best_match_server = None
+                    best_match_count = 0
+                    
+                    for server in DHCPServer.objects.all():
+                        # 查詢此 Server 的活躍租約
+                        server_leases = DHCPLease.objects.filter(
+                            server=server,
+                            is_active=True
+                        )
+                        server_lease_ips = set(lease.ip_address for lease in server_leases)
+                        
+                        # 計算匹配數量
+                        match_count = len(inventory_ips & server_lease_ips)
+                        
+                        if match_count > best_match_count:
+                            best_match_count = match_count
+                            best_match_server = server
+                    
+                    # 快取找到的 DHCP Server（供 MDT Web 檢查使用）
+                    if best_match_server:
+                        self._cached_dhcp_server = best_match_server
+                        self._cached_dhcp_server_ip = best_match_server.ip_address
+                        logger.info(f"🔍 Found matching DHCP Server: {best_match_server.name} ({best_match_server.ip_address})")
+                    
+                    # 查詢此 DHCP Server 的所有租約（用於統計）
+                    if best_match_server:
+                        dhcp_leases = DHCPLease.objects.filter(
+                            server=best_match_server,
+                            is_active=True
+                        )
+                    else:
+                        # 如果找不到匹配的 Server，查詢所有租約（回退方案）
+                        dhcp_leases = DHCPLease.objects.filter(is_active=True)
+                    
                     dhcp_ips = set(lease.ip_address for lease in dhcp_leases)
                     dhcp_total_leases = len(dhcp_leases)
                     
@@ -1138,6 +1181,333 @@ class InventoryConfigValidator:
                 'details': {'exception': str(e)},
                 'suggestions': [f'檢查發生異常: {str(e)}']
             }
+    
+    def _check_mdt_web(self):
+        """
+        MDT Web 檢查
+        驗證 MDT Web IP 是否正確、可訪問，並檢查設備配置一致性
+        """
+        try:
+            logger.info("🔍 Checking MDT Web configuration...")
+            
+            result = {
+                'status': 'unknown',
+                'message': '',
+                'value': 'N/A',
+                'details': {},
+                'suggestions': []
+            }
+            
+            # 1. 獲取 DHCP Server IP
+            dhcp_server_ip = self._get_dhcp_server_ip()
+            
+            if not dhcp_server_ip:
+                result['status'] = 'warning'
+                result['message'] = '無法確定 DHCP Server IP，跳過 MDT Web 檢查'
+                result['details'] = {'error': 'No DHCP server found'}
+                result['suggestions'] = ['請確認 Inventory 關聯的 DHCP Server']
+                self.validation_results['checks']['mdt_web'] = result
+                logger.warning("⚠️ No DHCP server IP found")
+                return
+            
+            # 2. 計算 MDT Web IP（前三段相同，最後一段為 .2）
+            mdt_web_ip = self._calculate_mdt_web_ip(dhcp_server_ip)
+            
+            result['details']['dhcp_server_ip'] = dhcp_server_ip
+            result['details']['mdt_web_ip'] = mdt_web_ip
+            
+            # 3. 檢查 MDT Web 連接
+            from library.services.mdt_web_service import MDTWebService
+            
+            mdt_service = MDTWebService(mdt_web_ip)
+            is_accessible, connection_error = mdt_service.check_connection()
+            
+            result['details']['mdt_web_accessible'] = is_accessible
+            
+            if not is_accessible:
+                # 檢查是否為未知網段
+                network_prefix = '.'.join(mdt_web_ip.split('.')[:3])
+                is_unknown_network = network_prefix not in [
+                    '10.250.10', '10.250.50', '10.250.71', 
+                    '10.250.120', '10.250.130', '10.250.140'
+                ]
+                
+                if is_unknown_network:
+                    result['status'] = 'warning'
+                    result['message'] = f'此網段可能沒有 MDT Web 伺服器 ({mdt_web_ip})'
+                    result['value'] = '⚠ 未知網段'
+                    result['suggestions'] = [
+                        f'⚠️ {mdt_web_ip} 不在已知的 MDT Web 伺服器列表中',
+                        f'如果此網段確實有 MDT Web，請聯繫管理員更新配置',
+                        f'已知的 MDT Web 伺服器: 10.250.10.2, 10.250.50.2, 10.250.71.2, 等',
+                        f'錯誤詳情: {connection_error}'
+                    ]
+                    logger.warning(f"⚠️ MDT Web not accessible (unknown network): {mdt_web_ip}")
+                else:
+                    result['status'] = 'error'
+                    result['message'] = f'MDT Web 無法訪問 ({mdt_web_ip})'
+                    result['value'] = '✗ 無法連線'
+                    result['suggestions'] = [
+                        f'檢查 MDT Web 伺服器 {mdt_web_ip} 是否運行',
+                        '確認網路連線正常',
+                        '檢查防火牆設定',
+                        f'錯誤: {connection_error}'
+                    ]
+                    logger.error(f"✗ MDT Web not accessible: {mdt_web_ip}")
+                
+                result['details']['connection_error'] = connection_error
+                result['details']['is_unknown_network'] = is_unknown_network
+                self.validation_results['checks']['mdt_web'] = result
+                return
+            
+            # 4. 獲取有 device_number 變數的主機
+            hosts_with_device_number = self._get_inventory_hosts_with_device_number()
+            
+            if not hosts_with_device_number:
+                result['status'] = 'warning'
+                result['message'] = 'Inventory 中沒有定義 device_number 的主機'
+                result['value'] = '⚠ 無設備'
+                result['details']['total_devices'] = 0
+                result['suggestions'] = [
+                    '如需使用 MDT Web 檢查，請為主機添加 device_number 變數',
+                    '範例：host1 device_number=PC-SSD-4052'
+                ]
+                self.validation_results['checks']['mdt_web'] = result
+                logger.warning("⚠️ No hosts with device_number found")
+                return
+            
+            # 5. 逐個驗證設備配置
+            total_devices = len(hosts_with_device_number)
+            matched_devices = 0
+            mismatched_devices = []
+            not_found_devices = []
+            
+            logger.info(f"Validating {total_devices} devices in MDT Web...")
+            
+            for host_config in hosts_with_device_number:
+                hostname = host_config['hostname']
+                device_number = host_config['device_number']
+                ansible_host = host_config.get('ansible_host')
+                mac_address = host_config.get('mac_address')
+                
+                # 驗證配置
+                validation_result = mdt_service.validate_device_config(device_number, {
+                    'hostname': hostname,
+                    'ansible_host': ansible_host,
+                    'mac_address': mac_address
+                })
+                
+                if not validation_result['device_found']:
+                    not_found_devices.append({
+                        'hostname': hostname,
+                        'device_number': device_number
+                    })
+                elif not validation_result['config_matches']:
+                    mismatched_devices.append({
+                        'hostname': hostname,
+                        'device_number': device_number,
+                        'differences': validation_result['differences']
+                    })
+                else:
+                    matched_devices += 1
+            
+            # 6. 判斷整體狀態
+            result['details'].update({
+                'total_devices': total_devices,
+                'matched_devices': matched_devices,
+                'not_found_count': len(not_found_devices),
+                'mismatched_count': len(mismatched_devices),
+                'not_found_devices': not_found_devices[:10],  # 最多顯示 10 個
+                'mismatched_devices': mismatched_devices[:10]
+            })
+            
+            if not_found_devices:
+                result['status'] = 'error'
+                result['message'] = f'{len(not_found_devices)} 個設備在 MDT Web 中找不到'
+                result['value'] = f'✗ {len(not_found_devices)} 缺失'
+            elif mismatched_devices:
+                result['status'] = 'warning'
+                result['message'] = f'{len(mismatched_devices)} 個設備配置不一致'
+                result['value'] = f'⚠ {len(mismatched_devices)} 不一致'
+            else:
+                result['status'] = 'success'
+                result['message'] = f'所有 {total_devices} 個設備配置一致'
+                result['value'] = f'✓ {matched_devices}/{total_devices}'
+            
+            result['suggestions'] = self._generate_mdt_web_suggestions(
+                not_found_devices, 
+                mismatched_devices,
+                mdt_web_ip
+            )
+            
+            self.validation_results['checks']['mdt_web'] = result
+            logger.info(f"✓ MDT Web check complete: {matched_devices}/{total_devices} matched")
+            
+        except Exception as e:
+            logger.error(f"❌ MDT Web check exception: {e}", exc_info=True)
+            self.validation_results['checks']['mdt_web'] = {
+                'status': 'error',
+                'message': f'MDT Web 檢查時發生錯誤: {str(e)}',
+                'value': '✗ 錯誤',
+                'details': {'exception': str(e)},
+                'suggestions': [f'檢查發生異常: {str(e)}']
+            }
+    
+    def _get_dhcp_server_ip(self) -> Optional[str]:
+        """獲取 Inventory 關聯的 DHCP Server IP"""
+        try:
+            # 優先使用快取的值（在 IP 地址檢查時已經找到）
+            if self._cached_dhcp_server_ip:
+                logger.info(f"✓ Using cached DHCP Server IP: {self._cached_dhcp_server_ip}")
+                return self._cached_dhcp_server_ip
+            
+            if not self.inventory:
+                return None
+            
+            # 方法 1: 從 Inventory 中查找定義的 DHCP Server IP
+            # 解析 Inventory 內容，查找可能的 DHCP Server 配置
+            dhcp_server_pattern = re.search(r'dhcp_server[_\s]*(?:ip)?[_\s]*=\s*([0-9.]+)', self.content, re.IGNORECASE)
+            if dhcp_server_pattern:
+                dhcp_ip = dhcp_server_pattern.group(1)
+                logger.info(f"Found DHCP Server IP in Inventory content: {dhcp_ip}")
+                return dhcp_ip
+            
+            # 方法 2: 從第一個主機的 IP 地址推斷 DHCP Server
+            # 假設 DHCP Server IP 是主機 IP 的前三段 + .1
+            ip_match = re.search(r'ansible_host\s*=\s*([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+', self.content)
+            if ip_match:
+                network_prefix = ip_match.group(1)
+                dhcp_ip = f"{network_prefix}.1"
+                logger.info(f"Inferred DHCP Server IP from host network: {dhcp_ip}")
+                
+                # 驗證這個 IP 是否存在於資料庫中
+                from api.models import DHCPServer
+                if DHCPServer.objects.filter(ip_address=dhcp_ip).exists():
+                    logger.info(f"Validated DHCP Server IP exists in database: {dhcp_ip}")
+                    return dhcp_ip
+                else:
+                    logger.warning(f"Inferred DHCP Server IP not found in database: {dhcp_ip}")
+                    return dhcp_ip  # 仍然返回，即使不在資料庫中
+            
+            logger.warning("No DHCP Server IP found in Inventory")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get DHCP Server IP: {e}", exc_info=True)
+            return None
+    
+    def _calculate_mdt_web_ip(self, dhcp_server_ip: str) -> Optional[str]:
+        """計算 MDT Web IP（前三段相同，最後一段為 .2）"""
+        import ipaddress
+        
+        try:
+            # MDT Web IP 映射表（已知的 MDT Web 伺服器）
+            # 格式: {網段前三段: MDT Web IP}
+            known_mdt_web_servers = {
+                '10.250.10': '10.250.10.2',    # 已驗證存在
+                '10.250.11': '10.250.11.2',    # 新增（如果確認存在）
+                '10.250.50': '10.250.50.2',
+                '10.250.71': '10.250.71.2',
+                '10.250.120': '10.250.120.2',
+                '10.250.130': '10.250.130.2',
+                '10.250.140': '10.250.140.2',
+            }
+            
+            ip_obj = ipaddress.IPv4Address(dhcp_server_ip)
+            octets = str(ip_obj).split('.')
+            network_prefix = '.'.join(octets[:3])
+            
+            # 檢查是否在已知列表中
+            if network_prefix in known_mdt_web_servers:
+                mdt_web_ip = known_mdt_web_servers[network_prefix]
+                logger.info(f"✓ Found known MDT Web server: {dhcp_server_ip} → {mdt_web_ip}")
+                return mdt_web_ip
+            
+            # 不在已知列表中，使用預設規則計算
+            octets[-1] = '2'
+            mdt_web_ip = '.'.join(octets)
+            logger.warning(f"⚠️ Using calculated MDT Web IP (not in known list): {dhcp_server_ip} → {mdt_web_ip}")
+            return mdt_web_ip
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate MDT Web IP: {e}", exc_info=True)
+            return None
+    
+    def _get_inventory_hosts_with_device_number(self) -> List[Dict]:
+        """獲取 Inventory 中有 device_number 變數的主機"""
+        try:
+            from api.models import AnsibleHostConfig
+            import json
+            
+            # 查詢所有主機
+            hosts = AnsibleHostConfig.objects.filter(inventory_id=self.inventory_id)
+            
+            result = []
+            for host in hosts:
+                device_number = None
+                
+                # 從 other_vars JSON 欄位中查找 device_number
+                if host.other_vars:
+                    try:
+                        vars_dict = json.loads(host.other_vars) if isinstance(host.other_vars, str) else host.other_vars
+                        device_number = vars_dict.get('device_number')
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+                
+                # 如果找到 device_number，添加到結果
+                if device_number:
+                    result.append({
+                        'hostname': host.hostname,
+                        'device_number': device_number,
+                        'ansible_host': host.ansible_host,
+                        'mac_address': host.mac_address
+                    })
+            
+            logger.info(f"Found {len(result)} hosts with device_number")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to get hosts with device_number: {e}", exc_info=True)
+            return []
+    
+    def _generate_mdt_web_suggestions(
+        self, 
+        not_found_devices: List[Dict], 
+        mismatched_devices: List[Dict],
+        mdt_web_ip: str
+    ) -> List[str]:
+        """生成 MDT Web 檢查建議"""
+        suggestions = []
+        
+        if not_found_devices:
+            suggestions.append(f'⚠️ 有 {len(not_found_devices)} 個設備在 MDT Web 中找不到')
+            suggestions.append('請確認設備名稱（device_number）是否正確')
+            suggestions.append(f'檢查 MDT Web ({mdt_web_ip}) 是否已同步最新設備資訊')
+            
+            if len(not_found_devices) <= 3:
+                device_names = ', '.join([d['device_number'] for d in not_found_devices])
+                suggestions.append(f'缺失設備: {device_names}')
+        
+        if mismatched_devices:
+            suggestions.append(f'⚠️ 有 {len(mismatched_devices)} 個設備配置不一致')
+            
+            # 統計差異類型
+            diff_types = {}
+            for device in mismatched_devices:
+                for diff in device['differences']:
+                    field = diff['field']
+                    diff_types[field] = diff_types.get(field, 0) + 1
+            
+            for field, count in diff_types.items():
+                suggestions.append(f'  • {count} 個設備的 {field} 不一致')
+            
+            suggestions.append('請更新 Inventory 配置或同步 MDT Web 資料')
+        
+        if not suggestions:
+            suggestions.append('✅ 所有設備配置與 MDT Web 一致')
+            suggestions.append(f'MDT Web 伺服器: {mdt_web_ip}')
+        
+        return suggestions
     
     def _is_valid_ip(self, ip_string: str) -> bool:
         """驗證 IPv4 地址格式"""
