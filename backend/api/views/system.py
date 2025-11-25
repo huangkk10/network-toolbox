@@ -536,6 +536,7 @@ def task_trend(request):
             'api.tasks.sync_active_jenkins_builds': 'Jenkins Active Builds',
             'api.tasks.check_nas_connection_task': 'NAS 連線檢測',
             'api.tasks.check_ntp_sync_task': 'NTP 伺服器檢測',
+            'api.tasks.sync_ntp_time_task': 'NTP 時間自動同步',
             'api.tasks.sync_dhcp_logs_by_server_task': 'DHCP 分伺服器同步',
             'api.tasks.cleanup_old_dhcp_logs_task': '清理舊 DHCP 日誌',
             'api.tasks.validate_jenkins_task': 'Jenkins 資料驗證',

@@ -4161,6 +4161,153 @@ def check_ntp_sync_task(self):
             }
 
 
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_ntp_time_task',
+    max_retries=2,
+    default_retry_delay=300,  # 失敗後 5 分鐘重試
+    time_limit=120,  # 硬限制 2 分鐘
+    soft_time_limit=90  # 軟限制 1.5 分鐘
+)
+def sync_ntp_time_task(self):
+    """
+    NTP 時間自動同步定時任務（每天執行一次）
+    
+    功能：
+    1. 檢查是否需要同步（時間偏移 > 200ms）
+    2. 檢查是否允許同步（距離上次同步 >= 30 分鐘）
+    3. 執行系統時間同步（使用 ntpdate）
+    4. 記錄同步操作到資料庫
+    
+    Returns:
+        dict: {
+            'success': bool,
+            'sync_executed': bool,      # 是否執行了同步
+            'offset_before': float,     # 同步前偏移（ms）
+            'offset_after': float,      # 同步後偏移（ms）
+            'improvement': float,       # 改善量（ms）
+            'duration': float,          # 執行時間（秒）
+            'reason': str,              # 決策原因
+            'timestamp': str
+        }
+    """
+    try:
+        logger.info('[Celery] 開始執行 NTP 時間自動同步檢查')
+        
+        from .ntp_service import NTPSyncService
+        from .models import NTPSyncOperation
+        
+        # 創建 NTP 同步服務
+        ntp_server = '10.10.10.51'
+        sync_service = NTPSyncService(ntp_server=ntp_server)
+        
+        result = {
+            'success': False,
+            'sync_executed': False,
+            'offset_before': None,
+            'offset_after': None,
+            'improvement': None,
+            'duration': None,
+            'reason': '',
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        # Step 1: 檢查是否允許同步（避免頻繁同步）
+        can_sync, can_sync_reason = sync_service.can_sync_now()
+        
+        if not can_sync:
+            result['reason'] = can_sync_reason
+            result['success'] = True  # 檢查成功，但不執行同步
+            logger.info(f'[Celery] NTP 同步檢查完成 - {can_sync_reason}')
+            return result
+        
+        # Step 2: 檢查是否需要同步（時間偏移是否過大）
+        should_sync, should_sync_reason, avg_offset = sync_service.should_sync(threshold_ms=200.0)
+        
+        if not should_sync:
+            result['reason'] = should_sync_reason
+            result['success'] = True  # 檢查成功，但不需要同步
+            result['offset_before'] = avg_offset
+            logger.info(f'[Celery] NTP 同步檢查完成 - {should_sync_reason}')
+            return result
+        
+        # Step 3: 創建同步操作記錄（pending 狀態）
+        logger.info(f'[Celery] 開始執行時間同步 - {should_sync_reason}')
+        
+        operation = NTPSyncOperation.objects.create(
+            timestamp=timezone.now(),
+            ntp_server=ntp_server,
+            sync_method='ntpdate',
+            triggered_by='auto',
+            status='pending',
+            offset_before=avg_offset,
+            reason=should_sync_reason
+        )
+        
+        # Step 4: 執行實際的時間同步
+        sync_result = sync_service.sync_system_time(
+            method='ntpdate',
+            triggered_by='auto'
+        )
+        
+        # Step 5: 更新操作記錄
+        if sync_result['success']:
+            operation.status = 'success'
+            operation.offset_before = sync_result.get('offset_before')
+            operation.offset_after = sync_result.get('offset_after')
+            operation.improvement = sync_result.get('improvement')
+            operation.duration = sync_result.get('duration')
+            operation.command_output = sync_result.get('command_output', '')
+            operation.save()
+            
+            result.update({
+                'success': True,
+                'sync_executed': True,
+                'offset_before': sync_result.get('offset_before'),
+                'offset_after': sync_result.get('offset_after'),
+                'improvement': sync_result.get('improvement'),
+                'duration': sync_result.get('duration'),
+                'reason': f'同步成功 - {should_sync_reason}'
+            })
+            
+            logger.info(
+                f'[Celery] ✅ NTP 時間同步成功 - '
+                f'改善量: {sync_result.get("improvement", 0):.3f}ms, '
+                f'耗時: {sync_result.get("duration", 0):.2f}秒'
+            )
+        else:
+            operation.status = 'failed'
+            operation.error_message = sync_result.get('error_message', '')
+            operation.duration = sync_result.get('duration')
+            operation.command_output = sync_result.get('command_output', '')
+            operation.save()
+            
+            result.update({
+                'success': False,
+                'sync_executed': True,
+                'reason': f'同步失敗 - {sync_result.get("error_message", "未知錯誤")}'
+            })
+            
+            logger.error(f'[Celery] ❌ NTP 時間同步失敗 - {sync_result.get("error_message")}')
+        
+        return result
+        
+    except Exception as exc:
+        logger.error('[Celery] NTP 時間自動同步異常', exc_info=True)
+        
+        # 自動重試（最多 2 次）
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] NTP 時間自動同步重試次數已達上限')
+            return {
+                'success': False,
+                'sync_executed': False,
+                'error_message': str(exc),
+                'timestamp': timezone.now().isoformat()
+            }
+
+
 # ==================== Jenkins Jobs 自動同步任務 ====================
 
 @shared_task(
