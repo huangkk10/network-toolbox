@@ -67,8 +67,9 @@ from .system import (
     dashboard_stats,
     system_status,
     system_history,
-    task_stats,  # 🆕 任務統計
-    recent_tasks,  # 🆕 最近任務列表
+    task_stats,  # 任務統計
+    recent_tasks,  # 最近任務列表
+    task_trend,  # 🆕 任務執行趨勢
 )
 
 # 明確導出所有公開的 API
@@ -127,6 +128,7 @@ __all__ = [
     'dashboard_stats',
     'system_status',
     'system_history',
-    'task_stats',  # 🆕 任務統計
-    'recent_tasks',  # 🆕 最近任務列表
+    'task_stats',  # 任務統計
+    'recent_tasks',  # 最近任務列表
+    'task_trend',  # 🆕 任務執行趨勢
 ]

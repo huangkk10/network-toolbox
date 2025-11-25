@@ -475,3 +475,151 @@ def recent_tasks(request):
             'success': False,
             'error': str(e)
         }, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def task_trend(request):
+    """
+    獲取任務執行趨勢數據
+    GET /api/system/task-trend/?time_range=1hour&interval=5
+    
+    查詢參數：
+    - time_range: 1hour/6hours/24hours（預設 1hour）
+    - interval: 數據點間隔（分鐘，預設 5）
+    - top_n: 返回前 N 個高頻任務（預設 5）
+    """
+    try:
+        from django_celery_results.models import TaskResult
+        from django.db.models import Count
+        from collections import defaultdict
+        
+        # 獲取查詢參數
+        time_range = request.GET.get('time_range', '1hour')
+        interval_minutes = int(request.GET.get('interval', 5))
+        top_n = int(request.GET.get('top_n', 5))
+        
+        # 計算時間範圍
+        now = timezone.now()
+        if time_range == '1hour':
+            start_time = now - timedelta(hours=1)
+            total_minutes = 60
+        elif time_range == '6hours':
+            start_time = now - timedelta(hours=6)
+            total_minutes = 360
+        elif time_range == '24hours':
+            start_time = now - timedelta(hours=24)
+            total_minutes = 1440
+        else:
+            start_time = now - timedelta(hours=1)
+            total_minutes = 60
+        
+        # 查詢時間範圍內的所有任務
+        all_tasks = TaskResult.objects.filter(
+            date_created__gte=start_time
+        ).order_by('date_created')
+        
+        # 1. 統計各任務總執行次數，找出 TOP N
+        task_counts = defaultdict(int)
+        for task in all_tasks:
+            task_counts[task.task_name] += 1
+        
+        # 排序並取前 N 個
+        top_tasks = sorted(task_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
+        top_task_names = [task_name for task_name, _ in top_tasks]
+        
+        # 任務名稱映射（中文顯示）
+        task_name_map = {
+            'api.tasks.sync_all_dhcp_logs_task': 'DHCP 日誌同步',
+            'api.tasks.sync_jenkins_builds': 'Jenkins Builds 同步',
+            'api.tasks.sync_jenkins_builds_adaptive': 'Jenkins Builds 智能同步',
+            'api.tasks.sync_active_jenkins_builds': 'Jenkins Active Builds',
+            'api.tasks.check_nas_connection_task': 'NAS 連線檢測',
+            'api.tasks.check_ntp_sync_task': 'NTP 伺服器檢測',
+            'api.tasks.sync_dhcp_logs_by_server_task': 'DHCP 分伺服器同步',
+            'api.tasks.cleanup_old_dhcp_logs_task': '清理舊 DHCP 日誌',
+            'api.tasks.validate_jenkins_task': 'Jenkins 資料驗證',
+            'api.tasks.store_jenkins_build_task': '存儲 Jenkins Build',
+            'api.tasks.check_all_ipxe_network_quality_task': 'iPXE 網路質量檢測',
+        }
+        
+        # 2. 按時間區間統計每個任務的執行次數
+        data_points = []
+        current_time = start_time
+        
+        while current_time < now:
+            interval_end = current_time + timedelta(minutes=interval_minutes)
+            
+            # 統計這個時間區間內的任務執行次數
+            interval_tasks = all_tasks.filter(
+                date_created__gte=current_time,
+                date_created__lt=interval_end
+            )
+            
+            # 為每個 TOP 任務統計次數
+            tasks_data = {}
+            for task_name in top_task_names:
+                count = interval_tasks.filter(task_name=task_name).count()
+                display_name = task_name_map.get(task_name, task_name.split('.')[-1])
+                tasks_data[display_name] = count
+            
+            data_points.append({
+                'time': timezone.localtime(current_time).strftime('%H:%M'),
+                **tasks_data
+            })
+            
+            current_time = interval_end
+        
+        # 3. 計算頻率統計
+        frequency_summary = {}
+        for task_name, total_count in top_tasks:
+            display_name = task_name_map.get(task_name, task_name.split('.')[-1])
+            
+            # 計算平均頻率
+            per_minute = total_count / total_minutes if total_minutes > 0 else 0
+            per_hour = per_minute * 60
+            
+            # 判斷執行間隔
+            if per_minute >= 1:
+                frequency_text = f"{per_minute:.1f}次/分鐘"
+            elif per_hour >= 1:
+                frequency_text = f"{per_hour:.1f}次/小時"
+            else:
+                avg_interval = total_minutes / total_count if total_count > 0 else 0
+                frequency_text = f"每{avg_interval:.0f}分鐘"
+            
+            frequency_summary[display_name] = {
+                'total': total_count,
+                'per_minute': round(per_minute, 2),
+                'per_hour': round(per_hour, 1),
+                'frequency_text': frequency_text,
+                'task_name': task_name
+            }
+        
+        logger.info(f'任務趨勢查詢成功: range={time_range}, interval={interval_minutes}min, points={len(data_points)}')
+        
+        return Response({
+            'success': True,
+            'data': {
+                'time_range': time_range,
+                'interval_minutes': interval_minutes,
+                'total_tasks': all_tasks.count(),
+                'data_points': data_points,
+                'frequency_summary': frequency_summary,
+                'top_tasks': [
+                    {
+                        'name': task_name_map.get(name, name.split('.')[-1]),
+                        'count': count,
+                        'task_name': name
+                    }
+                    for name, count in top_tasks
+                ]
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取任務趨勢失敗: {e}', exc_info=True)
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=500)

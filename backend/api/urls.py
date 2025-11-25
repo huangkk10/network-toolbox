@@ -56,8 +56,9 @@ urlpatterns = [
     # 系統監控 API
     path('system/status/', views.system_status, name='system_status'),
     path('system/history/', views.system_history, name='system_history'),
-    path('system/task-stats/', views.task_stats, name='task_stats'),  # 🆕 任務統計
-    path('system/recent-tasks/', views.recent_tasks, name='recent_tasks'),  # 🆕 最近任務列表
+    path('system/task-stats/', views.task_stats, name='task_stats'),  # 任務統計
+    path('system/recent-tasks/', views.recent_tasks, name='recent_tasks'),  # 最近任務列表
+    path('system/task-trend/', views.task_trend, name='task_trend'),  # 🆕 任務執行趨勢
     
     path('', include(router.urls)),
 ]

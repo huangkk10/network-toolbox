@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Button, message, Alert } from 'antd';
+import { Card, Button, message, Alert, Row, Col } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import TaskStatsCards from './TaskStatsCards';
 import RecentTasksTable from './RecentTasksTable';
-import TaskDetailModal from './TaskDetailModal';  // 🆕 導入 Modal
+import TaskDetailModal from './TaskDetailModal';
+import TaskTrendChart from './TaskTrendChart';  // 🆕 趨勢圖
+import TaskFrequencyStats from './TaskFrequencyStats';  // 🆕 頻率統計
 
 const TaskMonitoring = () => {
   const [stats, setStats] = useState(null);
@@ -163,7 +165,17 @@ const TaskMonitoring = () => {
         />
       </Card>
 
-      {/* 🆕 任務詳情 Modal */}
+      {/* 🆕 任務執行趨勢圖 */}
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+        <Col xs={24} lg={16}>
+          <TaskTrendChart />
+        </Col>
+        <Col xs={24} lg={8}>
+          <TaskFrequencyStats />
+        </Col>
+      </Row>
+
+      {/* 任務詳情 Modal */}
       <TaskDetailModal
         task={selectedTask}
         visible={modalVisible}
