@@ -14,6 +14,7 @@ from datetime import timedelta
 import psutil
 import shutil
 import logging
+from celery import current_app
 
 from ..models import DHCPServer, DHCPLease, SystemMonitorHistory, WebsiteUsageStats
 
@@ -289,3 +290,188 @@ def system_history(request):
             {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def task_stats(request):
+    """
+    獲取 Celery 任務統計數據
+    GET /api/system/task-stats/
+    
+    返回：
+    - 當前執行中的任務數量
+    - 今日任務成功/失敗統計
+    - Worker 狀態
+    - 平均執行時間
+    """
+    try:
+        # 1. 獲取 Celery Inspector
+        inspector = current_app.control.inspect()
+        
+        # 2. 當前執行中的任務
+        active_tasks = inspector.active()
+        running_count = sum(len(tasks) for tasks in (active_tasks or {}).values()) if active_tasks else 0
+        
+        # 3. 定時任務數量
+        scheduled_count = len(current_app.conf.beat_schedule)
+        
+        # 4. Worker 狀態
+        stats = inspector.stats()
+        worker_count = len(stats) if stats else 0
+        
+        # 5. 今日任務統計（從 Django Celery Results 查詢）
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        try:
+            from django_celery_results.models import TaskResult
+            
+            today_tasks = TaskResult.objects.filter(
+                date_created__gte=today_start
+            )
+            
+            success_count = today_tasks.filter(status='SUCCESS').count()
+            failure_count = today_tasks.filter(status='FAILURE').count()
+            total_count = today_tasks.count()
+            
+            success_rate = (success_count / total_count * 100) if total_count > 0 else 0
+            
+            # 計算平均執行時間（秒）
+            completed_tasks = today_tasks.filter(
+                status__in=['SUCCESS', 'FAILURE'],
+                date_done__isnull=False
+            )
+            
+            avg_execution_time = 0
+            if completed_tasks.exists():
+                durations = []
+                for task in completed_tasks:
+                    if task.date_done and task.date_created:
+                        duration = (task.date_done - task.date_created).total_seconds()
+                        if duration > 0:
+                            durations.append(duration)
+                
+                avg_execution_time = sum(durations) / len(durations) if durations else 0
+            
+        except ImportError:
+            # 如果沒有安裝 django-celery-results，返回模擬數據
+            logger.warning('django-celery-results 未安裝，返回模擬數據')
+            success_count = 0
+            failure_count = 0
+            total_count = 0
+            success_rate = 0
+            avg_execution_time = 0
+        
+        logger.info(f'任務統計查詢成功: running={running_count}, workers={worker_count}, success_rate={success_rate:.1f}%')
+        
+        # 返回統計數據
+        return Response({
+            'success': True,
+            'data': {
+                'current_tasks': {
+                    'running': running_count,
+                    'pending': 0,  # 需要查詢 Redis 隊列長度（進階功能）
+                    'scheduled': scheduled_count
+                },
+                'today_stats': {
+                    'success': success_count,
+                    'failure': failure_count,
+                    'total': total_count,
+                    'success_rate': round(success_rate, 2)
+                },
+                'workers': {
+                    'total': worker_count,
+                    'active': worker_count,  # 簡化：假設所有 Worker 都活躍
+                    'offline': 0
+                },
+                'avg_execution_time': {
+                    'all_tasks': round(avg_execution_time, 2),
+                    'last_hour': 0  # 進階功能：需要計算最近 1 小時的平均時間
+                }
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取任務統計失敗: {e}', exc_info=True)
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def recent_tasks(request):
+    """
+    獲取最近任務列表
+    GET /api/system/recent-tasks/?limit=10&status=all
+    
+    查詢參數：
+    - limit: 返回數量（預設 10）
+    - status: 過濾狀態（all/SUCCESS/FAILURE/RUNNING）
+    """
+    try:
+        limit = int(request.GET.get('limit', 10))
+        status_filter = request.GET.get('status', 'all')
+        
+        from django_celery_results.models import TaskResult
+        
+        # 查詢最近任務
+        query = TaskResult.objects.all()
+        
+        if status_filter != 'all':
+            query = query.filter(status=status_filter.upper())
+        
+        tasks = query.order_by('-date_created')[:limit]
+        
+        # 任務名稱映射（中文顯示）
+        task_name_map = {
+            'api.tasks.sync_all_dhcp_logs_task': 'DHCP 日誌同步',
+            'api.tasks.sync_jenkins_builds': 'Jenkins Builds 同步',
+            'api.tasks.sync_jenkins_builds_adaptive': 'Jenkins Builds 智能同步',
+            'api.tasks.check_nas_connection_task': 'NAS 連線檢測',
+            'api.tasks.check_ntp_server_status_task': 'NTP 伺服器檢測',
+            'api.tasks.sync_dhcp_logs_by_server_task': 'DHCP 日誌分伺服器同步',
+            'api.tasks.cleanup_old_dhcp_logs_task': '清理舊 DHCP 日誌',
+            'api.tasks.validate_jenkins_task': 'Jenkins 資料驗證',
+            'api.tasks.cleanup_orphaned_jenkins_data_task': '清理孤立 Jenkins 資料',
+            'api.tasks.cleanup_old_build_artifacts_task': '清理舊 Build Artifacts',
+            'api.tasks.cleanup_invalid_ipxe_logs_task': '清理無效 iPXE 日誌',
+        }
+        
+        result = []
+        for task in tasks:
+            # 計算執行時間
+            duration = None
+            if task.date_done and task.date_created:
+                duration = (task.date_done - task.date_created).total_seconds()
+            
+            result.append({
+                'task_id': task.task_id,
+                'task_name': task.task_name,
+                'display_name': task_name_map.get(task.task_name, task.task_name.split('.')[-1]),
+                'status': task.status,
+                'started_at': task.date_created.isoformat() if task.date_created else None,
+                'finished_at': task.date_done.isoformat() if task.date_done else None,
+                'duration': round(duration, 2) if duration else None,
+                'args': task.task_args or '[]',
+                'result': str(task.result) if task.result else None,
+                'error': task.traceback if task.status == 'FAILURE' else None
+            })
+        
+        logger.info(f'最近任務查詢成功: limit={limit}, status={status_filter}, found={len(result)}')
+        
+        return Response({
+            'success': True,
+            'data': {
+                'tasks': result,
+                'total': TaskResult.objects.count()
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f'獲取任務列表失敗: {e}', exc_info=True)
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=500)

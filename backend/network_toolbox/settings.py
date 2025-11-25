@@ -451,3 +451,53 @@ JENKINS_SYNC_PROTECTION = {
     'task_lock_timeout': 3600,               # 任務鎖超時時間（秒）
 }
 
+# Jenkins 智能自適應同步配置
+JENKINS_ADAPTIVE_SYNC = {
+    # CPU 監控配置
+    'enabled': True,                         # 是否啟用智能監控（預設啟用）
+    
+    # CPU 閾值設置
+    'cpu_thresholds': {
+        'target': 70.0,                      # 目標 CPU 使用率（%）
+        'low': 60.0,                         # 低負載閾值（%）- 低於此值可增加批次
+        'high': 85.0,                        # 高負載閾值（%）- 高於此值需暫停
+        'critical': 95.0,                    # 臨界值（%）- 立即停止所有處理
+    },
+    
+    # 批次大小動態調整
+    'batch_sizes': {
+        'min': 1,                            # 最小批次大小
+        'max': 10,                           # 最大批次大小
+        'initial': 3,                        # 初始批次大小
+    },
+    
+    # 暫停策略配置
+    'pause_strategy': {
+        'max_wait_seconds': 300,             # CPU 過載時最大等待時間（5 分鐘）
+        'check_interval': 5,                 # CPU 檢查間隔（秒）
+        'retry_count': 3,                    # 暫停後重試次數
+    },
+    
+    # 下載策略配置
+    'download_strategy': {
+        'enable_console_log': False,         # 是否在同步任務中下載 Console Log
+        'enable_workspace': False,           # 是否在同步任務中下載 Workspace
+        'enable_artifacts': False,           # 是否在同步任務中下載 Artifacts
+    },
+    
+    # 優先級配置
+    'priority': {
+        'active_builds': True,               # 優先處理正在構建的 Builds
+        'recent_failures': True,             # 優先處理最近失敗的 Builds
+        'critical_jobs': [],                 # 關鍵 Jobs 列表（總是優先處理）
+    },
+    
+    # 監控數據收集
+    'metrics': {
+        'collect_cpu_samples': True,         # 收集 CPU 採樣數據
+        'collect_memory_samples': True,      # 收集記憶體採樣數據
+        'collect_io_samples': True,          # 收集 I/O 採樣數據
+        'sample_interval': 1.0,              # 採樣間隔（秒）
+    },
+}
+

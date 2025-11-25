@@ -17,6 +17,7 @@ import {
     ResponsiveContainer,
     Legend,
 } from 'recharts';
+import TaskMonitoring from './SystemMonitor/TaskMonitoring';  // 🆕 導入任務監控組件
 
 const { Option } = Select;
 
@@ -281,6 +282,9 @@ const SystemMonitorPage = () => {
                     </Card>
                 </Col>
             </Row>
+
+            {/* 🆕 背景任務監控 */}
+            <TaskMonitoring />
         </div>
     );
 };

@@ -239,6 +239,29 @@ app.conf.beat_schedule = {
             'expires': 7200,   # 任務超時 2 小時
         }
     },
+    
+    # ============================================================================
+    # 🧠 智能自適應同步任務（可選啟用）
+    # ============================================================================
+    # 如果要啟用智能同步，請取消下面的註釋並停用標準的 sync-jenkins-builds-every-10-minutes
+    # 智能版本會根據 CPU 負載自動調整執行策略，避免系統過載
+    
+    # 'sync-jenkins-builds-adaptive-every-10-minutes': {
+    #     'task': 'api.tasks.sync_jenkins_builds_adaptive',
+    #     'schedule': crontab(minute='*/10'),
+    #     'kwargs': {
+    #         'server_id': None,
+    #         'max_builds_per_job': 20,
+    #         'max_age_days': 30,
+    #         'enable_cpu_monitoring': True,      # 啟用 CPU 監控
+    #         'cpu_high_threshold': 85.0,         # CPU 高負載閾值
+    #         'cpu_low_threshold': 60.0,          # CPU 低負載閾值
+    #         'max_wait_seconds': 300,            # 最大等待時間（5 分鐘）
+    #     },
+    #     'options': {
+    #         'expires': 540,  # 任務超時 9 分鐘
+    #     }
+    # },
 }
 
 

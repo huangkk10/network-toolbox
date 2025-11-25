@@ -5205,3 +5205,333 @@ def cleanup_old_jenkins_builds_task(
             stats['duration'] = duration
             stats['error_message'] = str(exc)
             return stats
+
+
+# ============================================================================
+# 智能自適應 Jenkins Builds 同步任務
+# ============================================================================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.sync_jenkins_builds_adaptive',
+    max_retries=2,
+    default_retry_delay=300,
+    time_limit=3600,
+    soft_time_limit=3300
+)
+def sync_jenkins_builds_adaptive(
+    self,
+    server_id=None,
+    max_builds_per_job=20,
+    max_age_days=3,
+    enable_cpu_monitoring=True,
+    cpu_high_threshold=85.0,
+    cpu_low_threshold=60.0,
+    max_wait_seconds=300
+):
+    """
+    智能自適應 Jenkins Builds 同步任務（CPU 感知版本）
+    
+    相比標準的 sync_jenkins_builds，此版本會：
+    1. 實時監控系統 CPU 使用率
+    2. 當 CPU > 85% 時自動暫停處理
+    3. 當 CPU < 60% 時恢復處理
+    4. 動態調整批次大小以優化性能
+    
+    Args:
+        server_id: Jenkins Server ID（None = 所有）
+        max_builds_per_job: 每個 Job 最多同步幾個 Builds
+        max_age_days: 只同步最近 N 天內的 Builds
+        enable_cpu_monitoring: 是否啟用 CPU 監控（預設 True）
+        cpu_high_threshold: CPU 高負載閾值 (%)
+        cpu_low_threshold: CPU 低負載閾值 (%)
+        max_wait_seconds: CPU 過載時最大等待時間（秒）
+        
+    Returns:
+        dict: 執行結果統計（包含 CPU 監控數據）
+    """
+    from .models import JenkinsServer, JenkinsJob, JenkinsBuild
+    from library.services.jenkins_client import JenkinsClient
+    from library.utils.system_monitor import SystemMonitor, AdaptiveBatchController
+    from datetime import datetime, timedelta
+    from django.utils import timezone as dj_timezone
+    import pytz
+    
+    start_time = time.time()
+    
+    # 初始化系統監控（如果啟用）
+    monitor = None
+    batch_controller = None
+    
+    if enable_cpu_monitoring:
+        monitor = SystemMonitor()
+        batch_controller = AdaptiveBatchController(
+            min_batch_size=1,
+            max_batch_size=10,
+            target_cpu=70.0,
+            low_cpu_threshold=cpu_low_threshold,
+            high_cpu_threshold=cpu_high_threshold
+        )
+        logger.info('[Celery] 🧠 智能自適應模式已啟用（CPU 監控）')
+    
+    try:
+        logger.info('[Celery] 🔄 開始智能同步 Jenkins Builds')
+        logger.info(f'[Celery]   - Server ID: {server_id if server_id else "All"}')
+        logger.info(f'[Celery]   - CPU 監控: {"啟用" if enable_cpu_monitoring else "禁用"}')
+        if enable_cpu_monitoring:
+            logger.info(f'[Celery]   - CPU 閾值: 高={cpu_high_threshold}%, 低={cpu_low_threshold}%')
+        
+        # 計算時間範圍
+        cutoff_time = datetime.now(pytz.UTC) - timedelta(days=max_age_days)
+        
+        # 獲取要處理的 Server
+        if server_id:
+            servers = JenkinsServer.objects.filter(id=server_id, status='online')
+        else:
+            servers = JenkinsServer.objects.filter(status='online')
+        
+        if not servers.exists():
+            logger.warning('[Celery] ⚠️  沒有找到在線的 Jenkins Server')
+            return {
+                'success': False,
+                'total_servers': 0,
+                'error_message': 'No online servers found'
+            }
+        
+        # 統計變數
+        total_servers = servers.count()
+        total_jobs_processed = 0
+        builds_created = 0
+        builds_updated = 0
+        builds_skipped = 0
+        errors = 0
+        
+        # CPU 監控統計
+        cpu_pauses = 0          # CPU 過載導致的暫停次數
+        cpu_wait_time = 0       # CPU 過載等待總時間（秒）
+        cpu_samples = []        # CPU 採樣數據
+        
+        logger.info(f'[Celery] 📡 找到 {total_servers} 個在線的 Jenkins Server')
+        
+        for server in servers:
+            logger.info(f'[Celery] 🖥️  處理 Server: {server.name}')
+            
+            jobs = JenkinsJob.objects.filter(server=server)
+            jobs_count = jobs.count()
+            
+            if jobs_count == 0:
+                continue
+            
+            # 創建 Jenkins Client
+            client = None
+            try:
+                client = JenkinsClient(
+                    base_url=server.url,
+                    username=server.username,
+                    api_token=server.api_token
+                )
+                
+                # 處理每個 Job
+                for job in jobs:
+                    try:
+                        # ✅ CPU 監控：檢查是否需要暫停
+                        if enable_cpu_monitoring and batch_controller.should_pause():
+                            logger.warning(
+                                f'[Celery] 🛑 CPU 過載，暫停處理 Job: {job.name}'
+                            )
+                            
+                            # 等待系統負載降低
+                            pause_start = time.time()
+                            if monitor.monitor_until_low_load(
+                                cpu_threshold=cpu_low_threshold,
+                                max_wait_seconds=max_wait_seconds
+                            ):
+                                pause_duration = time.time() - pause_start
+                                cpu_wait_time += pause_duration
+                                cpu_pauses += 1
+                                logger.info(
+                                    f'[Celery] ✅ 系統負載已降低，'
+                                    f'恢復處理（等待了 {pause_duration:.1f} 秒）'
+                                )
+                            else:
+                                # 超時仍未恢復，記錄並繼續（可能需要跳過部分處理）
+                                pause_duration = time.time() - pause_start
+                                cpu_wait_time += pause_duration
+                                cpu_pauses += 1
+                                logger.warning(
+                                    f'[Celery] ⏰ 等待超時（{max_wait_seconds} 秒），'
+                                    f'強制恢復處理'
+                                )
+                        
+                        # ✅ CPU 監控：記錄當前 CPU 狀態
+                        if enable_cpu_monitoring:
+                            current_metrics = monitor.get_current_metrics()
+                            cpu_samples.append(current_metrics.cpu_percent)
+                            
+                            # 動態調整批次大小
+                            batch_size = batch_controller.adjust_batch_size()
+                            logger.debug(
+                                f'[Celery]   當前 CPU: {current_metrics.cpu_percent:.1f}%, '
+                                f'批次大小: {batch_size}'
+                            )
+                        
+                        # 獲取現有 Builds
+                        existing_builds = {
+                            b.build_number: b
+                            for b in JenkinsBuild.objects.filter(job=job)
+                                .only('id', 'build_number', 'result', 'is_building', 'updated_at')
+                                .order_by('-build_number')[:max_builds_per_job]
+                        }
+                        
+                        # 從 Jenkins API 獲取 Builds
+                        jenkins_builds = client.get_job_builds(job.name, limit=max_builds_per_job)
+                        
+                        if not jenkins_builds:
+                            continue
+                        
+                        # 智能過濾
+                        recent_time = dj_timezone.now() - timedelta(minutes=15)
+                        new_builds = []
+                        builds_to_check = []
+                        
+                        for b in jenkins_builds:
+                            build_num = b.get('number')
+                            if build_num in existing_builds:
+                                db_build = existing_builds[build_num]
+                                if (db_build.is_building or 
+                                    db_build.updated_at >= recent_time or 
+                                    db_build.result in ['UNKNOWN', None]):
+                                    builds_to_check.append((b, db_build))
+                            else:
+                                new_builds.append(b)
+                        
+                        # 處理新 Builds
+                        for build_data in new_builds:
+                            try:
+                                build_number = build_data.get('number')
+                                result = build_data.get('result')
+                                building = build_data.get('building', False)
+                                duration = build_data.get('duration', 0)
+                                url = build_data.get('url', '')
+                                
+                                timestamp = build_data.get('timestamp', 0) / 1000
+                                build_timestamp = datetime.fromtimestamp(timestamp, tz=pytz.UTC)
+                                
+                                if build_timestamp < cutoff_time:
+                                    builds_skipped += 1
+                                    continue
+                                
+                                # 創建 Build
+                                JenkinsBuild.objects.create(
+                                    job=job,
+                                    build_number=build_number,
+                                    display_name=f'#{build_number}',
+                                    url=url,
+                                    result=result or 'UNKNOWN',
+                                    is_building=building,
+                                    duration=duration,
+                                    build_timestamp=build_timestamp,
+                                )
+                                builds_created += 1
+                                
+                            except Exception as e:
+                                logger.error(
+                                    f'[Celery]     ❌ 創建 Build 失敗: {job.name} #{build_number}: {e}'
+                                )
+                                errors += 1
+                        
+                        # 處理需要檢查的 Builds
+                        for build_data, db_build in builds_to_check:
+                            try:
+                                result = build_data.get('result')
+                                building = build_data.get('building', False)
+                                
+                                # 檢查是否需要更新
+                                needs_update = False
+                                if db_build.result != result:
+                                    db_build.result = result or 'UNKNOWN'
+                                    needs_update = True
+                                
+                                if db_build.is_building != building:
+                                    db_build.is_building = building
+                                    needs_update = True
+                                
+                                if needs_update:
+                                    db_build.save(update_fields=['result', 'is_building', 'updated_at'])
+                                    builds_updated += 1
+                                    
+                            except Exception as e:
+                                logger.error(
+                                    f'[Celery]     ❌ 更新 Build 失敗: {job.name} #{db_build.build_number}: {e}'
+                                )
+                                errors += 1
+                        
+                        total_jobs_processed += 1
+                        
+                    except Exception as e:
+                        logger.error(f'[Celery]   ❌ 處理 Job "{job.name}" 失敗: {e}', exc_info=True)
+                        errors += 1
+                        
+            except Exception as e:
+                logger.error(f'[Celery] ❌ 處理 Server "{server.name}" 失敗: {e}', exc_info=True)
+                errors += 1
+                
+            finally:
+                if client:
+                    client.close()
+        
+        # 計算執行時間
+        duration = time.time() - start_time
+        
+        # CPU 統計
+        avg_cpu = sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0
+        max_cpu = max(cpu_samples) if cpu_samples else 0
+        
+        result = {
+            'success': True,
+            'total_servers': total_servers,
+            'total_jobs': total_jobs_processed,
+            'builds_created': builds_created,
+            'builds_updated': builds_updated,
+            'builds_skipped': builds_skipped,
+            'errors': errors,
+            'duration': duration,
+            # CPU 監控數據
+            'cpu_monitoring_enabled': enable_cpu_monitoring,
+            'cpu_pauses': cpu_pauses,
+            'cpu_wait_time': cpu_wait_time,
+            'avg_cpu': avg_cpu,
+            'max_cpu': max_cpu,
+        }
+        
+        logger.info('[Celery] 🎉 智能同步完成')
+        logger.info(f'[Celery]   - Jobs 處理: {total_jobs_processed} 個')
+        logger.info(f'[Celery]   - Builds 創建: {builds_created} 個')
+        logger.info(f'[Celery]   - Builds 更新: {builds_updated} 個')
+        logger.info(f'[Celery]   - Builds 跳過: {builds_skipped} 個')
+        
+        if enable_cpu_monitoring:
+            logger.info(f'[Celery]   - 平均 CPU: {avg_cpu:.1f}%')
+            logger.info(f'[Celery]   - 峰值 CPU: {max_cpu:.1f}%')
+            logger.info(f'[Celery]   - CPU 暫停次數: {cpu_pauses}')
+            logger.info(f'[Celery]   - CPU 等待時間: {cpu_wait_time:.1f} 秒')
+        
+        if errors > 0:
+            logger.warning(f'[Celery]   - 錯誤數量: {errors} 個')
+        
+        logger.info(f'[Celery]   - 總耗時: {duration:.2f} 秒')
+        
+        return result
+        
+    except Exception as exc:
+        logger.error('[Celery] 💥 智能同步任務異常', exc_info=True)
+        
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 智能同步任務重試次數已達上限')
+            return {
+                'success': False,
+                'duration': time.time() - start_time,
+                'error_message': str(exc)
+            }
