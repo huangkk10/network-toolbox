@@ -695,7 +695,27 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             - use_cache: 是否使用快取（默認 true）
         
         Returns:
-            主機的完整配置（包括從群組繼承的所有變量）
+            {
+                'success': True,
+                'hostname': '主機名稱',
+                'config': {
+                    # 主機的完整配置（包括從群組繼承的所有變量）
+                    'ansible_host': 'IP 地址',
+                    'ansible_user': '主機使用者',
+                    'ansible_password': '主機密碼',
+                    'uart_host': 'UART 主機名稱',
+                    ...
+                },
+                'uart_config': {
+                    # UART 主機的完整配置（如果 uart_host 是 hostname）
+                    'hostname': 'UART 主機名稱',
+                    'ansible_host': 'UART IP',
+                    'ansible_user': 'UART 使用者',
+                    'ansible_password': 'UART 密碼',
+                    'ansible_port': UART SSH 端口,
+                    'uart_logger_upload_dir': 'UART Logger 目錄'
+                } or null  # 如果沒有 uart_host 或 uart_host 是 IP 則為 null
+            }
         """
         from library.services.ansible_inventory_service import AnsibleInventoryService
         
@@ -716,9 +736,11 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             if result['success']:
                 latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
                 
-                # 增強功能：自動解析 UART hostname 到 IP
                 config = result['config']
-                if 'uart_host' in config:
+                uart_config = None  # 預設值
+                
+                # 增強功能：自動解析 UART hostname 並獲取 UART 主機完整配置
+                if 'uart_host' in config and config['uart_host']:
                     uart_host = config['uart_host']
                     
                     # 檢查是否為 hostname（非 IP 格式）
@@ -727,22 +749,33 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
                     is_ip = bool(re.match(ip_pattern, uart_host))
                     
                     if not is_ip:
-                        # 是 hostname，從完整 inventory 中解析
-                        full_inventory_result = service.get_full_inventory(use_cache=use_cache)
-                        if full_inventory_result['success']:
-                            hostvars = full_inventory_result['data'].get('_meta', {}).get('hostvars', {})
+                        # uart_host 是 hostname，獲取其完整配置
+                        logger.info(f"Fetching UART host config for: {uart_host}")
+                        uart_result = service.get_host_config(uart_host, use_cache=use_cache)
+                        
+                        if uart_result['success']:
+                            uart_cfg = uart_result['config']
+                            # 構建 UART 配置物件
+                            uart_config = {
+                                'hostname': uart_host,
+                                'ansible_host': uart_cfg.get('ansible_host'),
+                                'ansible_user': uart_cfg.get('ansible_user'),
+                                'ansible_password': uart_cfg.get('ansible_password'),
+                                'ansible_port': uart_cfg.get('ansible_port', 22),
+                                # 可選：其他 UART 相關配置
+                                'uart_logger_upload_dir': uart_cfg.get('uart_logger_upload_dir')
+                            }
+                            logger.info(f"✅ Retrieved UART config for {uart_host}: user={uart_config['ansible_user']}, host={uart_config['ansible_host']}")
                             
-                            if uart_host in hostvars:
-                                uart_config = hostvars[uart_host]
-                                if 'ansible_host' in uart_config:
-                                    # 添加解析後的 IP 和 hostname
-                                    config['UART_IP'] = uart_config['ansible_host']
-                                    config['UART_HOSTNAME'] = uart_host
-                                    logger.info(f"✅ Resolved UART hostname '{uart_host}' -> IP: {uart_config['ansible_host']}")
-                            else:
-                                logger.warning(f"UART hostname '{uart_host}' not found in inventory")
+                            # 相容性處理：保留舊的 UART_IP 欄位
+                            if uart_config['ansible_host']:
+                                config['UART_IP'] = uart_config['ansible_host']
+                                config['UART_HOSTNAME'] = uart_host
+                        else:
+                            logger.warning(f"⚠️ Failed to get UART config for {uart_host}: {uart_result.get('error')}")
                     else:
-                        # 已經是 IP，直接使用
+                        # uart_host 已經是 IP 格式，無法獲取更多資訊
+                        logger.info(f"uart_host is IP format: {uart_host}, skipping config lookup")
                         config['UART_IP'] = uart_host
                 
                 return Response({
@@ -752,7 +785,8 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
                     'build_number': latest_build.build_number if latest_build else None,
                     'cached': result['cached'],
                     'hostname': hostname,
-                    'config': config
+                    'config': config,
+                    'uart_config': uart_config  # 新增：UART 主機配置
                 })
             else:
                 return Response(result, status=status.HTTP_404_NOT_FOUND)

@@ -210,10 +210,14 @@ export const formatConfigForDisplay = (config) => {
 
     // 定義重要欄位的顯示順序和中文名稱
     const importantFields = {
+        // 主機基本資訊（顯示在主機資訊區塊）
         ansible_host: 'IP 地址',
         device_number: '設備號',
         sample_number: '樣品號',
         macaddress: 'MAC 地址',
+        ansible_user: '使用者',
+        ansible_password: '密碼',
+        ansible_port: 'SSH 端口',
         // UART 連接資訊（獨立區塊）- 使用英文標籤
         uart_id: 'UART ID',
         uart_host: 'UART Host',
@@ -222,8 +226,6 @@ export const formatConfigForDisplay = (config) => {
         uart_logger_lowpower_enabled: 'UART Logger Low Power',
         uart_logger_parser_hp_enabled: 'UART Logger Parser HP',
         uart_logger_upload_dir: 'UART Logger Upload Dir',
-        ansible_user: 'User',
-        ansible_password: 'Password',
         // JTAG 配置（獨立區塊）
         enable_jtag_dump: '啟用 JTAG Dump',
         jtag_serial: 'JTAG 序列號',

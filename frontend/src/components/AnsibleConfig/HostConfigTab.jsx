@@ -40,6 +40,7 @@ const { Option } = Select;
 const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     const [selectedHost, setSelectedHost] = useState(initialHostname);
     const [hostConfig, setHostConfig] = useState(null);
+    const [uartConfig, setUartConfig] = useState(null);  // UART 主機配置
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [cached, setCached] = useState(false);
@@ -64,6 +65,7 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
             
             if (response.success) {
                 setHostConfig(response.config);
+                setUartConfig(response.uart_config || null);  // 設定 UART 配置
                 setCached(response.cached);
             } else {
                 throw new Error(response.message || '獲取配置失敗');
@@ -121,40 +123,64 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
 
     // 分類配置項目（configItems 已經不包含測試案例參數）
     const basicItems = configItems.filter(item => 
-        ['ansible_host', 'device_number', 'sample_number', 'macaddress'].includes(item.key)
+        ['ansible_host', 'device_number', 'sample_number', 'macaddress', 'ansible_user', 'ansible_password', 'ansible_port'].includes(item.key)
     );
     
-    // UART 相關配置（根據 key 或 label 識別）
-    const uartItems = configItems.filter(item => {
-        // 根據 key 識別
+    // UART 相關配置（從 configItems 和 uartConfig 組合構建）
+    const uartItems = [];
+    
+    // 從主機配置中提取 UART 基本資訊
+    const uartBasicItems = configItems.filter(item => {
         const uartKeys = [
             'uart_id', 
             'uart_host', 
-            'UART_IP', 
-            'ansible_user', 
-            'ansible_password',
+            'UART_IP',
             'uart_logger_lowpower_enabled',
             'uart_logger_parser_hp_enabled',
             'uart_logger_upload_dir'
-            // UART_HOSTNAME 已移除（與 uart_host 重複）
         ];
-        if (uartKeys.includes(item.key)) return true;
-        
-        // 根據 label 識別（英文）
-        const uartLabels = [
-            'UART ID', 
-            'UART Host', 
-            'UART IP', 
-            'UART Logger Low Power',
-            'UART Logger Parser HP',
-            'UART Logger Upload Dir',
-            'User', 
-            'Password'
-        ];
-        if (uartLabels.includes(item.label)) return true;
-        
-        return false;
+        return uartKeys.includes(item.key);
     });
+    uartItems.push(...uartBasicItems);
+    
+    // 如果有 UART 主機配置，添加 UART 主機的認證資訊
+    if (uartConfig) {
+        // UART IP（優先使用 uartConfig 的 ansible_host）
+        if (uartConfig.ansible_host && !uartItems.find(item => item.key === 'UART_IP')) {
+            uartItems.splice(2, 0, {
+                key: 'uart_ansible_host',
+                label: 'UART IP',
+                value: uartConfig.ansible_host
+            });
+        }
+        
+        // UART User
+        if (uartConfig.ansible_user) {
+            uartItems.push({
+                key: 'uart_ansible_user',
+                label: 'UART User',
+                value: uartConfig.ansible_user
+            });
+        }
+        
+        // UART Password
+        if (uartConfig.ansible_password) {
+            uartItems.push({
+                key: 'uart_ansible_password',
+                label: 'UART Password',
+                value: uartConfig.ansible_password
+            });
+        }
+        
+        // UART Port
+        if (uartConfig.ansible_port) {
+            uartItems.push({
+                key: 'uart_ansible_port',
+                label: 'UART Port',
+                value: uartConfig.ansible_port
+            });
+        }
+    }
     
     // JTAG 相關配置（根據 key 識別）
     const jtagItems = configItems.filter(item => {
@@ -169,11 +195,15 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     });
     
     const ansibleItems = configItems.filter(item => {
-        // 排除已在 UART 區塊顯示的欄位
+        // 排除已在主機資訊區塊顯示的欄位
         const excludeKeys = [
             'ansible_host', 
             'ansible_user', 
-            'ansible_password', 
+            'ansible_password',
+            'ansible_port',
+            'device_number',
+            'sample_number',
+            'macaddress',
             'uart_id', 
             'uart_host', 
             'UART_IP',
