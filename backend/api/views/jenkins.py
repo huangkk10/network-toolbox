@@ -614,6 +614,7 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
                     'job_name': job.name,
                     'build_number': latest_build.build_number if latest_build else None,
                     'cached': result['cached'],
+                    'inventory_path': inventory_path,  # 新增：Inventory 路徑
                     'data': result['data']
                 })
             else:

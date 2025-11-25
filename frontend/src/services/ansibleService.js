@@ -226,11 +226,27 @@ export const formatConfigForDisplay = (config) => {
         uart_logger_lowpower_enabled: 'UART Logger Low Power',
         uart_logger_parser_hp_enabled: 'UART Logger Parser HP',
         uart_logger_upload_dir: 'UART Logger Upload Dir',
+        uart_self_test_enabled: 'UART Self Test Enabled',
         // JTAG 配置（獨立區塊）
         enable_jtag_dump: '啟用 JTAG Dump',
         jtag_serial: 'JTAG 序列號',
-        firmware_sku_keyword: 'Firmware SKU 關鍵字',
         jtag_dump_upload_dir: 'JTAG Dump 上傳目錄',
+        // MDT 配置（獨立區塊）
+        mdt_driver_root: 'MDT Driver Root',
+        mdt_post_install_timeout_min: 'MDT Post Install Timeout (min)',
+        mdt_winpe_install_timeout_min: 'MDT WinPE Install Timeout (min)',
+        mdt_os_build: 'MDT OS Build',
+        mdt_web: 'MDT Web',
+        // NAS 配置（獨立區塊）
+        nas_user: 'NAS User',
+        nas_password: 'NAS Password',
+        // SAF 配置（獨立區塊）
+        saf_comment: 'SAF Comment',
+        saf_comment_full: 'SAF Comment Full',
+        saf_enabled: 'SAF Enabled',
+        saf_mode: 'SAF Mode',
+        // Firmware 相關配置（顯示在其他 Ansible 配置區塊）
+        firmware_sku_keyword: 'Firmware SKU 關鍵字',
         firmware_polling_dir: 'Firmware 輪詢目錄',
         // 其他 Ansible 變數
         ansible_shell_type: 'Shell 類型',

@@ -137,7 +137,8 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
             'UART_IP',
             'uart_logger_lowpower_enabled',
             'uart_logger_parser_hp_enabled',
-            'uart_logger_upload_dir'
+            'uart_logger_upload_dir',
+            'uart_self_test_enabled'
         ];
         return uartKeys.includes(item.key);
     });
@@ -186,12 +187,26 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
     const jtagItems = configItems.filter(item => {
         const jtagKeys = [
             'enable_jtag_dump', 
-            'jtag_serial', 
-            'firmware_sku_keyword',
-            'jtag_dump_upload_dir',
-            'firmware_polling_dir'
+            'jtag_serial',
+            'jtag_dump_upload_dir'
+            // firmware_sku_keyword 和 firmware_polling_dir 不屬於 JTAG 配置
         ];
         return jtagKeys.includes(item.key);
+    });
+    
+    // MDT 相關配置（根據 key 前綴識別）
+    const mdtItems = configItems.filter(item => {
+        return item.key.startsWith('mdt_');
+    });
+    
+    // NAS 相關配置（根據 key 前綴識別）
+    const nasItems = configItems.filter(item => {
+        return item.key.startsWith('nas_');
+    });
+    
+    // SAF 相關配置（根據 key 前綴識別）
+    const safItems = configItems.filter(item => {
+        return item.key.startsWith('saf_');
     });
     
     const ansibleItems = configItems.filter(item => {
@@ -215,8 +230,14 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
         if (excludeKeys.includes(item.key)) return false;
         
         // 排除已在 JTAG 區塊顯示的欄位
-        const jtagKeys = ['enable_jtag_dump', 'jtag_serial', 'firmware_sku_keyword', 'jtag_dump_upload_dir', 'firmware_polling_dir'];
+        const jtagKeys = ['enable_jtag_dump', 'jtag_serial', 'jtag_dump_upload_dir'];
         if (jtagKeys.includes(item.key)) return false;
+        
+        // 排除已在 MDT 區塊顯示的欄位
+        if (item.key.startsWith('mdt_')) return false;
+        
+        // 排除已在 NAS 區塊顯示的欄位
+        if (item.key.startsWith('nas_')) return false;
         
         // 只保留 ansible_ 開頭的欄位
         return item.key.startsWith('ansible_');
@@ -236,7 +257,8 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
             'ansible_password',
             'uart_logger_lowpower_enabled',
             'uart_logger_parser_hp_enabled',
-            'uart_logger_upload_dir'
+            'uart_logger_upload_dir',
+            'uart_self_test_enabled'
             // UART_HOSTNAME 已移除（與 uart_host 重複）
         ];
         if (uartKeys.includes(item.key)) return false;
@@ -244,6 +266,15 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
         // 排除 JTAG 資訊
         const jtagKeys = ['enable_jtag_dump', 'jtag_serial', 'firmware_sku_keyword', 'jtag_dump_upload_dir', 'firmware_polling_dir'];
         if (jtagKeys.includes(item.key)) return false;
+        
+        // 排除 MDT 資訊
+        if (item.key.startsWith('mdt_')) return false;
+        
+        // 排除 NAS 資訊
+        if (item.key.startsWith('nas_')) return false;
+        
+        // 排除 SAF 資訊
+        if (item.key.startsWith('saf_')) return false;
         
         // 排除 Ansible 變數
         if (item.key.startsWith('ansible_')) return false;
@@ -419,6 +450,114 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
                         </Card>
                     )}
 
+                    {/* MDT 配置卡片 */}
+                    {mdtItems.length > 0 && (
+                        <Card 
+                            title={
+                                <Space>
+                                    <DesktopOutlined />
+                                    MDT 配置
+                                </Space>
+                            }
+                            size="small"
+                            style={{ 
+                                borderColor: '#fa8c16',
+                                boxShadow: '0 2px 8px rgba(250, 140, 22, 0.1)'
+                            }}
+                        >
+                            <Descriptions 
+                                column={2} 
+                                bordered
+                                size="small"
+                            >
+                                {mdtItems.map(item => (
+                                    <Descriptions.Item 
+                                        key={item.key} 
+                                        label={<Text strong>{item.label}</Text>}
+                                    >
+                                        <Text copyable={item.value !== 'N/A'}>
+                                            {item.value}
+                                        </Text>
+                                    </Descriptions.Item>
+                                ))}
+                            </Descriptions>
+                        </Card>
+                    )}
+
+                    {/* NAS 配置卡片 */}
+                    {nasItems.length > 0 && (
+                        <Card 
+                            title={
+                                <Space>
+                                    <DesktopOutlined />
+                                    NAS 配置
+                                </Space>
+                            }
+                            size="small"
+                            style={{ 
+                                borderColor: '#13c2c2',
+                                boxShadow: '0 2px 8px rgba(19, 194, 194, 0.1)'
+                            }}
+                        >
+                            <Descriptions 
+                                column={2} 
+                                bordered
+                                size="small"
+                            >
+                                {nasItems.map(item => (
+                                    <Descriptions.Item 
+                                        key={item.key} 
+                                        label={<Text strong>{item.label}</Text>}
+                                    >
+                                        <Text 
+                                            copyable={item.value !== 'N/A'}
+                                            style={{ 
+                                                color: item.label.includes('Password') ? '#ff4d4f' : undefined,
+                                                fontFamily: item.label.includes('Password') ? 'monospace' : undefined
+                                            }}
+                                        >
+                                            {item.value}
+                                        </Text>
+                                    </Descriptions.Item>
+                                ))}
+                            </Descriptions>
+                        </Card>
+                    )}
+
+                    {/* SAF 配置卡片 */}
+                    {safItems.length > 0 && (
+                        <Card 
+                            title={
+                                <Space>
+                                    <DesktopOutlined />
+                                    SAF 配置
+                                </Space>
+                            }
+                            size="small"
+                            style={{ 
+                                borderColor: '#eb2f96',
+                                boxShadow: '0 2px 8px rgba(235, 47, 150, 0.1)'
+                            }}
+                        >
+                            <Descriptions 
+                                column={2} 
+                                bordered
+                                size="small"
+                            >
+                                {safItems.map(item => (
+                                    <Descriptions.Item 
+                                        key={item.key} 
+                                        label={<Text strong>{item.label}</Text>}
+                                    >
+                                        <Text copyable={item.value !== 'N/A'}>
+                                            {item.value}
+                                        </Text>
+                                    </Descriptions.Item>
+                                ))}
+                            </Descriptions>
+                        </Card>
+                    )}
+
                     {/* 測試案例配置卡片 */}
                     {testcaseKeys.length > 0 && (
                         <Card 
@@ -457,15 +596,15 @@ const HostConfigTab = ({ jobId, hosts, initialHostname = null }) => {
                                                         <Card 
                                                             key={index}
                                                             size="small"
-                                                            style={{ marginTop: 8, backgroundColor: testItem.enabled ? '#f6ffed' : '#fff1f0' }}
+                                                            style={{ marginTop: 8, backgroundColor: testItem.enabled ? '#f6ffed' : '#fafafa' }}
                                                             title={
                                                                 <Space>
                                                                     {testItem.enabled ? (
                                                                         <CheckCircleOutlined style={{ color: '#52c41a' }} />
                                                                     ) : (
-                                                                        <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                                                                        <CloseCircleOutlined style={{ color: '#8c8c8c' }} />
                                                                     )}
-                                                                    <Text strong>
+                                                                    <Text strong style={{ color: testItem.enabled ? 'inherit' : '#8c8c8c' }}>
                                                                         測試項目 #{index + 1}
                                                                         {testItem.id && `: ${testItem.id}`}
                                                                     </Text>

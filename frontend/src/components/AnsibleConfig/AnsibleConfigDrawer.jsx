@@ -38,6 +38,7 @@ const AnsibleConfigDrawer = ({
     const [hosts, setHosts] = useState([]);
     const [cached, setCached] = useState(false);
     const [error, setError] = useState(null);
+    const [inventoryPath, setInventoryPath] = useState(null);  // Inventory 路徑
     const [selectedHostForConfig, setSelectedHostForConfig] = useState(null);
 
     // 當 Drawer 打開時載入資料
@@ -58,6 +59,7 @@ const AnsibleConfigDrawer = ({
             if (response.success) {
                 setInventoryData(response);
                 setCached(response.cached);
+                setInventoryPath(response.inventory_path || null);
                 
                 // 解析資料
                 let hostList = parseInventoryToHostList(response);
@@ -144,6 +146,18 @@ const AnsibleConfigDrawer = ({
                 body: { paddingBottom: 80 }
             }}
         >
+            {/* Inventory 路徑顯示 */}
+            {inventoryPath && (
+                <Alert
+                    message="Inventory 路徑"
+                    description={inventoryPath}
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                    closable={false}
+                />
+            )}
+
             {/* 載入中 */}
             {loading && !inventoryData && (
                 <div style={{ 
