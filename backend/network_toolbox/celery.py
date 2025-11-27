@@ -17,6 +17,10 @@ app = Celery('network_toolbox')
 # 從 Django settings 讀取配置（使用 CELERY_ 前綴）
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
+# 明確載入 api.tasks
+# 這確保所有任務都被註冊到 Celery
+app.conf.imports = ('api.tasks',)
+
 # 自動發現所有已安裝應用中的 tasks.py
 app.autodiscover_tasks()
 
@@ -237,6 +241,32 @@ app.conf.beat_schedule = {
         },
         'options': {
             'expires': 7200,   # 任務超時 2 小時
+        }
+    },
+    
+    # 任務 18：補充缺失的 Fatal Error 分析（每小時 15 分）
+    'auto-analyze-missing-fatal-errors-hourly': {
+        'task': 'api.tasks.auto_analyze_missing_fatal_errors_task',
+        'schedule': crontab(minute=15),  # 每小時 XX:15 執行
+        'kwargs': {
+            'limit': 50,       # 每次處理最多 50 個 Builds
+            'days': 7          # 檢查最近 7 天的 Builds
+        },
+        'options': {
+            'expires': 2700,   # 任務超時 45 分鐘（避免與下次重疊）
+        }
+    },
+    
+    # 任務 19：補充缺失的 Fatal Error 分析（每日批量處理，凌晨 2:30）
+    'auto-analyze-missing-fatal-errors-daily': {
+        'task': 'api.tasks.auto_analyze_missing_fatal_errors_task',
+        'schedule': crontab(hour=2, minute=30),  # 每天 02:30 執行
+        'kwargs': {
+            'limit': 200,      # 每次處理最多 200 個 Builds
+            'days': 30         # 檢查最近 30 天的 Builds
+        },
+        'options': {
+            'expires': 5400,   # 任務超時 90 分鐘
         }
     },
     
