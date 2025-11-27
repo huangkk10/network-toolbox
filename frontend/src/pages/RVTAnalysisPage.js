@@ -49,6 +49,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
 import AnsibleInventoryManagerPage from './AnsibleInventoryManagerPage';
+import FatalErrorsButton from '../components/jenkins/FatalErrorsButton';
 import JenkinsStatisticsCharts from '../components/jenkins/JenkinsStatisticsCharts';
 
 const { Content } = Layout;
@@ -775,6 +776,10 @@ const RVTAnalysisPage = () => {
                                     檢查配置
                                 </Button>
                             </Tooltip>
+                            <FatalErrorsButton 
+                                buildId={record.build_id || record.id}
+                                buildResult={record.result}
+                            />
                             <Tooltip title="查看控制台日誌">
                                 <Button 
                                     size="small"

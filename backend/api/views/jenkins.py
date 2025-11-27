@@ -1716,6 +1716,133 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'message': f'檢查失敗: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'], url_path='has_fatal_analysis')
+    def has_fatal_analysis(self, request, pk=None):
+        """
+        檢查 Build 是否有 Fatal Error 分析結果
+        
+        GET /api/jenkins-builds/{id}/has_fatal_analysis/
+        
+        Returns:
+            {
+                'has_analysis': bool,
+                'fatal_count': int | null,
+                'analyzed_at': str | null,
+                'file_path': str | null
+            }
+        """
+        build = self.get_object()
+        
+        # 只有 FAILURE Build 才可能有分析
+        if build.result != 'FAILURE':
+            return Response({
+                'has_analysis': False,
+                'reason': 'Not a FAILURE build'
+            })
+        
+        # 檢查 JSON 文件是否存在
+        if build.log_file_path:
+            from pathlib import Path
+            import json
+            
+            try:
+                # fatal_analysis.json 與 console.log 在同一目錄
+                log_path = Path(build.log_file_path)
+                analysis_path = log_path.parent / 'fatal_analysis.json'
+                
+                if analysis_path.exists():
+                    # 讀取 JSON 文件獲取摘要資訊
+                    with open(analysis_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    logger.info(f'[API] Fatal Analysis 已存在: Build #{build.id}')
+                    
+                    return Response({
+                        'has_analysis': True,
+                        'fatal_count': data['summary'].get('total_fatal_tasks', 0),
+                        'analyzed_at': data['build_info'].get('analyzed_at'),
+                        'file_path': str(analysis_path)
+                    })
+                else:
+                    logger.debug(f'[API] Fatal Analysis 檔案不存在: {analysis_path}')
+                    
+            except Exception as e:
+                logger.error(f'[API] 檢查 Fatal Analysis 失敗: {e}', exc_info=True)
+                return Response({
+                    'has_analysis': False,
+                    'reason': f'Error reading analysis file: {str(e)}'
+                })
+        
+        return Response({
+            'has_analysis': False,
+            'reason': 'Console log not found'
+        })
+    
+    @action(detail=True, methods=['get'], url_path='fatal_analysis')
+    def fatal_analysis(self, request, pk=None):
+        """
+        獲取 Build 的 Fatal Error 分析完整內容
+        
+        GET /api/jenkins-builds/{id}/fatal_analysis/
+        
+        Returns:
+            {
+                'build_info': {...},
+                'summary': {...},
+                'fatal_tasks': [...]
+            }
+        """
+        build = self.get_object()
+        
+        # 只有 FAILURE Build 才可能有分析
+        if build.result != 'FAILURE':
+            return Response({
+                'error': 'Not a FAILURE build'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 檢查 Console Log 是否存在
+        if not build.log_file_path:
+            return Response({
+                'error': 'Console log not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        from pathlib import Path
+        import json
+        
+        try:
+            # fatal_analysis.json 與 console.log 在同一目錄
+            log_path = Path(build.log_file_path)
+            analysis_path = log_path.parent / 'fatal_analysis.json'
+            
+            if not analysis_path.exists():
+                return Response({
+                    'error': 'Fatal analysis file not found',
+                    'hint': 'Analysis may not have been performed yet'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # 讀取並返回完整的分析結果
+            with open(analysis_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            logger.info(
+                f'[API] 返回 Fatal Analysis: Build #{build.id} | '
+                f'Fatal Tasks: {data["summary"].get("total_fatal_tasks", 0)}'
+            )
+            
+            return Response(data)
+            
+        except json.JSONDecodeError as e:
+            logger.error(f'[API] Fatal Analysis JSON 格式錯誤: {e}', exc_info=True)
+            return Response({
+                'error': 'Invalid JSON format in analysis file'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        except Exception as e:
+            logger.error(f'[API] 讀取 Fatal Analysis 失敗: {e}', exc_info=True)
+            return Response({
+                'error': f'Failed to read analysis file: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ========== Standalone API Functions ==========
@@ -1863,3 +1990,4 @@ def jenkins_build_trend(request):
             {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+

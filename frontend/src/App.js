@@ -26,6 +26,7 @@ import RVTManagementPage from './pages/RVTManagementPage';
 import BuildConfigValidatorPage from './pages/BuildConfigValidatorPage';
 import AnsibleInventoryManagerPage from './pages/AnsibleInventoryManagerPage';
 import UserProfilePage from './pages/UserProfilePage';
+import FatalErrorsDetail from './pages/FatalErrorsDetail';
 
 const { Content } = Layout;
 
@@ -267,6 +268,9 @@ function AppLayout() {
                         {/* RVT Analytics 路由 - 僅 Admin 可訪問 */}
                         <Route path="/rvt-analytics" element={<RVTAnalysisPage />} />
                         <Route path="/rvt-analytics/build-config-validator/:buildId" element={<BuildConfigValidatorPage />} />
+                        
+                        {/* Jenkins Build Fatal Errors 路由 */}
+                        <Route path="/jenkins/builds/:buildId/fatal-errors" element={<FatalErrorsDetail />} />
                         
                         {/* Ansible Inventory Manager 路由 */}
                         <Route path="/ansible-inventory-manager" element={<AnsibleInventoryManagerPage />} />

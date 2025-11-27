@@ -3140,18 +3140,138 @@ def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
                 'error': error_msg
             }
         
-        # 檢查是否已存儲（Workspace + Console Log 都存在才算完整存儲）
+        # 檢查是否需要處理
+        # 如果 Workspace 和 Console Log 都已存儲，檢查是否需要補 Fatal 分析
         if build.is_workspace_stored and build.log_file_path:
-            logger.info(f'[Celery] Build 已完整存儲（Workspace + Console Log），跳過 - {build.job.name} #{build.build_number}')
-            return {
-                'success': True,
-                'build_id': build_id,
-                'job_name': build.job.name,
-                'build_number': build.build_number,
-                'already_stored': True,
-                'workspace_path': build.workspace_path,
-                'log_file_path': build.log_file_path
-            }
+            from pathlib import Path
+            
+            # 對 FAILURE Build 檢查是否已有 Fatal 分析
+            if build.result == 'FAILURE':
+                log_path = Path(build.log_file_path)
+                analysis_file = log_path.parent / 'fatal_analysis.json'
+                
+                if analysis_file.exists():
+                    logger.info(
+                        f'[Celery] Build 已完整處理（Workspace + Console Log + Fatal 分析），跳過 - '
+                        f'{build.job.name} #{build.build_number}'
+                    )
+                    return {
+                        'success': True,
+                        'build_id': build_id,
+                        'job_name': build.job.name,
+                        'build_number': build.build_number,
+                        'already_stored': True,
+                        'workspace_path': build.workspace_path,
+                        'log_file_path': build.log_file_path,
+                        'fatal_analysis': str(analysis_file)
+                    }
+                else:
+                    logger.info(
+                        f'[Celery] Build 已存儲但缺少 Fatal 分析，補充分析 - '
+                        f'{build.job.name} #{build.build_number}'
+                    )
+                    
+                    # 直接從已存儲的 Console Log 文件讀取並分析
+                    try:
+                        from library.utils.console_log_analyzer import ConsoleLogAnalyzer
+                        from library.utils.system_monitor import SystemMonitor
+                        
+                        # 檢查 Console Log 文件是否存在
+                        if not log_path.exists():
+                            logger.warning(
+                                f'[Celery] ⚠️  Console Log 文件不存在: {log_path}'
+                            )
+                            return {
+                                'success': False,
+                                'build_id': build_id,
+                                'error': 'Console Log 文件不存在'
+                            }
+                        
+                        # 檢查 CPU 負載
+                        monitor = SystemMonitor(sample_interval=0.5)
+                        metrics = monitor.get_current_metrics()
+                        current_cpu = metrics.cpu_percent
+                        
+                        if current_cpu < 80.0:
+                            logger.info(
+                                f'[Celery] 🔍 補充 Fatal Error 分析 (CPU: {current_cpu:.1f}%) - '
+                                f'{build.job.name} #{build.build_number}'
+                            )
+                            
+                            # 獲取伺服器 IP
+                            server = build.job.server
+                            server_ip = server.ip_address if server.ip_address else server.url.split('//')[1].split(':')[0]
+                            
+                            # 從文件初始化分析器
+                            analyzer = ConsoleLogAnalyzer(
+                                log_file_path=str(log_path),
+                                server_ip=server_ip,
+                                job_name=build.job.name,
+                                build_number=build.build_number
+                            )
+                            
+                            # 執行分析
+                            result = analyzer.analyze_fatal_errors()
+                            
+                            # 總是保存分析結果（即使沒有 fatal）
+                            analyzer.save_analysis_to_json(analysis_file)
+                            
+                            if result['summary']['has_fatal_errors']:
+                                logger.info(
+                                    f'[Celery] ✅ Fatal Error 補充分析完成 - '
+                                    f'總 fatal: {result["summary"]["total_fatal_count"]}, '
+                                    f'唯一 Task: {result["summary"]["unique_task_count"]}'
+                                )
+                            else:
+                                logger.info(
+                                    f'[Celery] ℹ️  未發現 Fatal Errors（已記錄） - '
+                                    f'{build.job.name} #{build.build_number}'
+                                )
+                            
+                            return {
+                                'success': True,
+                                'build_id': build_id,
+                                'job_name': build.job.name,
+                                'build_number': build.build_number,
+                                'fatal_analysis_added': True,
+                                'fatal_count': result['summary']['total_fatal_count']
+                            }
+                        else:
+                            logger.warning(
+                                f'[Celery] ⚠️  CPU 負載過高 ({current_cpu:.1f}%)，'
+                                f'跳過 Fatal Error 補充分析'
+                            )
+                            return {
+                                'success': False,
+                                'build_id': build_id,
+                                'error': f'CPU 負載過高 ({current_cpu:.1f}%)'
+                            }
+                            
+                    except Exception as e:
+                        logger.error(
+                            f'[Celery] ❌ Fatal Error 補充分析失敗: {e}',
+                            exc_info=True
+                        )
+                        return {
+                            'success': False,
+                            'build_id': build_id,
+                            'error': f'Fatal Error 分析失敗: {str(e)}'
+                        }
+            else:
+                # 非 FAILURE Build，已存儲就跳過
+                logger.info(
+                    f'[Celery] Build 已完整存儲（Workspace + Console Log），跳過 - '
+                    f'{build.job.name} #{build.build_number}'
+                )
+                return {
+                    'success': True,
+                    'build_id': build_id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'already_stored': True,
+                    'workspace_path': build.workspace_path,
+                    'log_file_path': build.log_file_path
+                }
         
         # 如果只有 Workspace 但沒有 Console Log，記錄並繼續處理
         if build.is_workspace_stored and not build.log_file_path:
@@ -3264,6 +3384,89 @@ def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
                         f'[Celery] ✅ Console Log 存儲成功 - '
                         f'{log_result["log_size"] / (1024**2):.2f} MB'
                     )
+                    
+                    # ===== 🆕 Phase 2: Fatal Error 分析（僅針對 FAILURE 狀態） =====
+                    if build.result == 'FAILURE':
+                        from pathlib import Path
+                        
+                        # 檢查是否已經分析過（檢查 fatal_analysis.json 是否存在）
+                        output_dir = Path(log_result['log_path']).parent
+                        analysis_file = output_dir / 'fatal_analysis.json'
+                        
+                        if analysis_file.exists():
+                            logger.info(
+                                f'[Celery] ℹ️  Fatal Error 分析已存在，跳過 - '
+                                f'{build.job.name} #{build.build_number} | '
+                                f'分析文件: {analysis_file}'
+                            )
+                        else:
+                            # 檢查 CPU 負載再決定是否執行分析
+                            from library.utils.system_monitor import SystemMonitor
+                            
+                            try:
+                                monitor = SystemMonitor(sample_interval=0.5)
+                                metrics = monitor.get_current_metrics()
+                                current_cpu = metrics.cpu_percent
+                                
+                                if current_cpu < 80.0:  # CPU 低於 80% 才分析
+                                    logger.info(
+                                        f'[Celery] 🔍 開始分析 Console Log Fatal Errors '
+                                        f'(CPU: {current_cpu:.1f}%) - '
+                                        f'{build.job.name} #{build.build_number}'
+                                    )
+                                    
+                                    try:
+                                        from library.utils.console_log_analyzer import ConsoleLogAnalyzer
+                                        
+                                        # 初始化分析器（重用已下載的 log_content）
+                                        analyzer = ConsoleLogAnalyzer(
+                                            log_content=log_content,
+                                            server_ip=server_ip,
+                                            job_name=build.job.name,
+                                            build_number=build.build_number
+                                        )
+                                        
+                                        # 執行分析
+                                        result = analyzer.analyze_fatal_errors()
+                                        
+                                        # 總是保存分析結果（即使沒有 fatal）
+                                        analyzer.save_analysis_to_json(analysis_file)
+                                        
+                                        if result['summary']['has_fatal_errors']:
+                                            logger.info(
+                                                f'[Celery] ✅ Fatal Error 分析完成 - '
+                                                f'總 fatal: {result["summary"]["total_fatal_count"]}, '
+                                                f'唯一 Task: {result["summary"]["unique_task_count"]}, '
+                                                f'結果: {analysis_file}'
+                                            )
+                                        else:
+                                            logger.info(
+                                                f'[Celery] ℹ️  未發現 Fatal Errors（已記錄） - '
+                                                f'{build.job.name} #{build.build_number}'
+                                            )
+                                            
+                                    except Exception as e:
+                                        # 分析失敗不影響主流程
+                                        logger.error(
+                                            f'[Celery] ❌ Console Log 分析失敗: {e}',
+                                            exc_info=True
+                                        )
+                                else:
+                                    logger.warning(
+                                        f'[Celery] ⚠️  CPU 負載過高 ({current_cpu:.1f}%)，'
+                                        f'跳過 Fatal Error 分析 - {build.job.name} #{build.build_number}'
+                                    )
+                            except Exception as e:
+                                # SystemMonitor 初始化失敗也不影響主流程
+                                logger.warning(
+                                    f'[Celery] ⚠️  CPU 監控失敗，跳過 Fatal Error 分析: {e}'
+                                )
+                    else:
+                        logger.debug(
+                            f'[Celery] ℹ️  Build 狀態為 {build.result}，跳過 Fatal Error 分析'
+                        )
+                    # ===== Phase 2 整合結束 =====
+                    
                 else:
                     logger.warning(
                         f'[Celery] ⚠️  Console Log 存儲失敗: '

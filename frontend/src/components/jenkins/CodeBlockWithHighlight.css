@@ -1,0 +1,59 @@
+/* CodeBlockWithHighlight 組件樣式 */
+
+.code-block-container {
+    max-height: 600px;
+    overflow: auto;
+    border: 1px solid #d9d9d9;
+    border-radius: 4px;
+    background-color: #fafafa;
+}
+
+.code-block {
+    margin: 0;
+    padding: 12px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.code-line {
+    display: flex;
+    align-items: flex-start;
+}
+
+.code-line.highlight-fatal {
+    background-color: #fff1f0;
+    border-left: 3px solid #cf1322;
+}
+
+.line-number {
+    display: inline-block;
+    width: 60px;
+    text-align: right;
+    padding-right: 12px;
+    color: #8c8c8c;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.code-line.highlight-fatal .line-number {
+    color: #cf1322;
+    font-weight: bold;
+}
+
+.line-content {
+    flex: 1;
+    white-space: pre;
+    word-break: break-all;
+}
+
+.code-line.highlight-fatal .line-content {
+    color: #cf1322;
+    font-weight: 500;
+}
+
+.code-block-empty {
+    padding: 16px;
+    text-align: center;
+    color: #8c8c8c;
+}
