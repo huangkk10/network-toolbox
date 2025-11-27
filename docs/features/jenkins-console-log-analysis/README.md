@@ -79,6 +79,45 @@
 
 ## 🚀 快速開始
 
+### 自動化功能
+
+系統已配置以下自動化任務：
+
+1. **首次下載分析**：
+   - 當新的 FAILURE Build 下載 Console Log 時，自動執行 Fatal 分析
+   - 無需手動干預
+
+2. **補充分析定時任務** 🆕：
+   - **每小時執行**（每小時的 15 分）：掃描並補充最近 7 天內缺失的分析（限 50 個）
+   - **每日批量執行**（凌晨 2:30）：掃描並補充最近 30 天內缺失的分析（限 200 個）
+
+### 手動觸發補分析
+
+**使用 Management Command**：
+
+```bash
+# 檢查缺失的分析（Dry-run）
+docker exec nt-django python manage.py analyze_missing_fatal_errors --dry-run
+
+# 同步執行（直接分析，不使用 Celery）
+docker exec nt-django python manage.py analyze_missing_fatal_errors --sync --limit 10
+
+# 異步執行（使用 Celery，推薦）
+docker exec nt-django python manage.py analyze_missing_fatal_errors --limit 50
+
+# 自訂參數
+docker exec nt-django python manage.py analyze_missing_fatal_errors \
+    --limit 100 \
+    --days 30 \
+    --sync
+```
+
+**參數說明**：
+- `--limit N`：處理最多 N 個 Builds（默認 20）
+- `--days N`：檢查最近 N 天的 Builds（默認 7）
+- `--sync`：同步執行，直接分析（不使用 Celery）
+- `--dry-run`：只檢查不執行
+
 ### 查看計畫
 
 請參閱 **[實作計畫](./IMPLEMENTATION_PLAN.md)** 了解：
@@ -99,10 +138,13 @@
 - [x] 驗證功能（所有測試通過）
 - [x] 完成報告（[查看報告](./PHASE1_COMPLETION_REPORT.md)）
 
-### Phase 2: 整合到 Celery Task ⏸️
-- [ ] 擴展數據庫模型（可選）
-- [ ] 修改 `store_jenkins_build_task`
-- [ ] 整合測試
+### Phase 2: 整合到 Celery Task ✅
+- [x] 擴展數據庫模型（可選）
+- [x] 修改 `store_jenkins_build_task`
+- [x] 整合測試
+- [x] **創建補分析定時任務** 🆕
+  - 每小時執行：處理 50 個缺失分析的 Builds（最近 7 天）
+  - 每日凌晨執行：處理 200 個缺失分析的 Builds（最近 30 天）
 
 ### Phase 3: API 和前端（可選） ⏸️
 - [ ] 創建 API 端點

@@ -3697,6 +3697,182 @@ def auto_store_jenkins_builds_task(self, limit: int = 20) -> Dict[str, Any]:
             }
 
 
+# ==================== 補充 Fatal Error 分析任務 ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.auto_analyze_missing_fatal_errors_task',
+    max_retries=1,
+    default_retry_delay=300,
+    time_limit=1800,  # 硬限制 30 分鐘
+    soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+def auto_analyze_missing_fatal_errors_task(self, limit: int = 20, days: int = 7) -> Dict[str, Any]:
+    """
+    自動補充缺失的 Fatal Error 分析
+    
+    這個定時任務專門用於補充已存儲但缺少 Fatal 分析的 FAILURE Builds。
+    與 auto_store_jenkins_builds_task 不同，此任務針對已存儲的 Builds。
+    
+    Args:
+        limit: 每次處理的最大 Builds 數量（默認 20）
+        days: 檢查最近幾天的 Builds（默認 7 天）
+        
+    Returns:
+        dict: {
+            'total_missing': int,      # 缺少分析的總數
+            'processed': int,          # 本次處理的數量
+            'tasks_created': int,      # 創建的任務數
+            'skipped': int,            # 跳過的數量
+            'results': list
+        }
+    """
+    from pathlib import Path
+    from django.utils import timezone
+    from datetime import timedelta
+    
+    try:
+        logger.info(
+            f'[Celery] 🔍 開始掃描缺失的 Fatal Error 分析 - '
+            f'Limit: {limit}, Days: {days}'
+        )
+        
+        # 計算時間範圍
+        time_threshold = timezone.now() - timedelta(days=days)
+        
+        # 查詢已存儲但可能缺少 Fatal 分析的 FAILURE Builds
+        # 條件：
+        # 1. result = 'FAILURE'
+        # 2. is_workspace_stored = True
+        # 3. log_file_path 不為空（已下載 Console Log）
+        # 4. is_building = False（已完成）
+        # 5. 在指定時間範圍內
+        query = JenkinsBuild.objects.filter(
+            result='FAILURE',
+            is_workspace_stored=True,
+            log_file_path__isnull=False,
+            is_building=False,
+            build_timestamp__gte=time_threshold
+        ).select_related('job', 'job__server').order_by('-build_timestamp')
+        
+        total_failure_builds = query.count()
+        logger.info(f'[Celery] 找到 {total_failure_builds} 個已存儲的 FAILURE Builds')
+        
+        # 檢查哪些缺少 fatal_analysis.json
+        missing_builds = []
+        for build in query:
+            try:
+                log_path = Path(build.log_file_path)
+                analysis_file = log_path.parent / 'fatal_analysis.json'
+                
+                if not analysis_file.exists():
+                    missing_builds.append(build)
+                    
+                    # 達到限制數量就停止
+                    if len(missing_builds) >= limit:
+                        break
+            except Exception as e:
+                logger.warning(
+                    f'[Celery] 檢查分析文件失敗 - '
+                    f'Build: {build.job.name} #{build.build_number} | '
+                    f'Error: {e}'
+                )
+        
+        total_missing = len(missing_builds)
+        logger.info(
+            f'[Celery] 發現 {total_missing} 個缺少 Fatal 分析的 Builds '
+            f'（將處理前 {limit} 個）'
+        )
+        
+        if total_missing == 0:
+            logger.info('[Celery] ✅ 所有 FAILURE Builds 都已有 Fatal 分析')
+            return {
+                'total_missing': 0,
+                'processed': 0,
+                'tasks_created': 0,
+                'skipped': 0,
+                'results': []
+            }
+        
+        # 創建補分析任務
+        processed = 0
+        tasks_created = 0
+        skipped = 0
+        results = []
+        
+        for build in missing_builds:
+            processed += 1
+            
+            try:
+                # 創建異步補分析任務（重用 store_jenkins_build_task）
+                task = store_jenkins_build_task.delay(build.id)
+                tasks_created += 1
+                
+                logger.info(
+                    f'[Celery] 創建補分析任務 - '
+                    f'Build: {build.job.name} #{build.build_number} | '
+                    f'Task ID: {task.id}'
+                )
+                
+                results.append({
+                    'build_id': build.id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'build_timestamp': build.build_timestamp.isoformat(),
+                    'task_id': task.id,
+                    'status': 'task_created'
+                })
+                
+            except Exception as e:
+                logger.error(
+                    f'[Celery] 創建補分析任務失敗 - '
+                    f'Build: {build.job.name} #{build.build_number} | '
+                    f'Error: {e}',
+                    exc_info=True
+                )
+                skipped += 1
+                results.append({
+                    'build_id': build.id,
+                    'job_name': build.job.name,
+                    'build_number': build.build_number,
+                    'status': 'error',
+                    'error': str(e)
+                })
+        
+        summary = {
+            'total_missing': total_missing,
+            'processed': processed,
+            'tasks_created': tasks_created,
+            'skipped': skipped,
+            'results': results
+        }
+        
+        logger.info(
+            f'[Celery] 補分析掃描完成 - '
+            f'缺少分析: {total_missing} | '
+            f'已處理: {processed} | '
+            f'任務創建: {tasks_created} | '
+            f'跳過: {skipped}'
+        )
+        
+        return summary
+        
+    except Exception as exc:
+        logger.error('[Celery] 補分析掃描失敗', exc_info=True)
+        
+        # 自動重試
+        try:
+            raise self.retry(exc=exc, countdown=300)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 補分析掃描重試次數已達上限')
+            return {
+                'total_missing': 0,
+                'processed': 0,
+                'tasks_created': 0,
+                'skipped': 0,
+                'error_message': str(exc)
+            }
+
 
 # ==================== Jenkins Artifacts 自動存儲任務 ====================
 
