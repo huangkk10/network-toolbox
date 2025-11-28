@@ -293,24 +293,33 @@ const RVTAnalysisPage = () => {
     };
     
     // 載入 Jobs 列表
-    const fetchJobs = async () => {
+    const fetchJobs = async (customFilters = null) => {
+        const activeFilters = customFilters || filters;
         setLoading(true);
         setExpandedRowKeys([]);  // ← 清空展開狀態，避免顯示孤立的 Build 記錄
         try {
             let url = '/api/jenkins-jobs/';
             const params = [];
             
-            if (filters.server_id) {
-                params.push(`server_id=${filters.server_id}`);
+            if (activeFilters.server_id) {
+                params.push(`server_id=${activeFilters.server_id}`);
             }
-            if (filters.view_name) {
-                params.push(`view_name=${encodeURIComponent(filters.view_name)}`);
+            if (activeFilters.view_name) {
+                params.push(`view_name=${encodeURIComponent(activeFilters.view_name)}`);
             }
-            if (filters.status) {
-                params.push(`status=${filters.status}`);
+            if (activeFilters.status) {
+                params.push(`status=${activeFilters.status}`);
             }
-            if (filters.search) {
-                params.push(`search=${filters.search}`);
+            if (activeFilters.search) {
+                params.push(`search=${activeFilters.search}`);
+            }
+            
+            // 日期範圍過濾
+            if (activeFilters.date_range && activeFilters.date_range[0] && activeFilters.date_range[1]) {
+                const startDate = activeFilters.date_range[0].format('YYYY-MM-DD');
+                const endDate = activeFilters.date_range[1].format('YYYY-MM-DD');
+                params.push(`start_date=${startDate}`);
+                params.push(`end_date=${endDate}`);
             }
             
             if (params.length > 0) {
@@ -351,9 +360,17 @@ const RVTAnalysisPage = () => {
         if (expanded && record.type === 'job' && record.children.length === 0) {
             setLoading(true);
             try {
-                const response = await axios.get(
-                    `/api/jenkins-jobs/${record.job_id}/builds/?limit=10`
-                );
+                // 構建 URL，包含日期範圍參數
+                let url = `/api/jenkins-jobs/${record.job_id}/builds/?limit=100`;
+                
+                // 加入日期範圍篩選
+                if (filters.date_range && filters.date_range[0] && filters.date_range[1]) {
+                    const startDate = filters.date_range[0].format('YYYY-MM-DD');
+                    const endDate = filters.date_range[1].format('YYYY-MM-DD');
+                    url += `&start_date=${startDate}&end_date=${endDate}`;
+                }
+                
+                const response = await axios.get(url);
                 
                 const builds = response.data.builds.map(build => ({
                     key: `build-${build.build_number}`,
@@ -1056,12 +1073,16 @@ const RVTAnalysisPage = () => {
                                 <Col flex="auto" style={{ maxWidth: 260 }}>
                                     <RangePicker
                                         style={{ width: '100%' }}
+                                        value={filters.date_range}
                                         onChange={(dates) => {
                                             const newFilters = { ...filters, date_range: dates };
                                             setFilters(newFilters);
+                                            // 日期變更時重新載入 Jobs 列表
+                                            fetchJobs(newFilters);
                                         }}
                                         placeholder={['開始日期', '結束日期']}
                                         size="small"
+                                        allowClear
                                         getPopupContainer={() => document.body}
                                     />
                                 </Col>

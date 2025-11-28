@@ -394,6 +394,31 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         if search:
             queryset = queryset.filter(name__icontains=search)
         
+        # 按 Build 日期範圍過濾（只返回在該日期範圍內有 Build 的 Jobs）
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        
+        if start_date and end_date:
+            from datetime import datetime, timedelta
+            from django.db.models import Count, Q
+            
+            try:
+                # 解析日期
+                start = datetime.strptime(start_date, '%Y-%m-%d')
+                end = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)  # 包含結束日期整天
+                
+                # 只保留在日期範圍內有 Build 的 Jobs
+                queryset = queryset.annotate(
+                    filtered_builds_count=Count(
+                        'builds',
+                        filter=Q(builds__build_timestamp__gte=start, builds__build_timestamp__lt=end)
+                    )
+                ).filter(filtered_builds_count__gt=0)
+                
+                logger.info(f"日期範圍篩選: {start_date} ~ {end_date}")
+            except ValueError as e:
+                logger.warning(f"日期格式錯誤: {e}")
+        
         return queryset
     
     @action(detail=True, methods=['get'])
@@ -423,6 +448,23 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             status_filter = request.query_params.get('status')
             if status_filter:
                 builds_query = builds_query.filter(result=status_filter)
+            
+            # 日期範圍過濾
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            
+            if start_date and end_date:
+                from datetime import datetime, timedelta
+                try:
+                    start = datetime.strptime(start_date, '%Y-%m-%d')
+                    end = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)  # 包含結束日期整天
+                    builds_query = builds_query.filter(
+                        build_timestamp__gte=start,
+                        build_timestamp__lt=end
+                    )
+                    logger.info(f"Builds 日期範圍篩選: {start_date} ~ {end_date}")
+                except ValueError as e:
+                    logger.warning(f"日期格式錯誤: {e}")
             
             # 限制數量
             builds = builds_query[:limit]
