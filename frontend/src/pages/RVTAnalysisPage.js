@@ -45,6 +45,7 @@ import {
     SettingOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import dayjs from 'dayjs';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
@@ -107,11 +108,20 @@ const RVTAnalysisPage = () => {
     // 從 URL 參數讀取篩選條件
     const getFiltersFromURL = () => {
         const params = new URLSearchParams(location.search);
+        
+        // 讀取日期範圍
+        let dateRange = null;
+        const startDate = params.get('start_date');
+        const endDate = params.get('end_date');
+        if (startDate && endDate) {
+            dateRange = [dayjs(startDate), dayjs(endDate)];
+        }
+        
         return {
             server_id: params.get('server_id') ? parseInt(params.get('server_id')) : null,
             view_name: params.get('view_name') || null,
             status: params.get('status') || null,
-            date_range: null,
+            date_range: dateRange,
             search: params.get('search') || '',
         };
     };
@@ -184,6 +194,15 @@ const RVTAnalysisPage = () => {
             params.set('search', newFilters.search);
         } else {
             params.delete('search');
+        }
+        
+        // 日期範圍參數
+        if (newFilters.date_range && newFilters.date_range[0] && newFilters.date_range[1]) {
+            params.set('start_date', newFilters.date_range[0].format('YYYY-MM-DD'));
+            params.set('end_date', newFilters.date_range[1].format('YYYY-MM-DD'));
+        } else {
+            params.delete('start_date');
+            params.delete('end_date');
         }
         
         // 導航到新的 URL（不會重新載入頁面）
@@ -1077,6 +1096,7 @@ const RVTAnalysisPage = () => {
                                         onChange={(dates) => {
                                             const newFilters = { ...filters, date_range: dates };
                                             setFilters(newFilters);
+                                            updateURLParams(newFilters);  // 更新 URL
                                             // 日期變更時重新載入 Jobs 列表
                                             fetchJobs(newFilters);
                                         }}
