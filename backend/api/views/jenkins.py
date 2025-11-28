@@ -384,10 +384,10 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         if view_name:
             queryset = queryset.filter(view_name=view_name)
         
-        # 按狀態過濾
+        # 按 Build 狀態過濾（使用 last_build_status 欄位）
         status_filter = self.request.query_params.get('status')
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
+            queryset = queryset.filter(last_build_status=status_filter)
         
         # 搜尋 Job 名稱
         search = self.request.query_params.get('search')

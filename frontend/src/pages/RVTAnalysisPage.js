@@ -11,7 +11,7 @@
  * 權限：所有登入使用者可訪問
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
     Layout,
     Card,
@@ -51,6 +51,7 @@ import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
 import AnsibleInventoryManagerPage from './AnsibleInventoryManagerPage';
 import FatalErrorsButton from '../components/jenkins/FatalErrorsButton';
 import JenkinsStatisticsCharts from '../components/jenkins/JenkinsStatisticsCharts';
+import { useTableState } from '../hooks';
 
 const { Content } = Layout;
 const { Option } = Select;
@@ -141,6 +142,17 @@ const RVTAnalysisPage = () => {
         current: 1,
         pageSize: 10,
     });
+    
+    // 表格排序狀態持久化（使用 LocalStorage）
+    // 根據 server_id 區分不同伺服器的排序偏好
+    const tableStorageKey = `nt_jenkins_jobs_table_${filters.server_id || 'all'}`;
+    const { tableState, handleTableChange: handleSortChange, getSortProps } = useTableState(
+        tableStorageKey,
+        {
+            sortField: null,
+            sortOrder: null,
+        }
+    );
     
     // View 列表（從 Jobs 中提取唯一的 view_name）
     const [availableViews, setAvailableViews] = useState([]);
@@ -564,6 +576,8 @@ const RVTAnalysisPage = () => {
                 }
                 return 0;
             },
+            // 從 LocalStorage 恢復排序狀態
+            ...getSortProps('name'),
             render: (text, record) => {
                 if (record.type === 'job') {
                     // 獲取 Job 狀態對應的樣式
@@ -657,7 +671,7 @@ const RVTAnalysisPage = () => {
         {
             title: '最新 Build 時間',
             dataIndex: 'last_build_time',
-            key: 'time',
+            key: 'last_build_time',
             width: 200,
             sorter: (a, b) => {
                 // 只對 Job 行進行排序，Build 行跟隨 Job
@@ -673,6 +687,8 @@ const RVTAnalysisPage = () => {
                 }
                 return 0;
             },
+            // 從 LocalStorage 恢復排序狀態
+            ...getSortProps('last_build_time'),
             render: (text, record) => {
                 if (record.type === 'job') {
                     // Job 行：顯示最新 Build 時間
@@ -1106,6 +1122,15 @@ const RVTAnalysisPage = () => {
                                         return <span style={{ width: 24, display: 'inline-block' }} />;
                                     },
                                 }}
+                                onChange={(paginationConfig, filters, sorter) => {
+                                    // 處理分頁
+                                    setPagination({
+                                        current: paginationConfig.current,
+                                        pageSize: paginationConfig.pageSize,
+                                    });
+                                    // 處理排序（持久化到 LocalStorage）
+                                    handleSortChange(paginationConfig, filters, sorter);
+                                }}
                                 pagination={{
                                     current: pagination.current,
                                     pageSize: pagination.pageSize,
@@ -1113,12 +1138,6 @@ const RVTAnalysisPage = () => {
                                     showSizeChanger: true,
                                     showQuickJumper: true,
                                     showTotal: (total, range) => `${range[0]}-${range[1]} of ${total}`,
-                                    onChange: (page, pageSize) => {
-                                        setPagination({ current: page, pageSize });
-                                    },
-                                    onShowSizeChange: (current, size) => {
-                                        setPagination({ current: 1, pageSize: size });
-                                    },
                                 }}
                                 scroll={{ 
                                     x: 1200,
