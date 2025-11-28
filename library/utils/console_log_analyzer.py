@@ -49,6 +49,8 @@ class ConsoleLogAnalyzer:
         r'^(\d{2}:\d{2}:\d{2})\s+PLAY\s+RECAP\s+\*+',
         re.IGNORECASE
     )
+    # ANSI 控制字符模式（用於清理彩色輸出）
+    ANSI_ESCAPE_PATTERN = re.compile(r'\x1b\[[0-9;]*m')
     
     def __init__(
         self,
@@ -88,6 +90,9 @@ class ConsoleLogAnalyzer:
                 raise FileNotFoundError(f"文件不存在: {self.log_file_path}")
             with open(self.log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 self.log_content = f.read()
+        
+        # 清理 ANSI 控制字符（Jenkins 彩色輸出）
+        self.log_content = self.ANSI_ESCAPE_PATTERN.sub('', self.log_content)
         
         # 分割成行（保持行號對應）
         self.lines = self.log_content.split('\n')
@@ -354,9 +359,32 @@ class ConsoleLogAnalyzer:
     # ==================== 輔助方法 ====================
     
     def _extract_fatal_context(self, line_num: int, context_lines: int = 3) -> List[str]:
-        """提取 fatal 行的上下文（前後 N 行）"""
-        start = max(0, line_num - context_lines)
-        end = min(len(self.lines), line_num + context_lines + 1)
+        """
+        提取 fatal 行的上下文
+        
+        優先嘗試提取完整的 TASK 區塊（從 TASK 標題到 fatal 行 + 後續幾行）
+        如果找不到 TASK 標題，則使用固定的前後 N 行
+        """
+        # 嘗試向上找到 TASK 標題
+        task_start = None
+        max_lookback = 50  # 最多向上回溯 50 行
+        
+        for i in range(line_num - 1, max(0, line_num - max_lookback) - 1, -1):
+            line = self.lines[i]
+            # 檢查是否為 TASK 標題行
+            if re.search(r'TASK\s+\[', line) or re.search(r'PLAY\s+\[', line):
+                task_start = i
+                break
+        
+        # 如果找到 TASK 開頭，提取從 TASK 開頭到 fatal 行 + 後續幾行
+        if task_start is not None:
+            start = task_start
+            end = min(len(self.lines), line_num + context_lines + 1)
+        else:
+            # Fallback: 使用固定的前後 N 行
+            start = max(0, line_num - context_lines)
+            end = min(len(self.lines), line_num + context_lines + 1)
+        
         return [self.lines[i].strip() for i in range(start, end)]
     
     def _extract_timestamp(self, line_num: int) -> Optional[str]:

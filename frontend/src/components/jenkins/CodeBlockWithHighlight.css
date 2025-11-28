@@ -52,6 +52,30 @@
     font-weight: 500;
 }
 
+/* Fatal 關鍵字高亮樣式 */
+.line-content .fatal-keyword {
+    color: #ff4d4f;
+    font-weight: bold;
+}
+
+/* TASK 標題行樣式（粗體黑色，不使用紅色） - 覆蓋 highlight-fatal 的顏色 */
+.line-content strong {
+    font-weight: bold;
+    color: #262626 !important;  /* 強制使用深灰色（接近黑色），不受 highlight-fatal 影響 */
+}
+
+/* 針對包含 TASK 標題的高亮行：移除紅色背景和紅色邊框 */
+.code-line.highlight-fatal:has(strong) {
+    background-color: transparent !important;
+    border-left: none !important;
+}
+
+/* 針對高亮行的 TASK 標題也保持深色 */
+.code-line.highlight-fatal .line-content strong {
+    color: #262626 !important;
+    background-color: transparent;
+}
+
 .code-block-empty {
     padding: 16px;
     text-align: center;

@@ -1,120 +1,65 @@
 /* Fatal Snippet 容器 */
 .fatal-snippet-container {
-    margin-bottom: 16px;
-    border: 2px solid #ff4d4f;
-    border-radius: 6px;
-    background-color: #fff;
-    overflow: hidden;
+    margin: 12px 0;
+    background: #1e1e1e;
+    border-radius: 4px;
+    padding: 12px;
+    overflow-x: auto;
 }
 
-/* Snippet 標題 */
-.fatal-snippet-header {
-    padding: 8px 12px;
-    background-color: #fff1f0;
-    border-bottom: 1px solid #ffccc7;
-}
-
-/* Snippet 內容區域 */
 .fatal-snippet-content {
-    padding: 0;
-    font-family: 'Courier New', Courier, monospace;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     font-size: 13px;
     line-height: 1.6;
-    background-color: #fafafa;
 }
 
-/* 通用行樣式 */
-.context-line,
-.fatal-line {
+.snippet-code {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: #d4d4d4;
+    overflow: visible;
+}
+
+.snippet-line {
     display: flex;
-    padding: 2px 0;
-    border-left: 3px solid transparent;
-    transition: background-color 0.2s;
-}
-
-.context-line:hover,
-.fatal-line:hover {
-    background-color: #f0f0f0;
-}
-
-/* 行號 */
-.line-number {
-    flex-shrink: 0;
-    width: 60px;
-    padding: 0 12px;
-    text-align: right;
-    color: #8c8c8c;
-    user-select: none;
-    background-color: #f5f5f5;
-    border-right: 1px solid #d9d9d9;
-}
-
-/* 行內容 */
-.line-content {
-    flex: 1;
-    padding: 0 12px;
     white-space: pre-wrap;
     word-break: break-all;
 }
 
-/* 前後上下文樣式 */
-.context-before .line-content,
-.context-after .line-content {
-    color: #595959;
-    opacity: 0.8;
+.snippet-line .line-content {
+    padding-left: 12px;
+    flex: 1;
 }
 
-/* Fatal 行特殊樣式 */
-.fatal-line {
-    background-color: #fff1f0;
-    border-left: 3px solid #ff4d4f;
-}
-
-.fatal-line .line-number.fatal {
-    background-color: #ff4d4f;
-    color: #fff;
+/* Fatal 關鍵字高亮樣式（與 CodeBlockWithHighlight 保持一致） */
+.snippet-line .line-content .fatal-keyword {
+    color: #ff4d4f;
     font-weight: bold;
 }
 
-.fatal-line .line-content.fatal {
-    color: #cf1322;
-    font-weight: 600;
-    background-color: #fff1f0;
-}
-
-.fatal-line:hover {
-    background-color: #ffe7e7;
-}
-
-/* 響應式設計 */
-@media (max-width: 768px) {
-    .line-number {
-        width: 50px;
-        padding: 0 8px;
-        font-size: 11px;
-    }
-    
-    .line-content {
-        padding: 0 8px;
-        font-size: 12px;
-    }
+/* TASK 標題行樣式（粗體白色，在深色背景下顯示） */
+.snippet-line .line-content strong {
+    font-weight: bold;
+    color: #d4d4d4 !important;  /* 強制使用淺灰色（在深色背景下接近白色） */
 }
 
 /* 滾動條樣式 */
-.fatal-snippet-content::-webkit-scrollbar {
+.fatal-snippet-container::-webkit-scrollbar {
     width: 8px;
     height: 8px;
 }
 
-.fatal-snippet-content::-webkit-scrollbar-track {
-    background: #f1f1f1;
+.fatal-snippet-container::-webkit-scrollbar-track {
+    background: #2d2d2d;
 }
 
-.fatal-snippet-content::-webkit-scrollbar-thumb {
-    background: #888;
+.fatal-snippet-container::-webkit-scrollbar-thumb {
+    background: #555;
     border-radius: 4px;
 }
 
-.fatal-snippet-content::-webkit-scrollbar-thumb:hover {
-    background: #555;
+.fatal-snippet-container::-webkit-scrollbar-thumb:hover {
+    background: #777;
 }

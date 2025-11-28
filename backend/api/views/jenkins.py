@@ -1760,7 +1760,7 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                     
                     return Response({
                         'has_analysis': True,
-                        'fatal_count': data['summary'].get('total_fatal_tasks', 0),
+                        'fatal_count': data['summary'].get('total_fatal_count', 0),
                         'analyzed_at': data['build_info'].get('analyzed_at'),
                         'file_path': str(analysis_path)
                     })
@@ -1821,16 +1821,93 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                     'hint': 'Analysis may not have been performed yet'
                 }, status=status.HTTP_404_NOT_FOUND)
             
-            # 讀取並返回完整的分析結果
+            # 讀取分析結果
             with open(analysis_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+                raw_data = json.load(f)
+            
+            # 轉換 fatal_tasks 為前端期望的格式
+            # 每個 fatal_occurrence 作為一個獨立的 Task
+            raw_tasks = raw_data.get('fatal_tasks', [])
+            transformed_tasks = []
+            task_index = 1
+            
+            for task in raw_tasks:
+                occurrences = task.get('fatal_occurrences', [])
+                
+                # 將每個 occurrence 轉換為一個獨立的 Task
+                for occ in occurrences:
+                    # 從 context_lines 提取 Task 名稱
+                    context_lines = occ.get('context_lines', [])
+                    task_name = 'Unknown Task'
+                    
+                    # 嘗試從 context_lines 中找到 TASK [...] 或 - name: 行
+                    for line in context_lines:
+                        # Ansible TASK 格式: TASK [role : task name]
+                        if 'TASK [' in line and ']' in line:
+                            start = line.find('TASK [') + 6
+                            end = line.find(']', start)
+                            if end > start:
+                                task_name = line[start:end].strip()
+                                break
+                        # Ansible playbook 格式: - name: task name
+                        elif '- name:' in line:
+                            start = line.find('- name:') + 7
+                            task_name = line[start:].strip()
+                            # 移除時間戳和其他前綴
+                            if ']' in task_name:
+                                task_name = task_name.split(']', 1)[1].strip()
+                            break
+                    
+                    # 使用 context_lines 作為 task_content
+                    task_content = '\n'.join(context_lines)
+                    task_total_lines = len(context_lines)
+                    
+                    # 從 line_content 提取 Fatal 時間戳
+                    line_content = occ.get('line_content', '')
+                    task_start_time = 'N/A'
+                    if line_content.startswith('[') and ']' in line_content:
+                        end_bracket = line_content.find(']')
+                        if end_bracket > 0:
+                            timestamp = line_content[1:end_bracket]
+                            # 提取時間部分 (HH:MM:SS)
+                            if 'T' in timestamp:
+                                time_part = timestamp.split('T')[1].split('.')[0] if '.' in timestamp else timestamp.split('T')[1].split('Z')[0]
+                                task_start_time = time_part
+                    
+                    transformed_task = {
+                        'task_index': task_index,
+                        'task_name': task_name,
+                        'task_start_time': task_start_time,
+                        'fatal_count': 1,  # 每個 Task 只有一個 Fatal
+                        'task_start_line': occ.get('line_number', 0),
+                        'task_end_line': occ.get('line_number', 0),
+                        'task_total_lines': task_total_lines,
+                        'task_content': task_content,
+                        'fatal_line_numbers': [occ.get('line_number', 0)],
+                        'fatal_snippets': [line_content]
+                    }
+                    transformed_tasks.append(transformed_task)
+                    task_index += 1
+            
+            # 轉換為前端期望的扁平化格式
+            response_data = {
+                # 扁平化 build_info
+                'analyzed_at': raw_data['build_info'].get('analyzed_at'),
+                'total_lines': raw_data['build_info'].get('total_lines', 0),
+                
+                # 扁平化 summary (並修正欄位名稱)
+                'fatal_count': raw_data['summary'].get('total_fatal_count', 0),
+                
+                # 轉換後的 fatal_tasks
+                'fatal_tasks': transformed_tasks
+            }
             
             logger.info(
                 f'[API] 返回 Fatal Analysis: Build #{build.id} | '
-                f'Fatal Tasks: {data["summary"].get("total_fatal_tasks", 0)}'
+                f'Fatal Count: {response_data["fatal_count"]}'
             )
             
-            return Response(data)
+            return Response(response_data)
             
         except json.JSONDecodeError as e:
             logger.error(f'[API] Fatal Analysis JSON 格式錯誤: {e}', exc_info=True)
