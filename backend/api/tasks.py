@@ -1959,6 +1959,19 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                         logger.info(f'[Celery]     🎯 發現失敗 Stage: {build.failed_stage}')
                                         build.save(update_fields=['pipeline_stages', 'failed_stage'])
                                         logger.info(f'[Celery]     ✅ 已儲存 Failed Stage: {build.failed_stage}')
+                                    
+                                    # 🆕 自動執行 Fatal Error 分析（異步任務）
+                                    try:
+                                        from .tasks import analyze_fatal_errors_task
+                                        
+                                        # 延遲 5 秒執行（等待 console.log 下載完成）
+                                        analyze_fatal_errors_task.apply_async(
+                                            args=[build.id],
+                                            countdown=5
+                                        )
+                                        logger.info(f'[Celery]     🔍 已排程 Fatal Error 分析: Build #{build_number}')
+                                    except Exception as e:
+                                        logger.error(f'[Celery]     ❌ 排程 Fatal Error 分析失敗: {e}', exc_info=True)
 
                                 
                             except Exception as e:
@@ -2026,6 +2039,18 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                         )
                                         needs_update = True
                                         logger.debug(f'[Celery]     🎯 更新失敗 Stage: {existing_build.failed_stage}')
+                                
+                                # 5. 🆕 如果狀態變為 FAILURE，自動執行 Fatal Error 分析
+                                if result == 'FAILURE' and existing_build.result != 'FAILURE':
+                                    try:
+                                        # 排程異步分析任務（延遲 5 秒）
+                                        analyze_fatal_errors_task.apply_async(
+                                            args=[existing_build.id],
+                                            countdown=5
+                                        )
+                                        logger.info(f'[Celery]     🔍 已排程 Fatal Error 分析: Build #{build_number}')
+                                    except Exception as e:
+                                        logger.error(f'[Celery]     ❌ 排程 Fatal Error 分析失敗: {e}', exc_info=True)
 
                                 
                                 # 收集需要更新的 Build
@@ -6048,7 +6073,7 @@ def sync_jenkins_builds_adaptive(
         logger.info(f'[Celery]   - 總耗時: {duration:.2f} 秒')
         
         return result
-        
+    
     except Exception as exc:
         logger.error('[Celery] 💥 智能同步任務異常', exc_info=True)
         
@@ -6061,3 +6086,136 @@ def sync_jenkins_builds_adaptive(
                 'duration': time.time() - start_time,
                 'error_message': str(exc)
             }
+
+
+# ==================== Fatal Error 分析任務 ====================
+
+@shared_task(
+    name='api.tasks.analyze_fatal_errors_task',
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60
+)
+def analyze_fatal_errors_task(self, build_id):
+    """
+    異步執行 Fatal Error 分析任務
+    
+    Args:
+        build_id: JenkinsBuild ID
+    
+    Returns:
+        {
+            'success': bool,
+            'build_id': int,
+            'build_number': int,
+            'job_name': str,
+            'fatal_count': int,
+            'analysis_path': str,
+            'error': str | None
+        }
+    """
+    from .models import JenkinsBuild
+    from library.utils.console_log_analyzer import ConsoleLogAnalyzer
+    from pathlib import Path
+    
+    logger.info(f'[Celery] 🔍 開始 Fatal Error 分析: Build #{build_id}')
+    
+    try:
+        # 獲取 Build 記錄
+        build = JenkinsBuild.objects.select_related('job__server').get(id=build_id)
+        
+        # 只處理 FAILURE Build
+        if build.result != 'FAILURE':
+            logger.warning(f'[Celery] ⚠️  Build #{build_id} 不是 FAILURE 狀態: {build.result}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'error': f'Not a FAILURE build: {build.result}'
+            }
+        
+        # 檢查是否有 console.log
+        if not build.log_file_path:
+            logger.warning(f'[Celery] ⚠️  Build #{build_id} 沒有 console.log 路徑')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'error': 'No console.log path'
+            }
+        
+        console_log_path = Path(build.log_file_path)
+        
+        # 檢查檔案是否存在
+        if not console_log_path.exists():
+            logger.warning(f'[Celery] ⚠️  Console.log 不存在: {console_log_path}')
+            return {
+                'success': False,
+                'build_id': build_id,
+                'error': f'Console.log not found: {console_log_path}'
+            }
+        
+        # 檢查是否已有分析結果
+        analysis_path = console_log_path.parent / 'fatal_analysis.json'
+        if analysis_path.exists():
+            logger.info(f'[Celery] ℹ️  分析結果已存在，跳過: {analysis_path}')
+            return {
+                'success': True,
+                'build_id': build_id,
+                'build_number': build.build_number,
+                'job_name': build.job.name,
+                'fatal_count': 0,
+                'analysis_path': str(analysis_path),
+                'skipped': True
+            }
+        
+        # 執行分析
+        server_url = build.job.server.url
+        server_ip = server_url.replace('http://', '').replace('https://', '').split(':')[0]
+        
+        analyzer = ConsoleLogAnalyzer(
+            log_file_path=str(console_log_path),
+            server_ip=server_ip,
+            job_name=build.job.name,
+            build_number=build.build_number
+        )
+        
+        logger.info(f'[Celery] 📊 分析中: {build.job.name} #{build.build_number}')
+        result = analyzer.analyze_fatal_errors()
+        
+        # 保存結果
+        analyzer.save_analysis_to_json(str(analysis_path))
+        
+        fatal_count = result['summary']['total_fatal_count']
+        logger.info(f'[Celery] ✅ 分析完成: Fatal 數量 = {fatal_count}')
+        
+        return {
+            'success': True,
+            'build_id': build_id,
+            'build_number': build.build_number,
+            'job_name': build.job.name,
+            'fatal_count': fatal_count,
+            'analysis_path': str(analysis_path)
+        }
+        
+    except JenkinsBuild.DoesNotExist:
+        error_msg = f'Build #{build_id} 不存在'
+        logger.error(f'[Celery] ❌ {error_msg}')
+        return {
+            'success': False,
+            'build_id': build_id,
+            'error': error_msg
+        }
+        
+    except Exception as e:
+        error_msg = f'Fatal Error 分析失敗: {str(e)}'
+        logger.error(f'[Celery] ❌ {error_msg}', exc_info=True)
+        
+        # 重試機制（最多 3 次）
+        if self.request.retries < self.max_retries:
+            logger.info(f'[Celery] 🔄 將在 60 秒後重試 (第 {self.request.retries + 1} 次)')
+            raise self.retry(exc=e)
+        
+        return {
+            'success': False,
+            'build_id': build_id,
+            'error': error_msg
+        }
