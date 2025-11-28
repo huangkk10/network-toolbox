@@ -1,6 +1,6 @@
 import React from 'react';
-import { Card, Table, Tag, Space, Divider } from 'antd';
-import { WarningOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Space, Divider, Button, message } from 'antd';
+import { WarningOutlined, ClockCircleOutlined, CopyOutlined } from '@ant-design/icons';
 import CodeBlockWithHighlight from './CodeBlockWithHighlight';
 import FatalSnippet from './FatalSnippet';
 
@@ -13,6 +13,48 @@ import FatalSnippet from './FatalSnippet';
  * - 顯示 Fatal 詳細上下文
  */
 const FatalTaskTable = ({ fatalTasks }) => {
+    // 複製 Task 內容到剪貼簿（支援 HTTP 環境）
+    const handleCopyTaskContent = (content) => {
+        // 優先使用 Clipboard API（需要 HTTPS）
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(content)
+                .then(() => {
+                    message.success('已複製 Task 內容到剪貼簿');
+                })
+                .catch(() => {
+                    fallbackCopy(content);
+                });
+        } else {
+            // Fallback: 使用傳統方式（支援 HTTP）
+            fallbackCopy(content);
+        }
+    };
+
+    // Fallback 複製方法
+    const fallbackCopy = (content) => {
+        const textArea = document.createElement('textarea');
+        textArea.value = content;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+                message.success('已複製 Task 內容到剪貼簿');
+            } else {
+                message.error('複製失敗，請手動選取複製');
+            }
+        } catch (err) {
+            message.error('複製失敗，請手動選取複製');
+        }
+        
+        document.body.removeChild(textArea);
+    };
+
     const columns = [
         {
             title: '#',
@@ -84,6 +126,15 @@ const FatalTaskTable = ({ fatalTasks }) => {
                         <Tag color="red">
                             {record.fatal_count} 個 Fatal
                         </Tag>
+                        <Button
+                            type="text"
+                            icon={<CopyOutlined />}
+                            size="small"
+                            style={{ marginLeft: '12px' }}
+                            onClick={() => handleCopyTaskContent(record.task_content)}
+                        >
+                            複製
+                        </Button>
                     </h4>
                     
                     {/* Code Block with Highlight */}
