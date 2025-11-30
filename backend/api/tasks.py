@@ -3169,7 +3169,8 @@ def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
         # 檢查是否需要處理
         # 如果 Workspace 和 Console Log 都已存儲，檢查是否需要補 Fatal 分析
         if build.is_workspace_stored and build.log_file_path:
-            from pathlib import Path
+            # 注意：Path 已在文件開頭全局導入，不要在此處局部導入
+            # 局部導入會導致其他分支出現 UnboundLocalError
             
             # 對 FAILURE Build 檢查是否已有 Fatal 分析
             if build.result == 'FAILURE':
@@ -3413,7 +3414,7 @@ def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
                     
                     # ===== 🆕 Phase 2: Fatal Error 分析（僅針對 FAILURE 狀態） =====
                     if build.result == 'FAILURE':
-                        from pathlib import Path
+                        # 注意：Path 已在文件開頭全局導入
                         
                         # 檢查是否已經分析過（檢查 fatal_analysis.json 是否存在）
                         output_dir = Path(log_result['log_path']).parent
