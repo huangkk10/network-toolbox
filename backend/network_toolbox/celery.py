@@ -270,6 +270,23 @@ app.conf.beat_schedule = {
         }
     },
     
+    # 任務 20：NAS Jenkins Storage 清理（每週日凌晨 3 點）
+    'cleanup-old-nas-jenkins-storage-weekly': {
+        'task': 'api.tasks.cleanup_old_nas_jenkins_storage_task',
+        'schedule': crontab(hour=3, minute=0, day_of_week=0),  # 週日 03:00 執行
+        'kwargs': {
+            'max_age_days': 30,           # 清理超過 30 天的資料
+            'dry_run': False,             # 正式執行模式
+            'cpu_high_threshold': 80.0,   # CPU 上限 80%
+            'cpu_low_threshold': 60.0,    # CPU 恢復閾值 60%
+            'batch_size': 10,             # 每批 10 個資料夾
+            'batch_delay': 2.0            # 批次間隔 2 秒
+        },
+        'options': {
+            'expires': 14400,   # 任務超時 4 小時
+        }
+    },
+    
     # ============================================================================
     # 🧠 智能自適應同步任務（可選啟用）
     # ============================================================================

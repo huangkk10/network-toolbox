@@ -5,13 +5,14 @@ Celery 定時任務
 """
 
 import logging
+import os
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any
 from celery import shared_task
 from django.db.models import Count, Q
 from django.utils import timezone
-from datetime import timedelta
 
 from .models import DHCPServer, DHCPLog, DHCPLease, DHCPScope, JenkinsBuild, JenkinsServer
 from .services import DHCPLogService
@@ -6219,3 +6220,396 @@ def analyze_fatal_errors_task(self, build_id):
             'build_id': build_id,
             'error': error_msg
         }
+
+
+# ============================================================================
+# 任務：清理 NAS 上超過指定天數的 Jenkins 存儲資料夾
+# ============================================================================
+
+def get_folder_mtime(folder_path):
+    """取得資料夾的最後修改時間"""
+    try:
+        return datetime.fromtimestamp(os.path.getmtime(folder_path))
+    except OSError:
+        return None
+
+
+def format_size(size_bytes):
+    """格式化檔案大小顯示"""
+    if size_bytes >= 1024 * 1024 * 1024:
+        return f"{size_bytes / 1024 / 1024 / 1024:.2f} GB"
+    elif size_bytes >= 1024 * 1024:
+        return f"{size_bytes / 1024 / 1024:.2f} MB"
+    elif size_bytes >= 1024:
+        return f"{size_bytes / 1024:.2f} KB"
+    else:
+        return f"{size_bytes} Bytes"
+
+
+def cleanup_empty_job_folders(base_path):
+    """
+    清理空的 Job 資料夾
+    
+    在清理 Build 資料夾後，可能會留下空的 Job 資料夾，
+    此函數會清理這些空資料夾以保持結構整潔。
+    """
+    import os
+    
+    deleted_count = 0
+    
+    try:
+        for server_dir in os.listdir(base_path):
+            server_path = os.path.join(base_path, server_dir)
+            
+            if not os.path.isdir(server_path):
+                continue
+            
+            for job_dir in os.listdir(server_path):
+                job_path = os.path.join(server_path, job_dir)
+                
+                if not os.path.isdir(job_path):
+                    continue
+                
+                # 檢查是否為空資料夾
+                if not os.listdir(job_path):
+                    try:
+                        os.rmdir(job_path)
+                        deleted_count += 1
+                        logger.debug(f'[Celery] 已刪除空 Job 資料夾: {job_path}')
+                    except Exception as e:
+                        logger.warning(f'[Celery] 刪除空資料夾失敗 {job_path}: {e}')
+    
+    except Exception as e:
+        logger.error(f'[Celery] 清理空資料夾時發生錯誤: {e}')
+    
+    return deleted_count
+
+
+@shared_task(
+    bind=True,
+    name='api.tasks.cleanup_old_nas_jenkins_storage_task',
+    max_retries=2,
+    default_retry_delay=1800,
+    time_limit=14400,
+    soft_time_limit=12600
+)
+def cleanup_old_nas_jenkins_storage_task(
+    self,
+    max_age_days=30,
+    dry_run=False,
+    cpu_high_threshold=80.0,
+    cpu_low_threshold=60.0,
+    batch_size=10,
+    batch_delay=2.0,
+    max_cpu_wait_seconds=300
+):
+    """
+    清理 NAS 上超過指定天數的 Jenkins 存儲資料夾
+    
+    直接掃描 NAS 檔案系統，清理過舊的 Build 資料夾。
+    具備 CPU 監控功能，確保不會造成系統過載。
+    
+    Args:
+        max_age_days (int): 超過此天數的資料夾將被清理（預設 30 天）
+        dry_run (bool): 試運行模式，只掃描不刪除（預設 False）
+        cpu_high_threshold (float): CPU 使用率上限，超過則暫停（預設 80%）
+        cpu_low_threshold (float): CPU 恢復執行的閾值（預設 60%）
+        batch_size (int): 每批次處理的資料夾數量（預設 10）
+        batch_delay (float): 批次間延遲秒數（預設 2.0）
+        max_cpu_wait_seconds (int): CPU 過載時最大等待時間（預設 300 秒）
+    
+    Returns:
+        dict: 執行結果統計
+    """
+    import os
+    import shutil
+    import psutil
+    from datetime import datetime
+    from django.conf import settings
+    
+    start_time = time.time()
+    
+    # NAS Jenkins 存儲基礎路徑
+    base_path = getattr(
+        settings, 
+        'JENKINS_STORAGE_BASE_PATH', 
+        '/mnt/mdt/Team/PQ1-3/tool/jenkins_test_storage'
+    )
+    
+    logger.info('=' * 70)
+    logger.info('[Celery] 🧹 開始 NAS Jenkins Storage 清理任務')
+    logger.info('=' * 70)
+    logger.info(f'[Celery] 📂 目標路徑: {base_path}')
+    logger.info(f'[Celery] 📆 清理條件: 超過 {max_age_days} 天的 Build 資料夾')
+    logger.info(f'[Celery] 🖥️  CPU 上限: {cpu_high_threshold}%, 恢復閾值: {cpu_low_threshold}%')
+    logger.info(f'[Celery] 📦 批次大小: {batch_size}, 批次間隔: {batch_delay}s')
+    
+    if dry_run:
+        logger.warning('[Celery] ⚠️  試運行模式：只掃描不刪除')
+    
+    # 統計數據
+    stats = {
+        'success': True,
+        'base_path': base_path,
+        'max_age_days': max_age_days,
+        'dry_run': dry_run,
+        'servers_scanned': 0,
+        'jobs_scanned': 0,
+        'builds_scanned': 0,
+        'builds_to_delete': 0,
+        'builds_deleted': 0,
+        'space_freed_bytes': 0,
+        'empty_jobs_deleted': 0,
+        'cpu_pauses': 0,
+        'cpu_timeout_skips': 0,
+        'errors': 0,
+        'server_details': [],
+        'duration': 0
+    }
+    
+    cutoff_date = datetime.now() - timedelta(days=max_age_days)
+    logger.info(f'[Celery] ⏰ 截止日期: {cutoff_date.strftime("%Y-%m-%d %H:%M:%S")}')
+    
+    try:
+        # 檢查基礎路徑是否存在
+        if not os.path.exists(base_path):
+            logger.error(f'[Celery] ❌ 基礎路徑不存在: {base_path}')
+            stats['success'] = False
+            stats['error_message'] = f'Path not found: {base_path}'
+            return stats
+        
+        # 收集要刪除的資料夾
+        folders_to_delete = []
+        
+        # 掃描所有 Jenkins Server 資料夾
+        server_dirs = [
+            d for d in os.listdir(base_path)
+            if os.path.isdir(os.path.join(base_path, d))
+        ]
+        
+        logger.info(f'[Celery] 🖥️  找到 {len(server_dirs)} 個 Jenkins Server 資料夾')
+        stats['servers_scanned'] = len(server_dirs)
+        
+        for server_dir in server_dirs:
+            server_path = os.path.join(base_path, server_dir)
+            
+            server_stats = {
+                'server': server_dir,
+                'jobs_scanned': 0,
+                'builds_scanned': 0,
+                'builds_to_delete': 0,
+                'space_to_free': 0,
+                'errors': 0
+            }
+            
+            logger.info(f'[Celery] 📁 掃描 Server: {server_dir}')
+            
+            # 掃描 Job 資料夾
+            try:
+                job_dirs = [
+                    d for d in os.listdir(server_path)
+                    if os.path.isdir(os.path.join(server_path, d))
+                ]
+            except PermissionError as e:
+                logger.error(f'[Celery]   ❌ 無法存取 Server 資料夾: {e}')
+                stats['errors'] += 1
+                server_stats['errors'] += 1
+                stats['server_details'].append(server_stats)
+                continue
+            
+            server_stats['jobs_scanned'] = len(job_dirs)
+            stats['jobs_scanned'] += len(job_dirs)
+            
+            for job_dir in job_dirs:
+                job_path = os.path.join(server_path, job_dir)
+                
+                # 掃描 Build 資料夾
+                try:
+                    build_dirs = [
+                        d for d in os.listdir(job_path)
+                        if os.path.isdir(os.path.join(job_path, d))
+                    ]
+                except PermissionError as e:
+                    logger.warning(f'[Celery]     ⚠️  無法存取 Job 資料夾 {job_dir}: {e}')
+                    stats['errors'] += 1
+                    server_stats['errors'] += 1
+                    continue
+                
+                for build_dir in build_dirs:
+                    build_path = os.path.join(job_path, build_dir)
+                    stats['builds_scanned'] += 1
+                    server_stats['builds_scanned'] += 1
+                    
+                    # 取得資料夾修改時間
+                    mtime = get_folder_mtime(build_path)
+                    
+                    if mtime is None:
+                        logger.warning(f'[Celery]       ⚠️  無法取得修改時間: {build_path}')
+                        continue
+                    
+                    # 判斷是否超過保留期限
+                    if mtime < cutoff_date:
+                        folder_size = get_folder_size(build_path)
+                        age_days = (datetime.now() - mtime).days
+                        
+                        folders_to_delete.append({
+                            'path': build_path,
+                            'size': folder_size,
+                            'age_days': age_days,
+                            'mtime': mtime,
+                            'server': server_dir,
+                            'job': job_dir,
+                            'build': build_dir
+                        })
+                        
+                        stats['builds_to_delete'] += 1
+                        server_stats['builds_to_delete'] += 1
+                        server_stats['space_to_free'] += folder_size
+            
+            stats['server_details'].append(server_stats)
+            
+            if server_stats['builds_to_delete'] > 0:
+                logger.info(
+                    f'[Celery]   📊 {server_dir}: '
+                    f'{server_stats["builds_to_delete"]} 個舊 Builds 待清理 '
+                    f'({format_size(server_stats["space_to_free"])})'
+                )
+        
+        # 統計掃描結果
+        total_space = sum(f['size'] for f in folders_to_delete)
+        logger.info('-' * 70)
+        logger.info(f'[Celery] 📊 掃描結果統計:')
+        logger.info(f'[Celery]   - 掃描 Servers: {stats["servers_scanned"]}')
+        logger.info(f'[Celery]   - 掃描 Jobs: {stats["jobs_scanned"]}')
+        logger.info(f'[Celery]   - 掃描 Builds: {stats["builds_scanned"]}')
+        logger.info(f'[Celery]   - 待清理 Builds: {stats["builds_to_delete"]}')
+        logger.info(f'[Celery]   - 預計釋放空間: {format_size(total_space)}')
+        logger.info('-' * 70)
+        
+        # 執行清理（帶 CPU 監控）
+        if folders_to_delete and not dry_run:
+            logger.info('[Celery] 🚀 開始執行清理...')
+            
+            batch_count = 0
+            for i, folder_info in enumerate(folders_to_delete):
+                # 批次間 CPU 檢查
+                if i > 0 and i % batch_size == 0:
+                    batch_count += 1
+                    
+                    # 批次間延遲
+                    time.sleep(batch_delay)
+                    
+                    # 檢查 CPU
+                    cpu_usage = psutil.cpu_percent(interval=1)
+                    
+                    if cpu_usage > cpu_high_threshold:
+                        stats['cpu_pauses'] += 1
+                        logger.warning(
+                            f'[Celery] ⏸️  批次 {batch_count}: CPU {cpu_usage:.1f}% > {cpu_high_threshold}%，暫停...'
+                        )
+                        
+                        # 等待 CPU 降低
+                        waited = 0
+                        while waited < max_cpu_wait_seconds:
+                            time.sleep(5)
+                            waited += 5
+                            cpu_usage = psutil.cpu_percent(interval=1)
+                            
+                            if cpu_usage < cpu_low_threshold:
+                                logger.info(f'[Celery] ▶️  CPU 已降至 {cpu_usage:.1f}%，繼續執行')
+                                break
+                        else:
+                            # 超時
+                            stats['cpu_timeout_skips'] += 1
+                            logger.error(
+                                f'[Celery] ⏭️  等待 CPU 超時 ({max_cpu_wait_seconds}s)，'
+                                f'跳過剩餘 {len(folders_to_delete) - i} 個資料夾'
+                            )
+                            break
+                
+                # 執行刪除
+                try:
+                    folder_path = folder_info['path']
+                    folder_size = folder_info['size']
+                    
+                    shutil.rmtree(folder_path)
+                    
+                    stats['builds_deleted'] += 1
+                    stats['space_freed_bytes'] += folder_size
+                    
+                    logger.debug(
+                        f'[Celery]   ✅ 已刪除: {folder_info["server"]}/{folder_info["job"]}/#{folder_info["build"]} '
+                        f'({folder_info["age_days"]} 天前, {format_size(folder_size)})'
+                    )
+                    
+                except PermissionError as e:
+                    stats['errors'] += 1
+                    logger.error(f'[Celery]   ❌ 權限錯誤: {folder_info["path"]}: {e}')
+                    
+                except Exception as e:
+                    stats['errors'] += 1
+                    logger.error(f'[Celery]   ❌ 刪除失敗: {folder_info["path"]}: {e}')
+        
+        elif dry_run and folders_to_delete:
+            # 試運行模式：列出將被刪除的資料夾
+            logger.info('[Celery] 🔍 [DRY-RUN] 以下資料夾將被刪除:')
+            for folder_info in folders_to_delete[:20]:  # 只顯示前 20 個
+                logger.info(
+                    f'[Celery]   - {folder_info["server"]}/{folder_info["job"]}/#{folder_info["build"]} '
+                    f'({folder_info["age_days"]} 天前, {format_size(folder_info["size"])})'
+                )
+            
+            if len(folders_to_delete) > 20:
+                logger.info(f'[Celery]   ... 還有 {len(folders_to_delete) - 20} 個 (省略)')
+        
+        # 清理空的 Job 資料夾
+        if not dry_run and stats['builds_deleted'] > 0:
+            empty_jobs_deleted = cleanup_empty_job_folders(base_path)
+            stats['empty_jobs_deleted'] = empty_jobs_deleted
+            
+            if empty_jobs_deleted > 0:
+                logger.info(f'[Celery] 🗑️  已清理 {empty_jobs_deleted} 個空的 Job 資料夾')
+        
+        # 最終統計
+        duration = time.time() - start_time
+        stats['duration'] = duration
+        
+        logger.info('=' * 70)
+        logger.info('[Celery] 🎉 NAS Jenkins Storage 清理任務完成')
+        logger.info('=' * 70)
+        logger.info(f'[Celery] 📊 最終統計:')
+        logger.info(f'[Celery]   - 掃描 Servers: {stats["servers_scanned"]}')
+        logger.info(f'[Celery]   - 掃描 Jobs: {stats["jobs_scanned"]}')
+        logger.info(f'[Celery]   - 掃描 Builds: {stats["builds_scanned"]}')
+        logger.info(f'[Celery]   - 待清理 Builds: {stats["builds_to_delete"]}')
+        logger.info(f'[Celery]   - 已刪除 Builds: {stats["builds_deleted"]}')
+        logger.info(f'[Celery]   - 釋放空間: {format_size(stats["space_freed_bytes"])}')
+        
+        if stats['empty_jobs_deleted'] > 0:
+            logger.info(f'[Celery]   - 清理空 Job 資料夾: {stats["empty_jobs_deleted"]}')
+        
+        if stats['cpu_pauses'] > 0:
+            logger.info(f'[Celery]   - CPU 暫停次數: {stats["cpu_pauses"]}')
+        
+        if stats['cpu_timeout_skips'] > 0:
+            logger.warning(f'[Celery]   - CPU 超時跳過: {stats["cpu_timeout_skips"]}')
+        
+        if stats['errors'] > 0:
+            logger.warning(f'[Celery]   - 錯誤數量: {stats["errors"]}')
+        
+        logger.info(f'[Celery]   - 總耗時: {duration:.2f} 秒')
+        
+        return stats
+        
+    except Exception as exc:
+        logger.error('[Celery] 💥 NAS Jenkins Storage 清理任務異常', exc_info=True)
+        
+        try:
+            raise self.retry(exc=exc, countdown=1800)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] NAS 清理任務重試次數已達上限')
+            duration = time.time() - start_time
+            stats['success'] = False
+            stats['duration'] = duration
+            stats['error_message'] = str(exc)
+            return stats

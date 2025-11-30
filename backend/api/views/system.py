@@ -437,6 +437,7 @@ def recent_tasks(request):
             'api.tasks.cleanup_orphaned_jenkins_data_task': '清理孤立 Jenkins 資料',
             'api.tasks.cleanup_old_build_artifacts_task': '清理舊 Build Artifacts',
             'api.tasks.cleanup_invalid_ipxe_logs_task': '清理無效 iPXE 日誌',
+            'api.tasks.cleanup_old_nas_jenkins_storage_task': 'NAS Jenkins 存儲清理',
         }
         
         result = []
