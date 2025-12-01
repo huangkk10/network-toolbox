@@ -12,7 +12,8 @@ import {
     Descriptions,
     Tag,
     Spin,
-    Space
+    Space,
+    Tabs
 } from 'antd';
 import {
     UploadOutlined,
@@ -20,10 +21,13 @@ import {
     TeamOutlined,
     HistoryOutlined,
     ReloadOutlined,
-    CheckCircleOutlined
+    CheckCircleOutlined,
+    FileTextOutlined,
+    EditOutlined
 } from '@ant-design/icons';
 import axios from 'axios';
 import InventoryFileEditor from '../components/InventoryFileEditor';
+import TestcasesFileEditor from '../components/TestcasesFileEditor';
 import InventoryValidationDrawer from '../components/InventoryValidationDrawer';
 
 const AnsibleInventoryManagerPage = () => {
@@ -246,11 +250,44 @@ const AnsibleInventoryManagerPage = () => {
                         </Descriptions>
                     </Card>
 
-                    {/* 文本編輯器 */}
-                    <InventoryFileEditor 
-                        inventoryId={currentInventory.id}
-                        onSaved={handleEditorSaved}
-                    />
+                    {/* 編輯器 Tabs */}
+                    <Card style={{ marginTop: 16 }}>
+                        <Tabs
+                            defaultActiveKey="inventory"
+                            items={[
+                                {
+                                    key: 'inventory',
+                                    label: (
+                                        <span>
+                                            <EditOutlined />
+                                            Inventory 編輯
+                                        </span>
+                                    ),
+                                    children: (
+                                        <InventoryFileEditor 
+                                            inventoryId={currentInventory.id}
+                                            onSaved={handleEditorSaved}
+                                        />
+                                    )
+                                },
+                                {
+                                    key: 'testcases',
+                                    label: (
+                                        <span>
+                                            <FileTextOutlined />
+                                            Testcases 編輯
+                                        </span>
+                                    ),
+                                    children: (
+                                        <TestcasesFileEditor 
+                                            inventoryId={currentInventory.id}
+                                            onSaved={handleEditorSaved}
+                                        />
+                                    )
+                                }
+                            ]}
+                        />
+                    </Card>
                 </>
             )}
 

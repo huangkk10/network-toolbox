@@ -97,12 +97,22 @@ class YAMLValidator:
             else:
                 result['error_message'] = str(e)
             
-            # 特殊處理常見的 Jinja2 相關錯誤
+            # 根據錯誤類型和上下文提供更精確的提示
             error_msg_lower = result['error_message'].lower() if result['error_message'] else ''
+            error_context = result.get('error_context', '') or ''
+            
             if 'mapping values are not allowed' in error_msg_lower:
-                result['error_message'] += '\n💡 提示: 這通常是因為 Jinja2 變數 {{ ... }} 沒有用引號包起來'
+                # 檢查錯誤行是否包含 Jinja2 變數
+                if '{{' in error_context and '}}' in error_context:
+                    result['error_message'] += '\n💡 提示: 這通常是因為 Jinja2 變數 {{ ... }} 沒有用引號包起來'
+                else:
+                    result['error_message'] += '\n💡 提示: 請檢查該行的格式，可能是縮排錯誤、多餘的空格、或冒號使用不當'
+            elif 'could not find expected' in error_msg_lower:
+                result['error_message'] += '\n💡 提示: 請檢查該行附近的語法，可能缺少冒號、引號不匹配、或縮排問題'
             elif 'expected' in error_msg_lower and 'found' in error_msg_lower:
                 result['error_message'] += '\n💡 提示: 請檢查縮排是否正確，YAML 對縮排非常敏感'
+            elif 'scanner error' in error_msg_lower or 'scan' in error_msg_lower:
+                result['error_message'] += '\n💡 提示: 請檢查是否有特殊字符或不正確的縮排'
             
             logger.warning(f"YAML syntax error at line {result['error_line']}: {result['error_message']}")
             return result

@@ -672,3 +672,264 @@ class AnsibleInventoryViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'message': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # ==================== Testcases 編輯器相關 API ====================
+    
+    @action(detail=False, methods=['post'], url_path='validate-testcases')
+    def validate_testcases(self, request):
+        """
+        驗證 testcases.yml 內容語法（即時驗證）
+        
+        POST /api/ansible-inventory/validate-testcases/
+        Body: {
+            "content": "YAML 內容",
+            "inventory_id": 29  # 可選，用於交叉驗證 testcase_set
+        }
+        
+        Response: {
+            "syntax_valid": true/false,
+            "error_message": "錯誤訊息",
+            "error_line": 5,
+            "error_column": 10,
+            "error_context": "該行內容",
+            "jinja2_check": {...},
+            "testcase_sets_count": 68,
+            "cross_validation": {  # 如果提供了 inventory_id
+                "missing_sets": [...],
+                "unused_sets": [...],
+                "referenced_count": 23
+            }
+        }
+        """
+        try:
+            content = request.data.get('content')
+            inventory_id = request.data.get('inventory_id')
+            
+            if not content:
+                return Response(
+                    {'error': '缺少 content 參數'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # 導入 YAML 驗證器
+            from library.utils.yaml_validator import YAMLValidator
+            
+            # 1. 驗證 YAML 語法
+            syntax_result = YAMLValidator.validate_yaml_syntax(content)
+            
+            response_data = {
+                'syntax_valid': syntax_result['is_valid'],
+                'error_message': syntax_result.get('error_message'),
+                'error_line': syntax_result.get('error_line'),
+                'error_column': syntax_result.get('error_column'),
+                'error_context': syntax_result.get('error_context'),
+            }
+            
+            # 2. 如果語法正確，進行進階檢查
+            if syntax_result['is_valid']:
+                # Jinja2 檢查
+                jinja2_result = YAMLValidator.validate_jinja2_in_yaml(content)
+                response_data['jinja2_check'] = {
+                    'is_valid': jinja2_result['is_valid'],
+                    'warnings': jinja2_result['warnings'],
+                    'total_jinja2_vars': jinja2_result['total_jinja2_vars'],
+                    'unquoted_count': len(jinja2_result['unquoted_jinja2'])
+                }
+                
+                # 提取 testcase_set 定義
+                testcase_sets = YAMLValidator.extract_testcase_sets(content)
+                response_data['testcase_sets_count'] = len(testcase_sets)
+                response_data['testcase_sets'] = sorted(list(testcase_sets))
+                
+                # 3. 如果提供了 inventory_id，進行交叉驗證
+                if inventory_id:
+                    try:
+                        inventory = AnsibleInventoryImport.objects.get(pk=inventory_id)
+                        service = AnsibleInventoryService()
+                        
+                        # 載入 Inventory 內容
+                        success, error_msg, inv_content = service.read_inventory_content(
+                            inventory.nas_path,
+                            inventory.file_name
+                        )
+                        
+                        if success and inv_content:
+                            # 從 Inventory 中提取引用的 testcase_set
+                            from library.services.inventory_config_validator import InventoryConfigValidator
+                            validator = InventoryConfigValidator(inventory_id=inventory_id)
+                            validator._load_inventory()
+                            referenced_sets = validator._collect_referenced_testcase_sets()
+                            
+                            # 計算交叉驗證結果
+                            missing_sets = referenced_sets - testcase_sets
+                            unused_sets = testcase_sets - referenced_sets
+                            
+                            response_data['cross_validation'] = {
+                                'referenced_count': len(referenced_sets),
+                                'referenced_sets': sorted(list(referenced_sets)),
+                                'missing_sets': sorted(list(missing_sets)),
+                                'unused_sets': sorted(list(unused_sets)),
+                                'all_defined': len(missing_sets) == 0
+                            }
+                    except AnsibleInventoryImport.DoesNotExist:
+                        logger.warning(f"Inventory {inventory_id} not found for cross-validation")
+                    except Exception as e:
+                        logger.warning(f"Cross-validation failed: {e}")
+                
+                logger.info(f"Testcases validation passed: {len(testcase_sets)} sets defined")
+            else:
+                logger.warning(f"Testcases validation failed at line {syntax_result.get('error_line')}")
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            logger.error(f"Validate testcases error: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['get'], url_path='testcases-content')
+    def get_testcases_content(self, request, pk=None):
+        """
+        讀取 testcases.yml 檔案內容
+        
+        GET /api/ansible-inventory/{id}/testcases-content/
+        
+        Response: {
+            "success": true,
+            "content": "YAML 內容",
+            "file_path": "/path/to/group_vars/all/testcases.yml",
+            "file_exists": true,
+            "file_size": 12345
+        }
+        """
+        try:
+            inventory = self.get_object()
+            service = AnsibleInventoryService()
+            
+            # 獲取 testcases.yml 的路徑
+            inventory_dir = service.convert_windows_path_to_linux(inventory.nas_path)
+            testcases_path = f"{inventory_dir}/group_vars/all/testcases.yml"
+            
+            import os
+            
+            if not os.path.exists(testcases_path):
+                return Response({
+                    'success': False,
+                    'file_exists': False,
+                    'file_path': testcases_path,
+                    'message': 'testcases.yml 檔案不存在'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # 讀取檔案內容
+            with open(testcases_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            file_stat = os.stat(testcases_path)
+            
+            logger.info(f"Loaded testcases.yml from {testcases_path}, size={file_stat.st_size}")
+            
+            return Response({
+                'success': True,
+                'content': content,
+                'file_path': testcases_path,
+                'file_exists': True,
+                'file_size': file_stat.st_size
+            })
+            
+        except Exception as e:
+            logger.error(f"Get testcases content error: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['put'], url_path='testcases-content')
+    def update_testcases_content(self, request, pk=None):
+        """
+        儲存 testcases.yml 檔案內容
+        
+        PUT /api/ansible-inventory/{id}/testcases-content/
+        Body: {
+            "content": "新的 YAML 內容"
+        }
+        
+        Response: {
+            "success": true,
+            "message": "儲存成功",
+            "file_path": "..."
+        }
+        """
+        try:
+            inventory = self.get_object()
+            content = request.data.get('content')
+            
+            if content is None:
+                return Response(
+                    {'error': '缺少 content 參數'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # 驗證語法
+            from library.utils.yaml_validator import YAMLValidator
+            syntax_result = YAMLValidator.validate_yaml_syntax(content)
+            
+            if not syntax_result['is_valid']:
+                return Response({
+                    'success': False,
+                    'error': '語法錯誤，無法儲存',
+                    'syntax_error': syntax_result['error_message'],
+                    'error_line': syntax_result.get('error_line')
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            service = AnsibleInventoryService()
+            
+            # 獲取 testcases.yml 的路徑
+            inventory_dir = service.convert_windows_path_to_linux(inventory.nas_path)
+            testcases_path = f"{inventory_dir}/group_vars/all/testcases.yml"
+            
+            import os
+            
+            # 確保目錄存在
+            os.makedirs(os.path.dirname(testcases_path), exist_ok=True)
+            
+            # 備份原始檔案（如果存在）
+            backup_path = None
+            if os.path.exists(testcases_path):
+                backup_path = f"{testcases_path}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                import shutil
+                shutil.copy2(testcases_path, backup_path)
+                logger.info(f"Created backup: {backup_path}")
+            
+            # 寫入新內容
+            with open(testcases_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            logger.info(f"Saved testcases.yml to {testcases_path}, size={len(content)}")
+            
+            # 記錄編輯日誌
+            try:
+                InventoryEditLog.objects.create(
+                    inventory=inventory,
+                    edited_by=request.user if request.user.is_authenticated else None,
+                    edit_type='testcases_update',
+                    description=f'Updated testcases.yml ({len(content)} bytes)'
+                )
+            except Exception as log_error:
+                logger.warning(f"Failed to create edit log: {log_error}")
+            
+            return Response({
+                'success': True,
+                'message': '儲存成功',
+                'file_path': testcases_path,
+                'backup_path': backup_path,
+                'file_size': len(content)
+            })
+            
+        except Exception as e:
+            logger.error(f"Update testcases content error: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
