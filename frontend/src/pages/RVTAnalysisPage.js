@@ -31,6 +31,7 @@ import {
     message,
     Spin,
     Tooltip,
+    Radio,
 } from 'antd';
 import {
     CloudServerOutlined,
@@ -105,6 +106,21 @@ const RVTAnalysisPage = () => {
     };
     const [timeRange, setTimeRange] = useState(getTimeRangeFromURL());
     
+    // 從 URL 參數讀取快速日期篩選（用於 details tab）
+    const getQuickDateFilterFromURL = () => {
+        const params = new URLSearchParams(location.search);
+        const dateFilter = params.get('date_filter');
+        const startDate = params.get('start_date');
+        const endDate = params.get('end_date');
+        
+        // 如果有自訂日期範圍但沒有 date_filter，視為 custom
+        if (startDate && endDate && !dateFilter) {
+            return 'custom';
+        }
+        return dateFilter || 'all';
+    };
+    const [quickDateFilter, setQuickDateFilter] = useState(getQuickDateFilterFromURL());
+    
     // 從 URL 參數讀取篩選條件
     const getFiltersFromURL = () => {
         const params = new URLSearchParams(location.search);
@@ -168,7 +184,7 @@ const RVTAnalysisPage = () => {
     const [availableViews, setAvailableViews] = useState([]);
     
     // 更新 URL 參數（保持篩選條件持久化）
-    const updateURLParams = (newFilters) => {
+    const updateURLParams = (newFilters, newQuickDateFilter = null) => {
         const params = new URLSearchParams(location.search);
         
         // 更新篩選參數
@@ -196,11 +212,20 @@ const RVTAnalysisPage = () => {
             params.delete('search');
         }
         
-        // 日期範圍參數
-        if (newFilters.date_range && newFilters.date_range[0] && newFilters.date_range[1]) {
+        // 快速日期篩選參數
+        const dateFilter = newQuickDateFilter !== null ? newQuickDateFilter : quickDateFilter;
+        if (dateFilter && dateFilter !== 'all') {
+            params.set('date_filter', dateFilter);
+        } else {
+            params.delete('date_filter');
+        }
+        
+        // 日期範圍參數（當使用自訂日期時）
+        if (dateFilter === 'custom' && newFilters.date_range && newFilters.date_range[0] && newFilters.date_range[1]) {
             params.set('start_date', newFilters.date_range[0].format('YYYY-MM-DD'));
             params.set('end_date', newFilters.date_range[1].format('YYYY-MM-DD'));
-        } else {
+        } else if (dateFilter !== 'custom') {
+            // 非自訂模式時，清除日期範圍參數
             params.delete('start_date');
             params.delete('end_date');
         }
@@ -283,6 +308,25 @@ const RVTAnalysisPage = () => {
             case 'month': return '最近 30 天';
             case 'all': return '全部時間';
             default: return '今日';
+        }
+    };
+    
+    // 根據快速篩選計算日期範圍
+    const getDateRangeByQuickFilter = (filter) => {
+        const now = dayjs();
+        switch (filter) {
+            case '1d':
+                return [now.subtract(1, 'day').startOf('day'), now.endOf('day')];
+            case '3d':
+                return [now.subtract(2, 'day').startOf('day'), now.endOf('day')];  // 包含今天共3天
+            case '7d':
+                return [now.subtract(6, 'day').startOf('day'), now.endOf('day')];  // 包含今天共7天
+            case 'all':
+                return null;
+            case 'custom':
+                return null;  // 自訂模式保持現有的 date_range
+            default:
+                return null;
         }
     };
     
@@ -484,6 +528,49 @@ const RVTAnalysisPage = () => {
             buildNumber: record.build_number,
             hostname: record.job_name, // 只顯示與 job_name 相同的主機
         });
+    };
+    
+    // 快速日期篩選變更
+    const handleQuickDateChange = (value) => {
+        setQuickDateFilter(value);
+        
+        const dateRange = getDateRangeByQuickFilter(value);
+        const newFilters = {
+            ...filters,
+            date_range: dateRange,
+        };
+        
+        setFilters(newFilters);
+        updateURLParams(newFilters, value);
+        fetchJobs(newFilters);
+    };
+    
+    // 自訂日期範圍變更
+    const handleCustomDateChange = (dates) => {
+        if (dates && dates[0] && dates[1]) {
+            setQuickDateFilter('custom');  // 切換到自訂模式
+            
+            const newFilters = {
+                ...filters,
+                date_range: dates,
+            };
+            
+            setFilters(newFilters);
+            updateURLParams(newFilters, 'custom');
+            fetchJobs(newFilters);
+        } else {
+            // 清除日期時，切換到全部
+            setQuickDateFilter('all');
+            
+            const newFilters = {
+                ...filters,
+                date_range: null,
+            };
+            
+            setFilters(newFilters);
+            updateURLParams(newFilters, 'all');
+            fetchJobs(newFilters);
+        }
     };
     
     // 存儲 Workspace 到 NAS
@@ -871,14 +958,35 @@ const RVTAnalysisPage = () => {
         setTimeRange(range);
         fetchStatistics(range);  // 使用 URL 中的時間範圍
         fetchAvailableViews(filters.server_id);
+        
+        // 根據 URL 中的 date_filter 初始化 date_range
+        const urlQuickFilter = getQuickDateFilterFromURL();
+        setQuickDateFilter(urlQuickFilter);
+        
+        // 如果是快速篩選（非自訂），計算對應的日期範圍
+        if (urlQuickFilter && urlQuickFilter !== 'all' && urlQuickFilter !== 'custom') {
+            const dateRange = getDateRangeByQuickFilter(urlQuickFilter);
+            if (dateRange) {
+                setFilters(prev => ({ ...prev, date_range: dateRange }));
+            }
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     
     // 當 URL 參數變化時，更新 filters 並重新載入數據
     useEffect(() => {
         const urlFilters = getFiltersFromURL();
+        const urlQuickFilter = getQuickDateFilterFromURL();
+        
+        // 如果是快速篩選，計算對應的日期範圍
+        if (urlQuickFilter && urlQuickFilter !== 'all' && urlQuickFilter !== 'custom') {
+            const dateRange = getDateRangeByQuickFilter(urlQuickFilter);
+            urlFilters.date_range = dateRange;
+        }
+        
         setFilters(urlFilters);
-        fetchJobs();
+        setQuickDateFilter(urlQuickFilter);
+        fetchJobs(urlFilters);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location.search]);
 
@@ -990,10 +1098,84 @@ const RVTAnalysisPage = () => {
 
             {activeTab === 'details' && (
                 <>
+                    {/* 日期篩選區域 - 最上方 */}
+                    <div style={{ 
+                        flex: '0 0 auto',
+                        padding: '12px 16px 0 16px',
+                        backgroundColor: '#f5f5f5',
+                    }}>
+                        <Card 
+                            size="small"
+                            bodyStyle={{ padding: '10px 16px' }}
+                            style={{ 
+                                marginBottom: 8,
+                                boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+                            }}
+                        >
+                            <Row gutter={16} align="middle">
+                                {/* 快速日期篩選 */}
+                                <Col>
+                                    <Space size={8} align="center">
+                                        <span style={{ fontSize: 13, color: '#666', fontWeight: 500 }}>日期範圍：</span>
+                                        <Radio.Group 
+                                            value={quickDateFilter}
+                                            onChange={(e) => handleQuickDateChange(e.target.value)}
+                                            optionType="button"
+                                            buttonStyle="solid"
+                                            size="small"
+                                        >
+                                            <Radio.Button value="1d">1天</Radio.Button>
+                                            <Radio.Button value="3d">3天</Radio.Button>
+                                            <Radio.Button value="7d">7天</Radio.Button>
+                                            <Radio.Button value="all">全部</Radio.Button>
+                                        </Radio.Group>
+                                    </Space>
+                                </Col>
+                                
+                                {/* 自訂日期範圍 */}
+                                <Col>
+                                    <Space size={8} align="center">
+                                        <RangePicker
+                                            value={quickDateFilter === 'custom' ? filters.date_range : null}
+                                            onChange={handleCustomDateChange}
+                                            placeholder={['開始日期', '結束日期']}
+                                            size="small"
+                                            allowClear
+                                            getPopupContainer={() => document.body}
+                                            style={{ 
+                                                borderColor: quickDateFilter === 'custom' ? '#1890ff' : undefined,
+                                            }}
+                                        />
+                                        {quickDateFilter === 'custom' && filters.date_range && (
+                                            <Tag color="blue" style={{ margin: 0 }}>
+                                                自訂區間
+                                            </Tag>
+                                        )}
+                                    </Space>
+                                </Col>
+                                
+                                {/* 當前篩選範圍提示 */}
+                                {quickDateFilter !== 'all' && quickDateFilter !== 'custom' && (
+                                    <Col>
+                                        <span style={{ fontSize: 12, color: '#999' }}>
+                                            {(() => {
+                                                const range = getDateRangeByQuickFilter(quickDateFilter);
+                                                if (range) {
+                                                    return `${range[0].format('YYYY-MM-DD')} ~ ${range[1].format('YYYY-MM-DD')}`;
+                                                }
+                                                return '';
+                                            })()}
+                                        </span>
+                                    </Col>
+                                )}
+                            </Row>
+                        </Card>
+                    </div>
+
                     {/* 固定篩選區域 - 緊湊單行佈局 */}
                     <div style={{ 
                         flex: '0 0 auto',
-                        padding: '12px 16px',
+                        padding: '0 16px',
                         backgroundColor: '#f5f5f5',
                     }}>
                         <Card 
@@ -1086,25 +1268,6 @@ const RVTAnalysisPage = () => {
                                         <Option value="UNSTABLE">Unstable</Option>
                                         <Option value="ABORTED">Aborted</Option>
                                     </Select>
-                                </Col>
-                                
-                                {/* 日期範圍 */}
-                                <Col flex="auto" style={{ maxWidth: 260 }}>
-                                    <RangePicker
-                                        style={{ width: '100%' }}
-                                        value={filters.date_range}
-                                        onChange={(dates) => {
-                                            const newFilters = { ...filters, date_range: dates };
-                                            setFilters(newFilters);
-                                            updateURLParams(newFilters);  // 更新 URL
-                                            // 日期變更時重新載入 Jobs 列表
-                                            fetchJobs(newFilters);
-                                        }}
-                                        placeholder={['開始日期', '結束日期']}
-                                        size="small"
-                                        allowClear
-                                        getPopupContainer={() => document.body}
-                                    />
                                 </Col>
                                 
                                 {/* 搜尋 */}
