@@ -154,6 +154,7 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             uart_ssh: 'UART SSH 連線檢查',
             nas_connection: 'NAS 連線檢查',
             mdt_web: 'MDT Web 檢查',
+            testcases: 'Testcase 配置驗證',
             network_connectivity: '網路連線測試',
             ssh_authentication: 'SSH 認證測試',
             dhcp_records: 'DHCP 記錄比對',
@@ -237,6 +238,21 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
             mismatched_count: '不一致設備數',
             not_found_devices: '未找到的設備',
             mismatched_devices: '配置不一致的設備',
+            // Testcase 檢查相關
+            file_path: '檔案路徑',
+            file_found: '檔案存在',
+            yaml_valid: 'YAML 語法',
+            jinja2_valid: 'Jinja2 語法',
+            jinja2_warnings: 'Jinja2 警告',
+            line_count: '總行數',
+            total_defined: '已定義 testcase_set',
+            total_referenced: 'Inventory 引用數',
+            defined_sets: '已定義的 testcase_set',
+            referenced_sets: '被引用的 testcase_set',
+            missing_sets: '缺失的 testcase_set',
+            unused_sets: '未使用的 testcase_set',
+            hosts_with_missing_set: '引用缺失定義的主機',
+            testcase_sets_used: '使用 testcase_set',
         };
         return labels[key] || key;
     };
@@ -289,6 +305,81 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
                     ))}
                 </div>
             );
+        }
+        
+        // Testcase 缺失 testcase_set 的主機列表
+        if (key === 'hosts_with_missing_set' && Array.isArray(value)) {
+            if (value.length === 0) return '無';
+            return (
+                <div style={{ marginTop: 8 }}>
+                    {value.map((host, index) => (
+                        <Card
+                            key={index}
+                            size="small"
+                            style={{
+                                marginBottom: 8,
+                                backgroundColor: '#fff1f0',
+                                border: '1px solid #ffccc7'
+                            }}
+                        >
+                            <Space direction="vertical" style={{ width: '100%' }}>
+                                <div>
+                                    <CloseCircleOutlined style={{ color: '#ff4d4f', marginRight: 8 }} />
+                                    <Text strong>{host.hostname}</Text>
+                                </div>
+                                <div>
+                                    <Text type="secondary">testcase_set: </Text>
+                                    <Tag color="error">{host.testcase_set}</Tag>
+                                </div>
+                            </Space>
+                        </Card>
+                    ))}
+                </div>
+            );
+        }
+        
+        // Testcase 定義/引用/缺失/未使用的 testcase_set 列表
+        if (['defined_sets', 'referenced_sets', 'missing_sets', 'unused_sets'].includes(key) && Array.isArray(value)) {
+            if (value.length === 0) return '無';
+            const colorMap = {
+                defined_sets: 'blue',
+                referenced_sets: 'cyan',
+                missing_sets: 'error',
+                unused_sets: 'default'
+            };
+            return (
+                <div style={{ marginTop: 4 }}>
+                    {value.map((item, index) => (
+                        <Tag key={index} color={colorMap[key]} style={{ marginBottom: 4 }}>
+                            {item}
+                        </Tag>
+                    ))}
+                    {value.length > 10 && (
+                        <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>
+                            ...共 {value.length} 個
+                        </Text>
+                    )}
+                </div>
+            );
+        }
+        
+        // Jinja2 警告列表
+        if (key === 'jinja2_warnings' && Array.isArray(value)) {
+            if (value.length === 0) return '無警告';
+            return (
+                <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
+                    {value.map((warning, index) => (
+                        <li key={index} style={{ color: '#faad14' }}>{warning}</li>
+                    ))}
+                </ul>
+            );
+        }
+        
+        // 布林值的特殊處理
+        if (key === 'yaml_valid' || key === 'jinja2_valid' || key === 'file_found' || key === 'testcase_sets_used') {
+            return value ? 
+                <Tag color="success">✓ 是</Tag> : 
+                <Tag color="error">✗ 否</Tag>;
         }
         
         // MDT Web 未找到設備的特殊處理
@@ -394,7 +485,7 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
                 <InfoCircleOutlined style={{ fontSize: 48, color: '#1890ff', marginBottom: 16 }} />
                 <Title level={4}>點擊「開始檢查」執行配置驗證</Title>
                 <p style={{ color: '#8c8c8c', marginBottom: 24 }}>
-                    檢查將包括：語法驗證、結構完整性、主機配置、IP/MAC 地址驗證、UART SSH 連線等
+                    檢查將包括：語法驗證、結構完整性、主機配置、IP/MAC 地址驗證、UART SSH 連線、Testcase 配置等
                 </p>
                 <ul style={{ textAlign: 'left', display: 'inline-block', color: '#595959' }}>
                     <li>✓ 語法驗證（INI 格式、Jinja2 模板）</li>
@@ -403,6 +494,7 @@ const InventoryValidationDrawer = ({ visible, onClose, inventoryId, inventoryNam
                     <li>✓ IP 地址驗證（格式、衝突、DHCP 租約）</li>
                     <li>✓ MAC 地址驗證（格式、重複、DHCP 租約）</li>
                     <li>✓ UART SSH 連線檢查（認證、連接狀態）</li>
+                    <li>✓ Testcase 配置驗證（YAML 語法、testcase_set 定義）</li>
                 </ul>
             </div>
         </Card>

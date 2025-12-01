@@ -109,11 +109,14 @@ class InventoryConfigValidator:
             # 9. MDT Web 檢查（新增）
             self._check_mdt_web()
             
-            # 10. 網路連線測試（可選）
+            # 10. Testcase 檔案驗證（新增）
+            self._check_testcases()
+            
+            # 11. 網路連線測試（可選）
             if self.check_connectivity:
                 self._check_network_connectivity()
             
-            # 11. 計算總體狀態
+            # 12. 計算總體狀態
             self._calculate_overall_status()
             
             logger.info(f"✅ Validation complete. Status: {self.validation_results['overall_status']}")
@@ -1517,6 +1520,376 @@ class InventoryConfigValidator:
         except (ValueError, ipaddress.AddressValueError):
             return False
     
+    def _check_testcases(self):
+        """
+        Testcase 檔案驗證
+        
+        檢查項目：
+        1. testcases.yml 檔案是否存在
+        2. YAML 語法是否正確
+        3. Jinja2 變數語法是否正確
+        4. Inventory 中引用的 testcase_set 是否都有定義
+        """
+        try:
+            logger.info("🔍 Checking testcases configuration...")
+            
+            result = {
+                'status': 'unknown',
+                'message': '',
+                'value': 'N/A',
+                'details': {},
+                'suggestions': []
+            }
+            
+            # 1. 定位 testcases.yml 檔案
+            testcases_path = self._get_testcases_file_path()
+            
+            if not testcases_path:
+                # 先檢查 Inventory 中是否有引用 testcase_set
+                referenced_sets = self._collect_referenced_testcase_sets()
+                
+                if not referenced_sets:
+                    # 沒有引用任何 testcase_set，跳過此檢查
+                    result['status'] = 'success'
+                    result['message'] = 'Inventory 未使用 testcase_set，跳過檢查'
+                    result['value'] = '- 未使用'
+                    result['details'] = {
+                        'file_found': False,
+                        'testcase_sets_used': False
+                    }
+                    result['suggestions'] = [
+                        '如果需要使用 testcase_set 功能，請在 group_vars/all/ 目錄下建立 testcases.yml'
+                    ]
+                else:
+                    # 有引用但找不到檔案
+                    result['status'] = 'error'
+                    result['message'] = f'Inventory 引用了 {len(referenced_sets)} 個 testcase_set，但找不到 testcases.yml'
+                    result['value'] = '✗ 檔案缺失'
+                    result['details'] = {
+                        'file_found': False,
+                        'testcase_sets_used': True,
+                        'referenced_sets': list(referenced_sets)
+                    }
+                    result['suggestions'] = [
+                        '請在 group_vars/all/ 目錄下建立 testcases.yml 檔案',
+                        f'需要定義的 testcase_set: {", ".join(list(referenced_sets)[:5])}'
+                    ]
+                
+                self.validation_results['checks']['testcases'] = result
+                logger.info(f"Testcases check: {result['status']} - {result['message']}")
+                return
+            
+            # 2. 讀取檔案內容
+            yaml_content = self._read_testcases_file(testcases_path)
+            
+            if yaml_content is None:
+                result['status'] = 'error'
+                result['message'] = f'無法讀取 testcases.yml 檔案'
+                result['value'] = '✗ 讀取失敗'
+                result['details'] = {'file_path': testcases_path, 'error': '檔案讀取失敗'}
+                result['suggestions'] = ['檢查檔案權限', '確認 NAS 連線正常']
+                self.validation_results['checks']['testcases'] = result
+                return
+            
+            # 3. 驗證 YAML 語法
+            from library.utils.yaml_validator import YAMLValidator
+            
+            yaml_validation = YAMLValidator.validate_yaml_syntax(yaml_content)
+            
+            if not yaml_validation['is_valid']:
+                result['status'] = 'error'
+                error_line = yaml_validation.get('error_line', 'N/A')
+                result['message'] = f"YAML 語法錯誤：第 {error_line} 行"
+                result['value'] = '✗ 語法錯誤'
+                result['details'] = {
+                    'file_path': testcases_path,
+                    'yaml_valid': False,
+                    'error_line': error_line,
+                    'error_message': yaml_validation.get('error_message'),
+                    'error_context': yaml_validation.get('error_context')
+                }
+                result['suggestions'] = [
+                    f"請修正第 {error_line} 行的語法錯誤",
+                    yaml_validation.get('error_message', ''),
+                    '確認 YAML 縮排正確（使用空格，不要使用 Tab）'
+                ]
+                self.validation_results['checks']['testcases'] = result
+                logger.warning(f"Testcases YAML syntax error at line {error_line}")
+                return
+            
+            # 4. 驗證 Jinja2 語法
+            jinja2_validation = YAMLValidator.validate_jinja2_in_yaml(yaml_content)
+            
+            # 5. 提取所有定義的 testcase_set
+            defined_sets = YAMLValidator.extract_testcase_sets(yaml_content)
+            
+            # 6. 從 Inventory 收集所有引用的 testcase_set
+            referenced_sets = self._collect_referenced_testcase_sets()
+            
+            # 7. 交叉比對
+            missing_sets = referenced_sets - defined_sets
+            unused_sets = defined_sets - referenced_sets if referenced_sets else set()
+            
+            # 8. 獲取引用了未定義 testcase_set 的主機
+            hosts_with_missing = self._get_hosts_with_missing_testcase_sets(missing_sets) if missing_sets else []
+            
+            # 9. 判斷狀態
+            if missing_sets:
+                result['status'] = 'error'
+                result['message'] = f'{len(missing_sets)} 個 testcase_set 未在 testcases.yml 中定義'
+                result['value'] = f'✗ {len(missing_sets)} 缺失'
+            elif not jinja2_validation['is_valid']:
+                result['status'] = 'warning'
+                result['message'] = 'YAML 語法正確，但 Jinja2 語法可能有問題'
+                result['value'] = '⚠ Jinja2 警告'
+            elif not referenced_sets:
+                result['status'] = 'success'
+                result['message'] = f'testcases.yml 語法正確（定義了 {len(defined_sets)} 個 testcase_set，但 Inventory 未使用）'
+                result['value'] = f'✓ {len(defined_sets)} 定義'
+            elif unused_sets and len(unused_sets) > len(defined_sets) * 0.5:
+                # 超過一半未使用，給個提示
+                result['status'] = 'success'
+                result['message'] = f'驗證通過，但有 {len(unused_sets)} 個未使用的定義'
+                result['value'] = f'✓ {len(referenced_sets)}/{len(defined_sets)}'
+            else:
+                result['status'] = 'success'
+                result['message'] = f'所有 {len(referenced_sets)} 個 testcase_set 驗證通過'
+                result['value'] = f'✓ {len(referenced_sets)} 驗證'
+            
+            # 10. 組裝詳細資訊
+            result['details'] = {
+                'file_path': testcases_path,
+                'file_found': True,
+                'yaml_valid': True,
+                'jinja2_valid': jinja2_validation['is_valid'],
+                'jinja2_warnings': jinja2_validation.get('warnings', [])[:5],
+                'line_count': len(yaml_content.split('\n')),
+                'total_defined': len(defined_sets),
+                'total_referenced': len(referenced_sets),
+                'defined_sets': sorted(list(defined_sets))[:20],  # 最多顯示 20 個
+                'referenced_sets': sorted(list(referenced_sets))[:20],
+                'missing_sets': sorted(list(missing_sets)),
+                'unused_sets': sorted(list(unused_sets))[:10],  # 最多顯示 10 個
+                'hosts_with_missing_set': hosts_with_missing[:10]  # 最多顯示 10 個
+            }
+            
+            # 11. 生成建議
+            result['suggestions'] = self._generate_testcase_suggestions(
+                missing_sets, unused_sets, jinja2_validation, referenced_sets
+            )
+            
+            self.validation_results['checks']['testcases'] = result
+            logger.info(f"✓ Testcases check: {result['status']} - defined={len(defined_sets)}, referenced={len(referenced_sets)}, missing={len(missing_sets)}")
+            
+        except Exception as e:
+            logger.error(f"❌ Testcases check exception: {e}", exc_info=True)
+            self.validation_results['checks']['testcases'] = self._create_error_check('testcases', str(e))
+    
+    def _get_testcases_file_path(self) -> Optional[str]:
+        """
+        獲取 testcases.yml 檔案路徑
+        
+        查找順序：
+        1. {inventory_dir}/group_vars/all/testcases.yml
+        2. {inventory_dir}/group_vars/all/testcases.yaml
+        3. {inventory_dir}/group_vars/all.yml (如果包含 testcase 相關定義)
+        
+        Returns:
+            檔案路徑（如果存在），否則返回 None
+        """
+        try:
+            if not self.inventory:
+                return None
+            
+            from library.services.ansible_inventory_service import AnsibleInventoryService
+            
+            service = AnsibleInventoryService()
+            linux_path = service.convert_windows_path_to_linux(self.inventory.nas_path)
+            
+            # inventory 目錄（去掉檔案名稱）
+            inventory_dir = linux_path
+            
+            # 檢查路徑列表
+            possible_paths = [
+                os.path.join(inventory_dir, 'group_vars', 'all', 'testcases.yml'),
+                os.path.join(inventory_dir, 'group_vars', 'all', 'testcases.yaml'),
+                os.path.join(inventory_dir, 'group_vars', 'all', 'testcase.yml'),
+                os.path.join(inventory_dir, 'group_vars', 'all', 'testcase.yaml'),
+            ]
+            
+            for path in possible_paths:
+                if os.path.exists(path):
+                    logger.info(f"Found testcases file: {path}")
+                    return path
+            
+            # 檢查 all.yml 是否存在（可能包含 testcase 定義）
+            all_yml_path = os.path.join(inventory_dir, 'group_vars', 'all.yml')
+            if os.path.exists(all_yml_path):
+                # 讀取並檢查是否包含 testcase 相關內容
+                try:
+                    with open(all_yml_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    if 'testcase' in content.lower():
+                        logger.info(f"Found testcases in all.yml: {all_yml_path}")
+                        return all_yml_path
+                except Exception as e:
+                    logger.warning(f"Failed to read all.yml: {e}")
+            
+            logger.info(f"No testcases file found in {inventory_dir}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding testcases file: {e}", exc_info=True)
+            return None
+    
+    def _read_testcases_file(self, file_path: str) -> Optional[str]:
+        """
+        讀取 testcases.yml 檔案內容
+        
+        Args:
+            file_path: 檔案路徑
+            
+        Returns:
+            檔案內容（如果成功），否則返回 None
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            logger.debug(f"Read testcases file: {len(content)} characters")
+            return content
+        except Exception as e:
+            logger.error(f"Failed to read testcases file {file_path}: {e}")
+            return None
+    
+    def _collect_referenced_testcase_sets(self) -> set:
+        """
+        從 Inventory 內容收集所有引用的 testcase_set
+        
+        解析 testcase_set=xxx 格式
+        
+        Returns:
+            引用的 testcase_set 名稱集合
+        """
+        referenced = set()
+        
+        if not self.content:
+            return referenced
+        
+        for line in self.content.split('\n'):
+            # 跳過註釋行
+            stripped = line.strip()
+            if stripped.startswith('#') or stripped.startswith(';'):
+                continue
+            
+            # 跳過 section 行
+            if stripped.startswith('['):
+                continue
+            
+            # 查找 testcase_set=xxx 格式
+            # 支援有無空格: testcase_set=xxx 或 testcase_set = xxx
+            match = re.search(r'testcase_set\s*=\s*(\S+)', line)
+            if match:
+                testcase_set = match.group(1)
+                # 移除可能的引號
+                testcase_set = testcase_set.strip('"\'')
+                if testcase_set:
+                    referenced.add(testcase_set)
+        
+        logger.debug(f"Found {len(referenced)} referenced testcase_sets in Inventory")
+        return referenced
+    
+    def _get_hosts_with_missing_testcase_sets(self, missing_sets: set) -> List[Dict]:
+        """
+        獲取引用了未定義 testcase_set 的主機列表
+        
+        Args:
+            missing_sets: 未定義的 testcase_set 名稱集合
+            
+        Returns:
+            主機列表 [{'hostname': ..., 'testcase_set': ...}, ...]
+        """
+        hosts = []
+        
+        if not self.content or not missing_sets:
+            return hosts
+        
+        for line in self.content.split('\n'):
+            stripped = line.strip()
+            
+            # 跳過註釋、空行、section
+            if not stripped or stripped.startswith('#') or stripped.startswith(';') or stripped.startswith('['):
+                continue
+            
+            # 查找 testcase_set=xxx
+            match = re.search(r'testcase_set\s*=\s*(\S+)', line)
+            if match:
+                testcase_set = match.group(1).strip('"\'')
+                
+                if testcase_set in missing_sets:
+                    # 提取主機名（行首的第一個字串）
+                    parts = stripped.split()
+                    if parts:
+                        hostname = parts[0]
+                        hosts.append({
+                            'hostname': hostname,
+                            'testcase_set': testcase_set
+                        })
+        
+        return hosts
+    
+    def _generate_testcase_suggestions(
+        self, 
+        missing_sets: set, 
+        unused_sets: set,
+        jinja2_validation: Dict,
+        referenced_sets: set
+    ) -> List[str]:
+        """
+        生成 testcase 驗證建議
+        
+        Args:
+            missing_sets: 未定義的 testcase_set
+            unused_sets: 已定義但未使用的 testcase_set
+            jinja2_validation: Jinja2 驗證結果
+            referenced_sets: Inventory 中引用的 testcase_set
+            
+        Returns:
+            建議列表
+        """
+        suggestions = []
+        
+        if missing_sets:
+            suggestions.append(f'⚠️ 有 {len(missing_sets)} 個 testcase_set 在 testcases.yml 中未定義')
+            
+            # 顯示缺失的名稱（最多 5 個）
+            missing_list = sorted(list(missing_sets))[:5]
+            suggestions.append(f'缺失的 testcase_set: {", ".join(missing_list)}')
+            
+            if len(missing_sets) > 5:
+                suggestions.append(f'（還有 {len(missing_sets) - 5} 個未顯示）')
+            
+            suggestions.append('請在 testcases.yml 中添加這些定義，或修正 Inventory 中的引用')
+        
+        if unused_sets:
+            suggestions.append(f'ℹ️ 有 {len(unused_sets)} 個 testcase_set 已定義但未被使用')
+            if len(unused_sets) <= 5:
+                suggestions.append(f'未使用的定義: {", ".join(sorted(unused_sets))}')
+        
+        if not jinja2_validation.get('is_valid', True):
+            suggestions.append('⚠️ testcases.yml 中的 Jinja2 語法可能有問題')
+            warnings = jinja2_validation.get('warnings', [])
+            if warnings:
+                suggestions.extend(warnings[:3])
+        
+        if not suggestions:
+            if referenced_sets:
+                suggestions.append('✅ 所有 testcase_set 配置驗證通過')
+            else:
+                suggestions.append('✅ testcases.yml 語法正確')
+                suggestions.append('ℹ️ Inventory 中未使用任何 testcase_set')
+        
+        return suggestions
+
     def _check_network_connectivity(self):
         """網路連線測試（可選，耗時）"""
         try:
