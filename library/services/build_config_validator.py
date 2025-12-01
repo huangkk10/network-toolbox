@@ -535,10 +535,18 @@ class BuildConfigValidator:
         
         try:
             # Get UART connection info from config
-            uart_ip = self.config.get('UART_IP', '').strip()
-            uart_user = self.config.get('uart_user', '').strip()
-            uart_password = self.config.get('uart_password', '').strip()
-            uart_port = self.config.get('uart_port', 22)  # Default SSH port
+            # Note: Values from Ansible Inventory may be non-string types (e.g., int password)
+            uart_ip_raw = self.config.get('UART_IP', '')
+            uart_ip = str(uart_ip_raw).strip() if uart_ip_raw else ''
+            
+            uart_user_raw = self.config.get('uart_user', '')
+            uart_user = str(uart_user_raw).strip() if uart_user_raw else ''
+            
+            uart_password_raw = self.config.get('uart_password', '')
+            uart_password = str(uart_password_raw) if uart_password_raw else ''  # Don't strip password
+            
+            uart_port_raw = self.config.get('uart_port', 22)
+            uart_port = int(uart_port_raw) if uart_port_raw else 22  # Ensure int type
             
             # Store connection info in check result
             check_result['value'] = uart_ip
