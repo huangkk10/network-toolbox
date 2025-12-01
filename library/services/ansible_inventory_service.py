@@ -190,7 +190,13 @@ class AnsibleInventoryService:
                 'invalid section',
                 'expected key=value',
                 'not enough values to unpack',
-                'unable to parse'
+                'unable to parse',
+                'yaml parsing failed',           # Jinja2 變數未加引號會觸發此錯誤
+                'mapping values are not allowed', # Jinja2 變數未加引號的典型錯誤
+                'could not match',
+                'syntax error',
+                'error parsing',
+                '[error]',
             ]
             
             has_error = any(indicator in stderr_lower for indicator in error_indicators)
@@ -198,10 +204,27 @@ class AnsibleInventoryService:
             if has_error:
                 # 清理錯誤訊息，移除顏色代碼和多餘的換行
                 error_msg = result.stderr.strip()
-                # 提取第一個有意義的錯誤行
-                error_lines = [line for line in error_msg.split('\n') if 'WARNING' in line or 'caused by' in line or 'Failed' in line]
+                # 移除 ANSI 顏色代碼
+                import re
+                error_msg = re.sub(r'\x1b\[[0-9;]*m', '', error_msg)
+                
+                # 提取有意義的錯誤行
+                error_lines = []
+                for line in error_msg.split('\n'):
+                    line_lower = line.lower()
+                    if any(keyword in line_lower for keyword in [
+                        'warning', 'error', 'failed', 'caused by', 
+                        'yaml parsing', 'mapping values'
+                    ]):
+                        error_lines.append(line.strip())
+                
                 if error_lines:
-                    error_msg = '\n'.join(error_lines[:3])  # 最多顯示前 3 行
+                    error_msg = '\n'.join(error_lines[:5])  # 最多顯示前 5 行
+                
+                # 如果是 Jinja2 相關的 YAML 解析錯誤，提供更友好的提示
+                if 'yaml parsing' in error_msg.lower() or 'mapping values' in error_msg.lower():
+                    error_msg += "\n\n💡 提示: 這個錯誤通常是因為 Jinja2 變數 {{ ... }} 沒有用引號包起來。\n" \
+                                 "例如: saf_comment_full={{ var }} 應該改為 saf_comment_full=\"{{ var }}\""
                 
                 logger.warning(f"Ansible inventory syntax error detected: {error_msg}")
                 return False, error_msg
