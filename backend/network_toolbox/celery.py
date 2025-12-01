@@ -287,6 +287,20 @@ app.conf.beat_schedule = {
         }
     },
     
+    # 任務 21：Build 配置自動檢查（每 5 分鐘）
+    'auto-validate-completed-builds-every-5-minutes': {
+        'task': 'api.tasks.auto_validate_completed_builds',
+        'schedule': crontab(minute='*/5'),  # 每 5 分鐘執行一次
+        'kwargs': {
+            'limit': 50,              # 每次最多檢查 50 個 Builds
+            'days': 7,                # 只檢查最近 7 天的 Builds
+            'priority_failed': True,  # 優先檢查失敗的 Build
+        },
+        'options': {
+            'expires': 240,           # 任務超時 4 分鐘（避免與下次重疊）
+        }
+    },
+    
     # ============================================================================
     # 🧠 智能自適應同步任務（可選啟用）
     # ============================================================================

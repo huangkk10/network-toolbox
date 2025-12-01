@@ -1748,6 +1748,9 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
             validator = BuildConfigValidator(build.id, dhcp_server_ids=dhcp_server_ids)
             result = validator.validate()
             
+            # 新增：存儲結果到 NAS
+            self._save_config_validation_result(build, result, auto_triggered=False)
+            
             logger.info(f"Build #{build.build_number} 配置檢查完成: {result['overall_status']}")
             
             return Response(result)
@@ -1757,6 +1760,175 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
             return Response({
                 'success': False,
                 'message': f'檢查失敗: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # ========== Config Validation 輔助方法 ==========
+    
+    def _get_server_ip(self, server):
+        """從 JenkinsServer 獲取 IP 地址
+        
+        優先使用 ip_address 欄位，若為空則從 url 或 name 推導
+        """
+        from urllib.parse import urlparse
+        
+        if not server:
+            return None
+        
+        # 優先使用 ip_address 欄位
+        if server.ip_address:
+            return server.ip_address
+        
+        # 嘗試從 URL 解析
+        if server.url:
+            try:
+                parsed = urlparse(server.url)
+                host = parsed.hostname
+                if host:
+                    return host
+            except Exception:
+                pass
+        
+        # 使用 name 作為備選
+        if server.name:
+            return server.name
+        
+        return None
+    
+    def _get_config_validation_path(self, build):
+        """獲取 config_validation.json 的路徑"""
+        from django.conf import settings
+        from pathlib import Path
+        
+        if not build.job or not build.job.server:
+            return None
+        
+        server_ip = self._get_server_ip(build.job.server)
+        job_name = build.job.name
+        build_number = build.build_number
+        
+        # 檢查必要欄位
+        if not server_ip or not job_name or build_number is None:
+            logger.warning(f'Build #{build.id} 缺少必要欄位: server_ip={server_ip}, job_name={job_name}, build_number={build_number}')
+            return None
+        
+        base_path = Path(settings.JENKINS_STORAGE_BASE_PATH)
+        validation_path = base_path / server_ip / job_name / str(build_number) / 'config_validation.json'
+        
+        return validation_path
+
+    def _save_config_validation_result(self, build, result, auto_triggered=False):
+        """存儲配置檢查結果到 NAS"""
+        from django.utils import timezone
+        import json
+        
+        validation_path = self._get_config_validation_path(build)
+        
+        if not validation_path:
+            logger.warning(f'無法獲取 Build #{build.id} 的存儲路徑')
+            return False
+        
+        # 確保目錄存在
+        validation_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # 添加 build_info
+        result['build_info'] = {
+            'build_id': build.id,
+            'job_name': build.job.name if build.job else 'Unknown',
+            'build_number': build.build_number,
+            'build_result': build.result,
+            'validated_at': timezone.now().isoformat(),
+            'auto_triggered': auto_triggered
+        }
+        
+        try:
+            with open(validation_path, 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+            
+            logger.info(f'✅ 配置檢查結果已存儲: {validation_path}')
+            return True
+        except Exception as e:
+            logger.error(f'❌ 存儲配置檢查結果失敗: {e}', exc_info=True)
+            return False
+
+    # ========== Config Validation API ==========
+    
+    @action(detail=True, methods=['get'], url_path='has_config_validation')
+    def has_config_validation(self, request, pk=None):
+        """
+        檢查 Build 是否有配置檢查結果
+        
+        GET /api/jenkins-builds/{id}/has_config_validation/
+        
+        Returns:
+            {
+                'has_validation': bool,
+                'overall_status': str | null,
+                'validated_at': str | null,
+                'file_path': str | null
+            }
+        """
+        import json
+        
+        build = self.get_object()
+        
+        # 檢查 JSON 文件是否存在
+        validation_path = self._get_config_validation_path(build)
+        
+        if validation_path and validation_path.exists():
+            try:
+                with open(validation_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                logger.info(f'[API] Config Validation 已存在: Build #{build.id}')
+                
+                return Response({
+                    'has_validation': True,
+                    'overall_status': data.get('overall_status'),
+                    'validated_at': data.get('build_info', {}).get('validated_at'),
+                    'file_path': str(validation_path)
+                })
+            except Exception as e:
+                logger.error(f'[API] 讀取 config_validation.json 失敗: {e}', exc_info=True)
+        
+        return Response({
+            'has_validation': False,
+            'overall_status': None,
+            'validated_at': None,
+            'file_path': None
+        })
+    
+    @action(detail=True, methods=['get'], url_path='config_validation')
+    def config_validation(self, request, pk=None):
+        """
+        獲取 Build 的配置檢查完整內容
+        
+        GET /api/jenkins-builds/{id}/config_validation/
+        
+        Returns:
+            完整的 config_validation.json 內容
+        """
+        import json
+        
+        build = self.get_object()
+        
+        validation_path = self._get_config_validation_path(build)
+        
+        if not validation_path or not validation_path.exists():
+            return Response({
+                'error': 'Config validation file not found',
+                'hint': 'Validation may not have been performed yet'
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        try:
+            with open(validation_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            logger.info(f'[API] 返回 Config Validation: Build #{build.id}')
+            return Response(data)
+        except Exception as e:
+            logger.error(f'[API] 讀取 config_validation.json 失敗: {e}', exc_info=True)
+            return Response({
+                'error': f'Failed to read validation file: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['get'], url_path='has_fatal_analysis')

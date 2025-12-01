@@ -3724,6 +3724,194 @@ def auto_store_jenkins_builds_task(self, limit: int = 20) -> Dict[str, Any]:
             }
 
 
+# ==================== 自動配置檢查任務 ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.auto_validate_completed_builds',
+    max_retries=2,
+    default_retry_delay=60,
+    time_limit=300,  # 5 分鐘超時
+    soft_time_limit=270  # 軟限制 4.5 分鐘
+)
+def auto_validate_completed_builds(self, limit: int = 50, days: int = 7, priority_failed: bool = True) -> Dict[str, Any]:
+    """
+    自動檢查已完成 Build 的配置
+    
+    【策略】
+    1. 優先檢查 FAILURE/ABORTED/UNSTABLE 的 Build
+    2. 其次檢查 SUCCESS 的 Build（可選）
+    3. 只檢查尚未有檢查結果的 Build（檢查 config_validation.json 是否存在）
+    4. 限制每次執行的數量（避免過載）
+    
+    【參數】
+    - limit: 每次最多檢查的 Build 數量（預設 50）
+    - days: 只檢查最近 N 天的 Build（預設 7 天）
+    - priority_failed: 是否優先檢查失敗的 Build（預設 True）
+    
+    【返回】
+    - success: 是否成功
+    - total_checked: 檢查的 Build 數量
+    - validated: 成功驗證的數量
+    - skipped: 跳過的數量（已有結果）
+    - errors: 錯誤數量
+    - duration: 執行時間（秒）
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from django.conf import settings
+    from pathlib import Path
+    import json
+    from api.models import JenkinsBuild
+    from library.services.build_config_validator import BuildConfigValidator
+    
+    start_time = time.time()
+    logger.info('[Celery] 🚀 開始自動配置檢查任務')
+    
+    total_checked = 0
+    validated = 0
+    skipped = 0
+    errors = 0
+    
+    try:
+        # 計算時間範圍
+        cutoff_date = timezone.now() - timedelta(days=days)
+        
+        # 查詢已完成的 Builds
+        builds_query = JenkinsBuild.objects.filter(
+            is_building=False,
+            build_timestamp__gte=cutoff_date,
+            job__server__is_active=True
+        ).select_related('job', 'job__server')
+        
+        # 排序：優先失敗的 Build
+        if priority_failed:
+            # FAILURE, ABORTED, UNSTABLE 優先
+            from django.db.models import Case, When, IntegerField
+            builds_query = builds_query.annotate(
+                priority=Case(
+                    When(result='FAILURE', then=0),
+                    When(result='ABORTED', then=1),
+                    When(result='UNSTABLE', then=2),
+                    default=3,
+                    output_field=IntegerField()
+                )
+            ).order_by('priority', '-build_timestamp')
+        else:
+            builds_query = builds_query.order_by('-build_timestamp')
+        
+        # 限制數量（多取一些，因為可能有部分會跳過）
+        builds = list(builds_query[:limit * 2])
+        
+        base_path = Path(settings.JENKINS_STORAGE_BASE_PATH)
+        
+        for build in builds:
+            if validated >= limit:
+                break
+            
+            total_checked += 1
+            
+            try:
+                # 檢查是否已有結果
+                if not build.job or not build.job.server:
+                    logger.warning(f'[Celery]   ⚠️ Build #{build.id} 缺少 Job 或 Server 資訊，跳過')
+                    skipped += 1
+                    continue
+                
+                server_ip = build.job.server.ip_address
+                
+                # 如果 ip_address 為空，嘗試從 URL 或 name 推導
+                if not server_ip:
+                    from urllib.parse import urlparse
+                    server = build.job.server
+                    # 嘗試從 URL 解析
+                    if server.url:
+                        try:
+                            parsed = urlparse(server.url)
+                            server_ip = parsed.hostname
+                        except Exception:
+                            pass
+                    # 使用 name 作為備選
+                    if not server_ip and server.name:
+                        server_ip = server.name
+                
+                job_name = build.job.name
+                build_number = build.build_number
+                
+                # 檢查必要欄位
+                if not server_ip or not job_name or build_number is None:
+                    logger.warning(f'[Celery]   ⚠️ Build #{build.id} 缺少必要欄位，跳過 (server_ip={server_ip}, job_name={job_name}, build_number={build_number})')
+                    skipped += 1
+                    continue
+                
+                validation_path = base_path / server_ip / job_name / str(build_number) / 'config_validation.json'
+                
+                if validation_path.exists():
+                    logger.debug(f'[Celery]   ⏭️ Build #{build.id} 已有檢查結果，跳過')
+                    skipped += 1
+                    continue
+                
+                # 執行配置檢查
+                logger.info(f'[Celery]   🔍 檢查 Build: {job_name} #{build_number} (result={build.result})')
+                
+                validator = BuildConfigValidator(build.id)
+                result = validator.validate()
+                
+                # 存儲結果
+                validation_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                result['build_info'] = {
+                    'build_id': build.id,
+                    'job_name': job_name,
+                    'build_number': build_number,
+                    'build_result': build.result,
+                    'validated_at': timezone.now().isoformat(),
+                    'auto_triggered': True
+                }
+                
+                with open(validation_path, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+                
+                validated += 1
+                logger.info(f'[Celery]   ✅ {job_name} #{build_number}: {result["overall_status"]}')
+                
+            except Exception as e:
+                errors += 1
+                logger.error(f'[Celery]   ❌ Build #{build.id} 檢查失敗: {e}', exc_info=True)
+        
+        duration = time.time() - start_time
+        
+        logger.info('[Celery] ✅ 自動配置檢查任務完成')
+        logger.info(f'[Celery]   - 總計檢查: {total_checked} 個')
+        logger.info(f'[Celery]   - 成功驗證: {validated} 個')
+        logger.info(f'[Celery]   - 跳過（已有結果）: {skipped} 個')
+        logger.info(f'[Celery]   - 錯誤: {errors} 個')
+        logger.info(f'[Celery]   - 耗時: {duration:.2f} 秒')
+        
+        return {
+            'success': True,
+            'total_checked': total_checked,
+            'validated': validated,
+            'skipped': skipped,
+            'errors': errors,
+            'duration': duration
+        }
+        
+    except Exception as exc:
+        logger.error(f'[Celery] ❌ 自動配置檢查任務失敗: {exc}', exc_info=True)
+        
+        # 自動重試
+        try:
+            raise self.retry(exc=exc, countdown=60)
+        except self.MaxRetriesExceededError:
+            logger.error('[Celery] 自動配置檢查任務重試次數已達上限')
+            return {
+                'success': False,
+                'error': str(exc),
+                'duration': time.time() - start_time
+            }
+
+
 # ==================== 補充 Fatal Error 分析任務 ====================
 
 @shared_task(

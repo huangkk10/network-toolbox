@@ -52,6 +52,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { AnsibleConfigDrawer } from '../components/AnsibleConfig';
 import AnsibleInventoryManagerPage from './AnsibleInventoryManagerPage';
 import FatalErrorsButton from '../components/jenkins/FatalErrorsButton';
+import ConfigValidationButton from '../components/jenkins/ConfigValidationButton';
 import JenkinsStatisticsCharts from '../components/jenkins/JenkinsStatisticsCharts';
 import { useTableState } from '../hooks';
 
@@ -897,24 +898,7 @@ const RVTAnalysisPage = () => {
                 } else {
                     return (
                         <Space size="small">
-                            <Tooltip title="檢查 Build 配置">
-                                <Button 
-                                    size="small"
-                                    icon={<CheckCircleOutlined />}
-                                    onClick={() => {
-                                        console.log('🔍 檢查配置按鈕 - record:', record);
-                                        console.log('🔍 record.id:', record.id);
-                                        console.log('🔍 record.build_id:', record.build_id);
-                                        console.log('🔍 record.build_number:', record.build_number);
-                                        // 使用 build_id（後端 API 的主鍵）
-                                        const buildId = record.build_id || record.id;
-                                        console.log('🔍 最終使用的 buildId:', buildId);
-                                        navigate(`/rvt-analytics/build-config-validator/${buildId}`);
-                                    }}
-                                >
-                                    檢查配置
-                                </Button>
-                            </Tooltip>
+                            <ConfigValidationButton buildId={record.build_id || record.id} />
                             <FatalErrorsButton 
                                 buildId={record.build_id || record.id}
                                 buildResult={record.result}

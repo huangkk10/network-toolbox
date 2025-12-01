@@ -53,12 +53,14 @@ const BuildConfigValidatorPage = () => {
 
     // 狀態管理
     const [loading, setLoading] = useState(false);
+    const [initialLoading, setInitialLoading] = useState(true);  // 新增：初始載入狀態
     const [buildInfo, setBuildInfo] = useState(null);
     const [validationResult, setValidationResult] = useState(null);
     const [dhcpServers, setDhcpServers] = useState([]);
     const [selectedDhcpServer, setSelectedDhcpServer] = useState(null);
     const [expandedPanels, setExpandedPanels] = useState([]);
     const [validationTime, setValidationTime] = useState(null);
+    const [isAutoTriggered, setIsAutoTriggered] = useState(false);  // 新增：是否為自動檢查
     const [ansibleConfigDrawer, setAnsibleConfigDrawer] = useState({
         visible: false,
         jobId: null,
@@ -67,13 +69,15 @@ const BuildConfigValidatorPage = () => {
         hostname: null,
     });
 
-    // 獲取 Build 基本資訊
+    // 獲取 Build 基本資訊和已有的檢查結果
     useEffect(() => {
         if (buildId) {
             fetchBuildInfo();
+            fetchExistingValidation();  // 新增：優先獲取已有結果
             fetchDhcpServers();
         } else {
             message.error('無效的 Build ID');
+            setInitialLoading(false);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [buildId]);
@@ -88,6 +92,36 @@ const BuildConfigValidatorPage = () => {
             setExpandedPanels(errorKeys);
         }
     }, [validationResult]);
+
+    // 新增：獲取已有的檢查結果
+    const fetchExistingValidation = async () => {
+        try {
+            // 先檢查是否有結果
+            const checkResponse = await axios.get(`/api/jenkins-builds/${buildId}/has_config_validation/`);
+            
+            if (checkResponse.data.has_validation) {
+                // 有結果，獲取完整內容
+                const resultResponse = await axios.get(`/api/jenkins-builds/${buildId}/config_validation/`);
+                setValidationResult(resultResponse.data);
+                
+                // 設置檢查時間
+                if (resultResponse.data.build_info?.validated_at) {
+                    setValidationTime(new Date(resultResponse.data.build_info.validated_at));
+                }
+                
+                // 檢查是否為自動觸發
+                if (resultResponse.data.build_info?.auto_triggered) {
+                    setIsAutoTriggered(true);
+                    message.info('此檢查結果由系統自動生成');
+                }
+            }
+        } catch (error) {
+            // 沒有結果，顯示手動檢查按鈕
+            console.log('No existing validation result, manual check required');
+        } finally {
+            setInitialLoading(false);
+        }
+    };
 
     const fetchBuildInfo = async () => {
         setLoading(true);
@@ -126,6 +160,7 @@ const BuildConfigValidatorPage = () => {
             
             setValidationResult(response.data);
             setValidationTime(new Date());
+            setIsAutoTriggered(false);  // 手動檢查
             message.success('配置檢查完成');
         } catch (error) {
             console.error('配置檢查失敗:', error);
@@ -254,7 +289,7 @@ const BuildConfigValidatorPage = () => {
     const renderOverviewCard = () => {
         if (!validationResult) return null;
 
-        const { overall_status, config_source, summary } = validationResult;
+        const { overall_status, config_source, summary, build_info } = validationResult;
         const progress = calculateProgress();
 
         return (
@@ -262,6 +297,9 @@ const BuildConfigValidatorPage = () => {
                 title={
                     <Space>
                         <span>📋 檢查總覽</span>
+                        {(isAutoTriggered || build_info?.auto_triggered) && (
+                            <Tag color="blue">自動檢查</Tag>
+                        )}
                     </Space>
                 }
                 style={{ marginBottom: '24px' }}
@@ -544,6 +582,15 @@ const BuildConfigValidatorPage = () => {
         }
         return String(value || 'N/A');
     };
+
+    // 初始載入中
+    if (initialLoading) {
+        return (
+            <div style={{ padding: '24px', textAlign: 'center' }}>
+                <Spin size="large" tip="載入檢查結果中..." />
+            </div>
+        );
+    }
 
     if (loading && !buildInfo) {
         return (
