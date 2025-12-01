@@ -65,10 +65,24 @@ class BuildConfigValidator:
                     'value': None,
                     'details': {},
                     'suggestions': []
+                },
+                'nas_connection': {
+                    'status': 'unknown',
+                    'message': '',
+                    'value': None,
+                    'details': {},
+                    'suggestions': []
+                },
+                'mdt_web': {
+                    'status': 'unknown',
+                    'message': '',
+                    'value': None,
+                    'details': {},
+                    'suggestions': []
                 }
             },
             'summary': {
-                'total_checks': 4,
+                'total_checks': 6,
                 'passed': 0,
                 'warnings': 0,
                 'errors': 0
@@ -101,6 +115,8 @@ class BuildConfigValidator:
             self._check_host_mac()
             self._check_uart_ip()
             self._check_uart_ssh_connection()
+            self._check_nas_connection()
+            self._check_mdt_web()
             self._calculate_overall_status()
             
             logger.info(f"Validation complete. Status: {self.validation_results['overall_status']}, Source: {self.config_source}")
@@ -756,6 +772,307 @@ class BuildConfigValidator:
             return None
         
         return ':'.join(mac_clean[i:i+2] for i in range(0, 12, 2))
+    
+    def _check_nas_connection(self):
+        """
+        NAS 連線檢查
+        驗證 Build 對應的 NAS 儲存路徑是否可訪問
+        """
+        check_result = self.validation_results['checks']['nas_connection']
+        
+        try:
+            import os
+            
+            # 獲取 Build 的 log_file_path（儲存路徑）
+            if not self.build or not self.build.log_file_path:
+                check_result['status'] = 'warning'
+                check_result['message'] = '未設定日誌檔案路徑，跳過 NAS 檢查'
+                check_result['value'] = 'N/A'
+                check_result['suggestions'] = ['Build 尚未有 console log 路徑']
+                return
+            
+            log_path = self.build.log_file_path
+            storage_dir = os.path.dirname(log_path)
+            
+            check_result['value'] = storage_dir
+            check_result['details'] = {
+                'log_file_path': log_path,
+                'storage_dir': storage_dir
+            }
+            
+            # 檢查目錄是否存在
+            dir_exists = os.path.exists(storage_dir)
+            file_exists = os.path.exists(log_path)
+            
+            check_result['details']['dir_exists'] = dir_exists
+            check_result['details']['file_exists'] = file_exists
+            
+            if not dir_exists:
+                check_result['status'] = 'error'
+                check_result['message'] = f'NAS 儲存目錄不存在: {storage_dir}'
+                check_result['suggestions'] = [
+                    '檢查 NAS 是否已掛載',
+                    '確認網路連線正常',
+                    '檢查目錄權限'
+                ]
+                logger.error(f"❌ NAS storage directory not found: {storage_dir}")
+                return
+            
+            # 檢查目錄可讀性
+            dir_readable = os.access(storage_dir, os.R_OK)
+            dir_writable = os.access(storage_dir, os.W_OK)
+            
+            check_result['details']['dir_readable'] = dir_readable
+            check_result['details']['dir_writable'] = dir_writable
+            
+            if not dir_readable:
+                check_result['status'] = 'error'
+                check_result['message'] = f'NAS 儲存目錄無讀取權限'
+                check_result['suggestions'] = ['檢查目錄權限設定', '確認 NAS 掛載正確']
+                logger.error(f"❌ NAS storage directory not readable: {storage_dir}")
+                return
+            
+            # 執行 NAS 連線測試（如果有服務可用）
+            try:
+                from api.nas_service import check_nas_connection
+                
+                status, response_time, upload_speed, download_speed, error_message = check_nas_connection()
+                
+                check_result['details']['connection_status'] = status
+                check_result['details']['response_time_ms'] = response_time
+                check_result['details']['upload_speed_mbps'] = upload_speed
+                check_result['details']['download_speed_mbps'] = download_speed
+                
+                if status == 'success':
+                    check_result['status'] = 'success'
+                    if response_time:
+                        check_result['message'] = f'NAS 連線正常 ({response_time:.1f}ms)'
+                    else:
+                        check_result['message'] = 'NAS 連線正常'
+                    logger.info(f"✅ NAS connection successful")
+                else:
+                    check_result['status'] = 'warning'
+                    check_result['message'] = f'NAS 連線測試失敗: {error_message}'
+                    check_result['details']['error_message'] = error_message
+                    check_result['suggestions'] = ['NAS 可能暫時不可用', '稍後重試']
+                    logger.warning(f"⚠️ NAS connection test failed: {error_message}")
+                    
+            except ImportError:
+                # NAS service 不可用，但目錄存在且可讀，視為成功
+                check_result['status'] = 'success'
+                check_result['message'] = f'NAS 儲存目錄可訪問'
+                check_result['details']['connection_test'] = 'skipped (service unavailable)'
+                logger.info(f"✓ NAS directory accessible (connection test skipped)")
+                
+            except Exception as nas_error:
+                # NAS 測試失敗，但目錄存在，給予警告
+                check_result['status'] = 'warning'
+                check_result['message'] = f'NAS 儲存目錄可訪問，但連線測試失敗'
+                check_result['details']['test_error'] = str(nas_error)
+                logger.warning(f"⚠️ NAS connection test error: {nas_error}")
+                
+        except Exception as e:
+            logger.error(f"Failed to check NAS connection: {e}", exc_info=True)
+            check_result['status'] = 'error'
+            check_result['message'] = f'NAS 檢查時發生錯誤: {str(e)}'
+            check_result['suggestions'] = ['檢查系統日誌']
+    
+    def _check_mdt_web(self):
+        """
+        MDT Web 檢查
+        驗證 Build 對應的設備在 MDT Web 中的配置是否一致
+        僅當 Build 配置中有 device_number 時才執行
+        """
+        check_result = self.validation_results['checks']['mdt_web']
+        
+        try:
+            # 檢查是否有 device_number
+            device_number = self.config.get('device_number', '').strip()
+            
+            if not device_number:
+                check_result['status'] = 'warning'
+                check_result['message'] = '未設定 device_number，跳過 MDT Web 檢查'
+                check_result['value'] = 'N/A'
+                check_result['suggestions'] = ['如需 MDT Web 檢查，請在配置中添加 device_number']
+                logger.info("⚠️ No device_number in config, skipping MDT Web check")
+                return
+            
+            check_result['value'] = device_number
+            check_result['details']['device_number'] = device_number
+            
+            # 獲取 DHCP Server IP 用於計算 MDT Web IP
+            dhcp_server_ip = self._get_dhcp_server_ip_for_mdt()
+            
+            if not dhcp_server_ip:
+                check_result['status'] = 'warning'
+                check_result['message'] = '無法確定 DHCP Server IP，跳過 MDT Web 檢查'
+                check_result['suggestions'] = ['請確認 Build 關聯的 DHCP Server']
+                logger.warning("⚠️ Cannot determine DHCP Server IP for MDT Web check")
+                return
+            
+            check_result['details']['dhcp_server_ip'] = dhcp_server_ip
+            
+            # 計算 MDT Web IP（前三段相同，最後一段為 .2）
+            mdt_web_ip = self._calculate_mdt_web_ip(dhcp_server_ip)
+            check_result['details']['mdt_web_ip'] = mdt_web_ip
+            
+            if not mdt_web_ip:
+                check_result['status'] = 'warning'
+                check_result['message'] = '無法計算 MDT Web IP'
+                check_result['suggestions'] = ['檢查 DHCP Server IP 格式']
+                return
+            
+            # 連接 MDT Web 服務
+            from library.services.mdt_web_service import MDTWebService
+            
+            mdt_service = MDTWebService(mdt_web_ip)
+            is_accessible, connection_error = mdt_service.check_connection()
+            
+            check_result['details']['mdt_web_accessible'] = is_accessible
+            
+            if not is_accessible:
+                # 檢查是否為未知網段
+                network_prefix = '.'.join(mdt_web_ip.split('.')[:3])
+                known_networks = ['10.250.10', '10.250.50', '10.250.71', 
+                                  '10.250.120', '10.250.130', '10.250.140']
+                is_unknown_network = network_prefix not in known_networks
+                
+                if is_unknown_network:
+                    check_result['status'] = 'warning'
+                    check_result['message'] = f'此網段可能沒有 MDT Web 伺服器 ({mdt_web_ip})'
+                    check_result['suggestions'] = [
+                        f'網段 {network_prefix} 不在已知 MDT Web 列表中',
+                        '如確實有 MDT Web，請聯繫管理員更新配置'
+                    ]
+                else:
+                    check_result['status'] = 'error'
+                    check_result['message'] = f'MDT Web 無法訪問 ({mdt_web_ip})'
+                    check_result['suggestions'] = [
+                        f'檢查 MDT Web 伺服器 {mdt_web_ip} 是否運行',
+                        '確認網路連線正常'
+                    ]
+                
+                check_result['details']['connection_error'] = connection_error
+                check_result['details']['is_unknown_network'] = is_unknown_network
+                logger.warning(f"⚠️ MDT Web not accessible: {mdt_web_ip}")
+                return
+            
+            # 驗證設備配置
+            host_ip = self.config.get('HOST_IP', '').strip()
+            host_mac = self.config.get('HOST_MAC', '').strip()
+            job_name = self.build.job.name if self.build and self.build.job else ''
+            
+            validation_result = mdt_service.validate_device_config(device_number, {
+                'hostname': job_name,
+                'ansible_host': host_ip,
+                'mac_address': host_mac
+            })
+            
+            check_result['details']['device_found'] = validation_result.get('device_found', False)
+            
+            if not validation_result.get('device_found', False):
+                check_result['status'] = 'error'
+                check_result['message'] = f'設備 {device_number} 在 MDT Web 中找不到'
+                check_result['suggestions'] = [
+                    '確認 device_number 是否正確',
+                    f'檢查 MDT Web ({mdt_web_ip}) 是否已同步設備資訊'
+                ]
+                logger.error(f"❌ Device {device_number} not found in MDT Web")
+                return
+            
+            # 檢查配置一致性
+            config_matches = validation_result.get('config_matches', False)
+            differences = validation_result.get('differences', [])
+            
+            check_result['details']['config_matches'] = config_matches
+            check_result['details']['differences'] = differences
+            
+            if not config_matches and differences:
+                check_result['status'] = 'warning'
+                check_result['message'] = f'設備 {device_number} 配置不一致'
+                check_result['suggestions'] = [
+                    '請更新 Inventory 配置或同步 MDT Web 資料'
+                ]
+                for diff in differences:
+                    check_result['suggestions'].append(
+                        f"  • {diff['field']}: Inventory={diff.get('inventory_value')}, MDT={diff.get('mdt_web_value')}"
+                    )
+                logger.warning(f"⚠️ Device {device_number} config mismatch: {differences}")
+            else:
+                check_result['status'] = 'success'
+                check_result['message'] = f'設備 {device_number} 配置與 MDT Web 一致'
+                logger.info(f"✅ Device {device_number} config matches MDT Web")
+                
+        except ImportError as e:
+            check_result['status'] = 'warning'
+            check_result['message'] = 'MDT Web 服務模組不可用'
+            check_result['suggestions'] = ['MDT Web 檢查功能需要 mdt_web_service 模組']
+            logger.warning(f"⚠️ MDT Web service not available: {e}")
+            
+        except Exception as e:
+            logger.error(f"Failed to check MDT Web: {e}", exc_info=True)
+            check_result['status'] = 'error'
+            check_result['message'] = f'MDT Web 檢查時發生錯誤: {str(e)}'
+            check_result['suggestions'] = ['檢查系統日誌']
+    
+    def _get_dhcp_server_ip_for_mdt(self) -> Optional[str]:
+        """
+        獲取用於 MDT Web 檢查的 DHCP Server IP
+        
+        優先順序：
+        1. 從 Build 關聯的 Job 獲取 DHCP Server
+        2. 從已指定的 DHCP Server IDs 獲取
+        3. 從 config 中的 DHCP_SERVER 名稱查詢
+        
+        注意：不從 HOST_IP 推斷，因為設備 IP 可能與 DHCP Server 不在同一網段
+        """
+        try:
+            from api.models import DHCPServer
+            
+            # 方法 1: 從 Build 關聯的 Job 獲取 DHCP Server
+            if self.build and self.build.job:
+                job = self.build.job
+                # JenkinsJob 有 dhcp_server 外鍵關聯
+                if hasattr(job, 'dhcp_server') and job.dhcp_server:
+                    dhcp_server = job.dhcp_server
+                    if dhcp_server.ip_address:
+                        logger.info(f"MDT Web: Got DHCP Server IP from Job.dhcp_server: {dhcp_server.ip_address}")
+                        return dhcp_server.ip_address
+            
+            # 方法 2: 從已指定的 DHCP Server IDs 獲取
+            if self.dhcp_server_ids:
+                server = DHCPServer.objects.filter(id=self.dhcp_server_ids[0]).first()
+                if server and server.ip_address:
+                    logger.info(f"MDT Web: Got DHCP Server IP from dhcp_server_ids: {server.ip_address}")
+                    return server.ip_address
+            
+            # 方法 3: 從 config 中的 DHCP_SERVER 名稱查詢
+            dhcp_server_name = self.config.get('DHCP_SERVER', '').strip()
+            if dhcp_server_name:
+                server = DHCPServer.objects.filter(name=dhcp_server_name).first()
+                if server and server.ip_address:
+                    logger.info(f"MDT Web: Got DHCP Server IP from config DHCP_SERVER: {server.ip_address}")
+                    return server.ip_address
+            
+            logger.warning("MDT Web: Cannot determine DHCP Server IP")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get DHCP server IP for MDT: {e}", exc_info=True)
+            return None
+    
+    def _calculate_mdt_web_ip(self, dhcp_server_ip: str) -> Optional[str]:
+        """計算 MDT Web IP（前三段相同，最後一段為 .2）"""
+        try:
+            if not dhcp_server_ip or not self._is_valid_ip(dhcp_server_ip):
+                return None
+            
+            octets = dhcp_server_ip.split('.')
+            return f"{octets[0]}.{octets[1]}.{octets[2]}.2"
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate MDT Web IP: {e}", exc_info=True)
+            return None
 
 
 def validate_build_config(build_id: int, dhcp_server_ids: Optional[List[int]] = None) -> Dict:

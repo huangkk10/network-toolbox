@@ -271,6 +271,8 @@ const BuildConfigValidatorPage = () => {
             host_mac: 'HOST_MAC 檢查',
             uart_ip: 'UART_IP 檢查',
             uart_ssh: 'UART SSH 連線檢查',
+            nas_connection: 'NAS 連線檢查',
+            mdt_web: 'MDT Web 檢查',
         };
         return names[item] || item;
     };
@@ -554,6 +556,30 @@ const BuildConfigValidatorPage = () => {
             connected: '連線狀態',
             connection_time: '連線時間',
             error: '錯誤信息',
+            // NAS 連線檢查相關
+            log_file_path: '日誌檔案路徑',
+            storage_dir: '儲存目錄',
+            dir_exists: '目錄存在',
+            file_exists: '檔案存在',
+            dir_readable: '目錄可讀',
+            dir_writable: '目錄可寫',
+            connection_status: '連線狀態',
+            response_time_ms: '響應時間 (ms)',
+            upload_speed_mbps: '上傳速度 (MB/s)',
+            download_speed_mbps: '下載速度 (MB/s)',
+            error_message: '錯誤訊息',
+            connection_test: '連線測試',
+            test_error: '測試錯誤',
+            // MDT Web 檢查相關
+            device_number: '設備編號',
+            dhcp_server_ip: 'DHCP Server IP',
+            mdt_web_ip: 'MDT Web IP',
+            mdt_web_accessible: 'MDT Web 可訪問',
+            device_found: '設備已找到',
+            config_matches: '配置一致',
+            differences: '配置差異',
+            is_unknown_network: '未知網段',
+            connection_error: '連線錯誤',
         };
         return labels[key] || key;
     };
@@ -579,6 +605,42 @@ const BuildConfigValidatorPage = () => {
             if (value === 'hostname') return <Tag color="purple">主機名稱</Tag>;
             if (value === 'resolved_from_hostname') return <Tag color="cyan">從主機名稱解析</Tag>;
             return <Tag>{value}</Tag>;
+        }
+        // NAS 連線檢查相關
+        if (key === 'dir_exists' || key === 'file_exists' || key === 'dir_readable' || key === 'dir_writable') {
+            return value ? <Tag color="success">是</Tag> : <Tag color="error">否</Tag>;
+        }
+        if (key === 'connection_status') {
+            if (value === 'success') return <Tag color="success">成功</Tag>;
+            if (value === 'error' || value === 'failed') return <Tag color="error">失敗</Tag>;
+            return <Tag color="default">{value || 'N/A'}</Tag>;
+        }
+        if (key === 'response_time_ms') {
+            return value ? `${value.toFixed(1)} ms` : 'N/A';
+        }
+        if (key === 'upload_speed_mbps' || key === 'download_speed_mbps') {
+            return value ? `${value.toFixed(2)} MB/s` : 'N/A';
+        }
+        // MDT Web 檢查相關
+        if (key === 'mdt_web_accessible' || key === 'device_found' || key === 'config_matches') {
+            return value ? <Tag color="success">是</Tag> : <Tag color="error">否</Tag>;
+        }
+        if (key === 'is_unknown_network') {
+            return value ? <Tag color="warning">是</Tag> : <Tag color="default">否</Tag>;
+        }
+        if (key === 'differences' && Array.isArray(value)) {
+            if (value.length === 0) return <Tag color="success">無差異</Tag>;
+            return (
+                <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                    {value.map((diff, idx) => (
+                        <li key={idx}>
+                            <strong>{diff.field}</strong>: 
+                            Inventory: <code>{diff.inventory_value || 'N/A'}</code>, 
+                            MDT: <code>{diff.mdt_web_value || 'N/A'}</code>
+                        </li>
+                    ))}
+                </ul>
+            );
         }
         return String(value || 'N/A');
     };
