@@ -395,7 +395,13 @@ class AnsibleInventoryService:
             備份文件路徑
         """
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        backup_path = f"{original_file_path}.backup.{timestamp}"
+        
+        # 備份檔名格式: .backup.hosts.2025-12-02_05-08-18
+        # 以點開頭，Ansible 會忽略這些檔案，不會誤認為 inventory
+        directory = os.path.dirname(original_file_path)
+        filename = os.path.basename(original_file_path)
+        backup_filename = f".backup.{filename}.{timestamp}"
+        backup_path = os.path.join(directory, backup_filename)
         
         try:
             shutil.copy2(original_file_path, backup_path)
@@ -609,10 +615,13 @@ class AnsibleInventoryService:
             filename = os.path.basename(inventory_path)
             
             # 找出所有備份檔案
+            # 新格式: .backup.hosts.2025-12-02_05-08-18 (以點開頭)
+            # 舊格式: hosts.backup.2025-12-02_05-08-18 (相容舊備份)
             backups = []
             
             for file in os.listdir(directory):
-                if file.startswith(f"{filename}.backup."):
+                # 匹配新格式 (.backup.hosts.xxx) 或舊格式 (hosts.backup.xxx)
+                if file.startswith(f".backup.{filename}.") or file.startswith(f"{filename}.backup."):
                     full_path = os.path.join(directory, file)
                     backups.append((full_path, os.path.getmtime(full_path)))
             
