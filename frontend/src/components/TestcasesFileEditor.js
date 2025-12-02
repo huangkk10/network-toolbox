@@ -7,7 +7,8 @@ import {
     ReloadOutlined,
     WarningOutlined,
     FileTextOutlined,
-    ExclamationCircleOutlined
+    ExclamationCircleOutlined,
+    FolderOutlined
 } from '@ant-design/icons';
 import Editor from '@monaco-editor/react';
 import axios from 'axios';
@@ -202,6 +203,38 @@ const TestcasesFileEditor = ({ inventoryId, onSaved }) => {
             });
         }
         
+        // 路徑驗證錯誤
+        if (validationResult.path_validation?.errors) {
+            validationResult.path_validation.errors.forEach(err => {
+                const errorMsg = err.errors?.join('; ') || '路徑格式錯誤';
+                const suggestionMsg = err.suggestion ? `\n💡 建議: ${err.suggestion}` : '';
+                markers.push({
+                    severity: monacoRef.current.MarkerSeverity.Error,
+                    startLineNumber: err.line,
+                    startColumn: 1,
+                    endLineNumber: err.line,
+                    endColumn: 1000,
+                    message: `[${err.field}] ${errorMsg}${suggestionMsg}`
+                });
+            });
+        }
+        
+        // 路徑驗證警告
+        if (validationResult.path_validation?.warnings) {
+            validationResult.path_validation.warnings.forEach(warn => {
+                const warningMsg = warn.warnings?.join('; ') || '路徑格式警告';
+                const suggestionMsg = warn.suggestion ? `\n💡 建議: ${warn.suggestion}` : '';
+                markers.push({
+                    severity: monacoRef.current.MarkerSeverity.Warning,
+                    startLineNumber: warn.line,
+                    startColumn: 1,
+                    endLineNumber: warn.line,
+                    endColumn: 1000,
+                    message: `[${warn.field}] ${warningMsg}${suggestionMsg}`
+                });
+            });
+        }
+        
         monacoRef.current.editor.setModelMarkers(model, 'testcases-validator', markers);
     };
     
@@ -327,11 +360,7 @@ const TestcasesFileEditor = ({ inventoryId, onSaved }) => {
     
     // 跳轉到錯誤行
     const goToErrorLine = () => {
-        if (editorRef.current && errorLine) {
-            editorRef.current.revealLineInCenter(errorLine);
-            editorRef.current.setPosition({ lineNumber: errorLine, column: 1 });
-            editorRef.current.focus();
-        }
+        goToLine(errorLine);
     };
     
     // 編輯器掛載
@@ -404,6 +433,168 @@ const TestcasesFileEditor = ({ inventoryId, onSaved }) => {
         );
     };
     
+    // 跳轉到指定行
+    const goToLine = (lineNumber) => {
+        if (editorRef.current && lineNumber) {
+            editorRef.current.revealLineInCenter(lineNumber);
+            editorRef.current.setPosition({ lineNumber: lineNumber, column: 1 });
+            editorRef.current.focus();
+        }
+    };
+    
+    // 渲染路徑驗證結果
+    const renderPathValidation = () => {
+        if (!validationDetails?.path_validation) return null;
+        
+        const pv = validationDetails.path_validation;
+        const hasErrors = pv.errors?.length > 0;
+        const hasWarnings = pv.warnings?.length > 0;
+        
+        // 如果沒有錯誤和警告，不顯示
+        if (!hasErrors && !hasWarnings) return null;
+        
+        return (
+            <Collapse ghost style={{ marginBottom: 16 }}>
+                <Panel 
+                    header={
+                        <Space>
+                            <FolderOutlined />
+                            <span>路徑驗證結果</span>
+                            {hasErrors && <Badge status="error" text={`${pv.errors.length} 個錯誤`} />}
+                            {hasWarnings && <Badge status="warning" text={`${pv.warnings.length} 個警告`} />}
+                            {pv.total_paths_checked > 0 && (
+                                <span style={{ color: '#8c8c8c', fontSize: '12px' }}>
+                                    (共檢查 {pv.total_paths_checked} 個路徑)
+                                </span>
+                            )}
+                        </Space>
+                    }
+                    key="path-validation"
+                >
+                    {/* 路徑錯誤 */}
+                    {hasErrors && (
+                        <div style={{ marginBottom: 16 }}>
+                            <div style={{ fontWeight: 'bold', color: '#ff4d4f', marginBottom: 8 }}>
+                                路徑格式錯誤：
+                            </div>
+                            {pv.errors.map((err, idx) => (
+                                <div 
+                                    key={idx} 
+                                    style={{ 
+                                        background: '#fff2f0', 
+                                        padding: '8px 12px', 
+                                        borderRadius: '4px',
+                                        marginBottom: 8,
+                                        border: '1px solid #ffccc7'
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <Space>
+                                            <Tag color="error">第 {err.line} 行</Tag>
+                                            <Tag>{err.field}</Tag>
+                                            <Tag color="blue">{err.path_type}</Tag>
+                                        </Space>
+                                        <Button 
+                                            type="link" 
+                                            size="small" 
+                                            onClick={() => goToLine(err.line)}
+                                        >
+                                            跳轉
+                                        </Button>
+                                    </div>
+                                    <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: '12px' }}>
+                                        {err.value}
+                                    </div>
+                                    <div style={{ marginTop: 4, color: '#ff4d4f' }}>
+                                        {err.errors?.map((e, i) => <div key={i}>❌ {e}</div>)}
+                                    </div>
+                                    {err.suggestion && (
+                                        <div style={{ marginTop: 4, color: '#52c41a' }}>
+                                            💡 建議: <code>{err.suggestion}</code>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    
+                    {/* 路徑警告 */}
+                    {hasWarnings && (
+                        <div>
+                            <div style={{ fontWeight: 'bold', color: '#faad14', marginBottom: 8 }}>
+                                路徑格式警告：
+                            </div>
+                            {pv.warnings.slice(0, 10).map((warn, idx) => (
+                                <div 
+                                    key={idx} 
+                                    style={{ 
+                                        background: '#fffbe6', 
+                                        padding: '8px 12px', 
+                                        borderRadius: '4px',
+                                        marginBottom: 8,
+                                        border: '1px solid #ffe58f'
+                                    }}
+                                >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <Space>
+                                            <Tag color="warning">第 {warn.line} 行</Tag>
+                                            <Tag>{warn.field}</Tag>
+                                            <Tag color="blue">{warn.path_type}</Tag>
+                                        </Space>
+                                        <Button 
+                                            type="link" 
+                                            size="small" 
+                                            onClick={() => goToLine(warn.line)}
+                                        >
+                                            跳轉
+                                        </Button>
+                                    </div>
+                                    <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: '12px' }}>
+                                        {warn.value}
+                                    </div>
+                                    <div style={{ marginTop: 4, color: '#faad14' }}>
+                                        {warn.warnings?.map((w, i) => <div key={i}>⚠️ {w}</div>)}
+                                    </div>
+                                    {warn.suggestion && (
+                                        <div style={{ marginTop: 4, color: '#52c41a' }}>
+                                            💡 建議: <code>{warn.suggestion}</code>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                            {pv.warnings.length > 10 && (
+                                <div style={{ color: '#8c8c8c' }}>
+                                    還有 {pv.warnings.length - 10} 個警告...
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    
+                    {/* 路徑類型統計 */}
+                    {pv.summary && (
+                        <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                            <Space>
+                                <span style={{ color: '#8c8c8c' }}>路徑類型統計：</span>
+                                {pv.summary.windows_local > 0 && (
+                                    <Tag>Windows 本地: {pv.summary.windows_local}</Tag>
+                                )}
+                                {pv.summary.windows_unc > 0 && (
+                                    <Tag>Windows UNC: {pv.summary.windows_unc}</Tag>
+                                )}
+                                {pv.summary.linux > 0 && (
+                                    <Tag>Linux: {pv.summary.linux}</Tag>
+                                )}
+                                {pv.summary.other > 0 && (
+                                    <Tag>其他: {pv.summary.other}</Tag>
+                                )}
+                            </Space>
+                        </div>
+                    )}
+                </Panel>
+            </Collapse>
+        );
+    };
+    
     return (
         <Card
             title={
@@ -441,6 +632,19 @@ const TestcasesFileEditor = ({ inventoryId, onSaved }) => {
                         <Tag color="purple">
                             {validationDetails.jinja2_check.total_jinja2_vars} 個 Jinja2 變數
                         </Tag>
+                    )}
+                    {validationDetails?.path_validation && (
+                        validationDetails.path_validation.is_valid ? (
+                            validationDetails.path_validation.total_paths_checked > 0 && (
+                                <Tag color="success" icon={<FolderOutlined />}>
+                                    路徑正確 ({validationDetails.path_validation.total_paths_checked})
+                                </Tag>
+                            )
+                        ) : (
+                            <Tag color="error" icon={<FolderOutlined />}>
+                                路徑錯誤 ({validationDetails.path_validation.errors?.length || 0})
+                            </Tag>
+                        )
                     )}
                     <Button
                         onClick={handleReload}
@@ -527,6 +731,9 @@ const TestcasesFileEditor = ({ inventoryId, onSaved }) => {
             
             {/* 交叉驗證結果 */}
             {renderCrossValidation()}
+            
+            {/* 路徑驗證結果 */}
+            {renderPathValidation()}
             
             {/* 編輯器 */}
             <Spin spinning={loading} tip="載入中...">

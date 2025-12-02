@@ -382,3 +382,481 @@ def extract_testcase_sets_from_yaml(content: str) -> Set[str]:
         testcase_set 名稱集合
     """
     return YAMLValidator.extract_testcase_sets(content)
+
+
+class PathValidator:
+    """
+    路徑驗證器
+    
+    支援自動偵測並驗證 Windows 和 Linux 路徑格式。
+    
+    功能：
+    - 自動偵測路徑類型（Windows 本地、UNC、Linux）
+    - 驗證斜線方向
+    - 檢測混合斜線錯誤
+    - 驗證磁碟代號格式
+    - 檢測無效字符
+    - 提供修正建議
+    """
+    
+    # 需要驗證的路徑欄位及其預期類型
+    # None 表示非路徑欄位，跳過驗證
+    PATH_FIELDS = {
+        'script_nas_file': 'path',           # UNC 或本地路徑
+        'script_local_root': 'path',         # 本地目錄
+        'script_exec': 'path',               # 本地可執行檔
+        'log_path': 'path',                  # 本地檔案
+        'archive_root': 'path',              # 本地目錄
+        'archive_upload_dir': 'path',        # UNC 網路路徑
+        'nas_path': 'path',                  # NAS 路徑
+        'local_path': 'path',                # 本地路徑
+        'remote_path': 'path',               # 遠端路徑
+        'source_path': 'path',               # 來源路徑
+        'dest_path': 'path',                 # 目的路徑
+        'destination_path': 'path',          # 目的路徑
+        'output_path': 'path',               # 輸出路徑
+        'input_path': 'path',                # 輸入路徑
+        'config_path': 'path',               # 配置檔路徑
+        'work_dir': 'path',                  # 工作目錄
+        'working_directory': 'path',         # 工作目錄
+        'base_path': 'path',                 # 基礎路徑
+        'root_path': 'path',                 # 根路徑
+    }
+    
+    # 應該排除的欄位（萬用字符模式、正則表達式等）
+    EXCLUDE_FIELDS = {
+        'archive_patterns',      # 萬用字符模式
+        'patterns',              # 模式
+        'regex',                 # 正則表達式
+        'pattern',               # 模式
+        'glob',                  # glob 模式
+        'filter',                # 過濾器
+        'exclude',               # 排除模式
+        'include',               # 包含模式
+    }
+    
+    # Windows 路徑中不允許的字符（除了磁碟代號中的冒號）
+    WINDOWS_INVALID_CHARS = re.compile(r'[<>"|?*]')
+    
+    # Linux 路徑中不允許的字符
+    LINUX_INVALID_CHARS = re.compile(r'[\x00]')  # 只有 null 字符
+    
+    @staticmethod
+    def detect_path_type(path: str) -> str:
+        """
+        自動偵測路徑類型
+        
+        Args:
+            path: 路徑字串
+            
+        Returns:
+            路徑類型：
+            - 'windows_local'    : Windows 本地路徑 (C:\\path\\...)
+            - 'windows_unc'      : Windows UNC 網路路徑 (\\\\server\\...)
+            - 'linux'            : Linux 絕對路徑 (/path/...)
+            - 'windows_relative' : Windows 相對路徑
+            - 'linux_relative'   : Linux 相對路徑
+            - 'mixed'            : 混合格式（錯誤）
+            - 'ambiguous'        : 無法確定
+            - 'empty'            : 空路徑
+        """
+        if not path or not path.strip():
+            return 'empty'
+        
+        path = path.strip()
+        
+        # 優先檢查混合斜線（最常見的錯誤）
+        has_backslash = '\\' in path
+        has_forwardslash = '/' in path
+        
+        # 1. Windows UNC 路徑: \\server\share\...
+        if path.startswith('\\\\'):
+            # 檢查 UNC 路徑是否混用斜線
+            if has_forwardslash:
+                return 'mixed'
+            return 'windows_unc'
+        
+        # 2. Windows 本地路徑: C:\ 或 D:\ 等
+        if len(path) >= 2 and path[1] == ':':
+            if path[0].upper() in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+                # 檢查 Windows 路徑是否混用斜線
+                if has_backslash and has_forwardslash:
+                    return 'mixed'
+                return 'windows_local'
+        
+        # 3. Linux 絕對路徑: /path/to/...
+        if path.startswith('/'):
+            # 排除 // 開頭（可能是錯誤的 UNC 寫法）
+            if path.startswith('//'):
+                return 'ambiguous'
+            # 檢查 Linux 路徑是否混用斜線
+            if has_backslash:
+                return 'mixed'
+            return 'linux'
+        
+        # 4. 檢查混合斜線（相對路徑的情況）
+        if has_backslash and has_forwardslash:
+            return 'mixed'
+        
+        # 5. 只有反斜線，可能是 Windows 相對路徑
+        if has_backslash:
+            return 'windows_relative'
+        
+        # 6. 只有正斜線，可能是 Linux 相對路徑
+        if has_forwardslash:
+            return 'linux_relative'
+        
+        # 7. 無斜線，可能是檔名或簡單名稱
+        return 'ambiguous'
+    
+    @staticmethod
+    def validate_windows_path(path: str, path_type: str) -> Dict:
+        """
+        驗證 Windows 路徑格式
+        
+        Args:
+            path: 路徑字串
+            path_type: 偵測到的路徑類型 ('windows_local' 或 'windows_unc')
+            
+        Returns:
+            {
+                'is_valid': bool,
+                'errors': List[str],
+                'warnings': List[str],
+                'suggestion': str | None
+            }
+        """
+        result = {
+            'is_valid': True,
+            'errors': [],
+            'warnings': [],
+            'suggestion': None
+        }
+        
+        original_path = path
+        
+        # 檢查是否混用斜線
+        if '/' in path:
+            result['is_valid'] = False
+            result['errors'].append('Windows 路徑不應包含正斜線 (/)，請使用反斜線 (\\)')
+            # 建議修正
+            path = path.replace('/', '\\')
+        
+        if path_type == 'windows_local':
+            # 驗證磁碟代號格式
+            if len(path) >= 2:
+                drive_letter = path[0]
+                
+                # 檢查磁碟代號是否為小寫
+                if drive_letter.islower():
+                    result['warnings'].append(f'磁碟代號建議使用大寫: {drive_letter.upper()}:')
+                    path = drive_letter.upper() + path[1:]
+                
+                # 檢查磁碟代號後是否有反斜線
+                if len(path) >= 3 and path[2] != '\\':
+                    result['is_valid'] = False
+                    result['errors'].append('磁碟代號後應該接反斜線，例如: C:\\')
+                    path = path[:2] + '\\' + path[2:]
+        
+        elif path_type == 'windows_unc':
+            # UNC 路徑應該以 \\ 開頭
+            if not path.startswith('\\\\'):
+                result['is_valid'] = False
+                result['errors'].append('UNC 路徑必須以 \\\\ 開頭')
+            
+            # 檢查 UNC 路徑格式: \\server\share
+            unc_parts = path.lstrip('\\').split('\\')
+            if len(unc_parts) < 2:
+                result['is_valid'] = False
+                result['errors'].append('UNC 路徑格式不完整，應為 \\\\server\\share\\...')
+        
+        # 檢查無效字符
+        invalid_match = PathValidator.WINDOWS_INVALID_CHARS.search(path)
+        if invalid_match:
+            result['is_valid'] = False
+            result['errors'].append(f'路徑包含無效字符: {invalid_match.group()}')
+        
+        # 檢查連續的反斜線（除了 UNC 開頭）
+        if path_type == 'windows_local' and '\\\\' in path:
+            result['warnings'].append('路徑中有連續的反斜線，請確認是否正確')
+        
+        # 如果有修正，提供建議
+        if path != original_path:
+            result['suggestion'] = path
+        
+        return result
+    
+    @staticmethod
+    def validate_linux_path(path: str) -> Dict:
+        """
+        驗證 Linux 路徑格式
+        
+        Args:
+            path: 路徑字串
+            
+        Returns:
+            {
+                'is_valid': bool,
+                'errors': List[str],
+                'warnings': List[str],
+                'suggestion': str | None
+            }
+        """
+        result = {
+            'is_valid': True,
+            'errors': [],
+            'warnings': [],
+            'suggestion': None
+        }
+        
+        original_path = path
+        
+        # 檢查是否混用斜線
+        if '\\' in path:
+            result['is_valid'] = False
+            result['errors'].append('Linux 路徑不應包含反斜線 (\\)，請使用正斜線 (/)')
+            path = path.replace('\\', '/')
+        
+        # Linux 絕對路徑應以 / 開頭
+        if not path.startswith('/'):
+            result['warnings'].append('Linux 絕對路徑應以 / 開頭')
+        
+        # 檢查連續的斜線
+        if '//' in path:
+            result['warnings'].append('路徑中有連續的斜線，請確認是否正確')
+            # 修正連續斜線
+            while '//' in path:
+                path = path.replace('//', '/')
+        
+        # 檢查無效字符
+        invalid_match = PathValidator.LINUX_INVALID_CHARS.search(path)
+        if invalid_match:
+            result['is_valid'] = False
+            result['errors'].append('路徑包含無效字符 (null)')
+        
+        # 如果有修正，提供建議
+        if path != original_path:
+            result['suggestion'] = path
+        
+        return result
+    
+    @staticmethod
+    def validate_path(path: str) -> Dict:
+        """
+        驗證單一路徑（自動偵測類型）
+        
+        Args:
+            path: 路徑字串
+            
+        Returns:
+            {
+                'is_valid': bool,
+                'path_type': str,
+                'errors': List[str],
+                'warnings': List[str],
+                'suggestion': str | None
+            }
+        """
+        path_type = PathValidator.detect_path_type(path)
+        
+        result = {
+            'is_valid': True,
+            'path_type': path_type,
+            'errors': [],
+            'warnings': [],
+            'suggestion': None
+        }
+        
+        if path_type == 'empty':
+            result['warnings'].append('路徑為空')
+            return result
+        
+        if path_type == 'mixed':
+            result['is_valid'] = False
+            result['errors'].append('路徑混用了正斜線 (/) 和反斜線 (\\)，請統一使用')
+            # 嘗試判斷應該是哪種路徑
+            if path[0].upper() in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' and len(path) > 1 and path[1] == ':':
+                result['suggestion'] = path.replace('/', '\\')
+                result['errors'][-1] += '，建議使用 Windows 格式 (\\)'
+            else:
+                result['suggestion'] = path.replace('\\', '/')
+                result['errors'][-1] += '，建議使用 Linux 格式 (/)'
+            return result
+        
+        if path_type == 'ambiguous':
+            result['warnings'].append('無法確定路徑類型，建議使用絕對路徑')
+            return result
+        
+        if path_type in ('windows_local', 'windows_unc', 'windows_relative'):
+            validation = PathValidator.validate_windows_path(path, path_type)
+        elif path_type in ('linux', 'linux_relative'):
+            validation = PathValidator.validate_linux_path(path)
+        else:
+            return result
+        
+        result['is_valid'] = validation['is_valid']
+        result['errors'] = validation['errors']
+        result['warnings'] = validation['warnings']
+        result['suggestion'] = validation['suggestion']
+        
+        return result
+    
+    @staticmethod
+    def validate_testcase_paths(content: str) -> Dict:
+        """
+        驗證 testcases.yml 中所有路徑欄位
+        
+        會自動偵測每個路徑的類型並進行對應的驗證。
+        
+        Args:
+            content: testcases.yml 文件內容
+            
+        Returns:
+            {
+                'is_valid': bool,
+                'path_errors': [
+                    {
+                        'line': 5,
+                        'field': 'script_exec',
+                        'value': 'C:/drivers/install.bat',
+                        'path_type': 'windows_local',
+                        'errors': ['Windows 路徑不應包含正斜線...'],
+                        'warnings': [],
+                        'suggestion': 'C:\\drivers\\install.bat'
+                    }
+                ],
+                'path_warnings': [...],
+                'total_paths_checked': int,
+                'summary': {
+                    'windows_local': int,
+                    'windows_unc': int,
+                    'linux': int,
+                    'other': int
+                }
+            }
+        """
+        result = {
+            'is_valid': True,
+            'path_errors': [],
+            'path_warnings': [],
+            'total_paths_checked': 0,
+            'summary': {
+                'windows_local': 0,
+                'windows_unc': 0,
+                'linux': 0,
+                'other': 0
+            }
+        }
+        
+        if not content:
+            return result
+        
+        lines = content.split('\n')
+        
+        # 建立所有可能的路徑欄位名稱模式（包含 _path, _dir, _root 結尾）
+        path_field_suffixes = ('_path', '_dir', '_root', '_file', '_directory')
+        
+        for line_num, line in enumerate(lines, 1):
+            # 跳過註釋行和空行
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            
+            # 解析 key: value 格式
+            if ':' not in line:
+                continue
+            
+            # 分離 key 和 value
+            colon_pos = line.find(':')
+            key = line[:colon_pos].strip()
+            value = line[colon_pos + 1:].strip()
+            
+            # 移除 value 中的引號
+            if value and value[0] in '"\'':
+                quote_char = value[0]
+                if len(value) > 1 and value[-1] == quote_char:
+                    value = value[1:-1]
+            
+            # 跳過空值或 Jinja2 變數
+            if not value or value.startswith('{{'):
+                continue
+            
+            # 判斷是否需要驗證此欄位
+            should_validate = False
+            
+            # 先檢查是否是排除欄位
+            if key in PathValidator.EXCLUDE_FIELDS:
+                continue
+            
+            # 方式 1: 欄位名稱在預定義列表中
+            if key in PathValidator.PATH_FIELDS:
+                should_validate = True
+            
+            # 方式 2: 欄位名稱以路徑相關後綴結尾（但不包含排除後綴）
+            elif key.endswith(path_field_suffixes):
+                # 額外檢查是否包含排除關鍵字
+                excluded_keywords = ('pattern', 'regex', 'glob', 'filter')
+                if not any(kw in key.lower() for kw in excluded_keywords):
+                    should_validate = True
+            
+            # 方式 3: 值看起來像是路徑
+            elif PathValidator.detect_path_type(value) not in ('empty', 'ambiguous'):
+                should_validate = True
+            
+            if not should_validate:
+                continue
+            
+            # 驗證路徑
+            validation = PathValidator.validate_path(value)
+            result['total_paths_checked'] += 1
+            
+            # 更新統計
+            path_type = validation['path_type']
+            if path_type in ('windows_local', 'windows_relative'):
+                result['summary']['windows_local'] += 1
+            elif path_type == 'windows_unc':
+                result['summary']['windows_unc'] += 1
+            elif path_type in ('linux', 'linux_relative'):
+                result['summary']['linux'] += 1
+            else:
+                result['summary']['other'] += 1
+            
+            # 收集錯誤
+            if not validation['is_valid']:
+                result['is_valid'] = False
+                result['path_errors'].append({
+                    'line': line_num,
+                    'field': key,
+                    'value': value,
+                    'path_type': path_type,
+                    'errors': validation['errors'],
+                    'warnings': validation['warnings'],
+                    'suggestion': validation['suggestion']
+                })
+            elif validation['warnings']:
+                result['path_warnings'].append({
+                    'line': line_num,
+                    'field': key,
+                    'value': value,
+                    'path_type': path_type,
+                    'warnings': validation['warnings'],
+                    'suggestion': validation['suggestion']
+                })
+        
+        logger.info(f"Path validation complete: {result['total_paths_checked']} paths checked, "
+                   f"{len(result['path_errors'])} errors, {len(result['path_warnings'])} warnings")
+        
+        return result
+
+
+def validate_paths_in_yaml(content: str) -> Dict:
+    """
+    便捷函數：驗證 YAML 中的路徑
+    
+    Args:
+        content: YAML 文件內容
+        
+    Returns:
+        驗證結果字典
+    """
+    return PathValidator.validate_testcase_paths(content)

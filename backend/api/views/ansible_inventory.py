@@ -712,7 +712,7 @@ class AnsibleInventoryViewSet(viewsets.ModelViewSet):
                 )
             
             # 導入 YAML 驗證器
-            from library.utils.yaml_validator import YAMLValidator
+            from library.utils.yaml_validator import YAMLValidator, PathValidator
             
             # 1. 驗證 YAML 語法
             syntax_result = YAMLValidator.validate_yaml_syntax(content)
@@ -741,7 +741,17 @@ class AnsibleInventoryViewSet(viewsets.ModelViewSet):
                 response_data['testcase_sets_count'] = len(testcase_sets)
                 response_data['testcase_sets'] = sorted(list(testcase_sets))
                 
-                # 3. 如果提供了 inventory_id，進行交叉驗證
+                # 3. 路徑格式驗證
+                path_result = PathValidator.validate_testcase_paths(content)
+                response_data['path_validation'] = {
+                    'is_valid': path_result['is_valid'],
+                    'errors': path_result['path_errors'],
+                    'warnings': path_result['path_warnings'],
+                    'total_paths_checked': path_result['total_paths_checked'],
+                    'summary': path_result['summary']
+                }
+                
+                # 4. 如果提供了 inventory_id，進行交叉驗證
                 if inventory_id:
                     try:
                         inventory = AnsibleInventoryImport.objects.get(pk=inventory_id)
