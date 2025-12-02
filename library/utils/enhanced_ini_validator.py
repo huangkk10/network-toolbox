@@ -113,12 +113,9 @@ class EnhancedINIValidator:
                 if '=' not in stripped:
                     return False, f"第 {i} 行: 變數定義缺少等號，應為 'key=value' 格式", i
                 
-                # 檢查 Jinja2 變數是否有加引號
-                # 問題場景: saf_comment_full={{ var1 }} - {{ var2 }}
-                # 正確寫法: saf_comment_full="{{ var1 }} - {{ var2 }}"
-                jinja2_check_result = EnhancedINIValidator._check_jinja2_quoting(stripped, i)
-                if jinja2_check_result:
-                    return jinja2_check_result
+                # 注意：在 Ansible INI 格式中，Jinja2 變數不需要引號包裹
+                # 例如 ansible_python_interpreter={{ansible_playbook_python}} 是合法的
+                # 所以這裡不再檢查 Jinja2 引號
                 
                 continue
             
@@ -128,25 +125,9 @@ class EnhancedINIValidator:
                 # 有內聯變數
                 inline_vars = parts[1]
                 
-                # 檢查是否包含 Jinja2 模板語法 {{ ... }}
-                if '{{' in inline_vars and '}}' in inline_vars:
-                    # 主機行中的 Jinja2 變數也需要檢查引號
-                    # 但主機行的格式是: hostname key1=value1 key2=value2
-                    # 需要逐個檢查 key=value 對
-                    for var_match in re.finditer(r'(\w+)=(.+?)(?=\s+\w+=|$)', inline_vars):
-                        key = var_match.group(1)
-                        value = var_match.group(2).strip()
-                        
-                        if '{{' in value and '}}' in value:
-                            # 檢查 Jinja2 變數是否有加引號
-                            if not (value.startswith('"') and value.endswith('"')) and \
-                               not (value.startswith("'") and value.endswith("'")):
-                                # 未加引號的 Jinja2 變數
-                                return False, f"第 {i} 行: 變數 '{key}' 包含 Jinja2 模板 {{{{...}}}}，必須用引號包起來。正確寫法: {key}=\"{value}\"", i
-                    continue
-                
                 # 在主機行中，每個空格分隔的變數都必須是 key=value 格式
                 # 但需要注意引號內的空格
+                # 注意：Ansible INI 格式中，Jinja2 變數不需要引號，所以不再檢查引號
                 var_parts = inline_vars.split()
                 
                 for var_part in var_parts:
@@ -163,66 +144,22 @@ class EnhancedINIValidator:
     @staticmethod
     def _check_jinja2_quoting(line: str, line_number: int) -> Optional[Tuple[bool, str, int]]:
         """
-        檢查 :vars 區塊中的 Jinja2 變數是否正確加了引號
+        [已棄用] 檢查 :vars 區塊中的 Jinja2 變數是否正確加了引號
         
-        問題場景（會導致 Ansible 報錯）:
-        - saf_comment_full={{ var1 }} - {{ var2 }}
-        - some_var={{ value }}
+        注意：此方法已棄用，因為 Ansible INI 格式中 Jinja2 變數不需要引號。
+        例如 ansible_python_interpreter={{ansible_playbook_python}} 是完全合法的。
         
-        正確寫法:
-        - saf_comment_full="{{ var1 }} - {{ var2 }}"
-        - some_var="{{ value }}"
+        保留此方法僅供參考，不再被調用。
         
         Args:
             line: 變數定義行（如 key=value）
             line_number: 行號
             
         Returns:
-            None 如果正確，否則返回 (False, error_message, line_number)
+            None（始終返回 None，不再報錯）
         """
-        # 分割 key=value
-        if '=' not in line:
-            return None
-        
-        eq_pos = line.index('=')
-        key = line[:eq_pos].strip()
-        value = line[eq_pos + 1:].strip()
-        
-        # 如果值不包含 Jinja2 模板，跳過
-        if '{{' not in value or '}}' not in value:
-            return None
-        
-        # 檢查值是否正確地用引號包起來
-        # 正確的格式：
-        # 1. 整個值用雙引號包起來: "{{ var1 }} - {{ var2 }}"
-        # 2. 整個值用單引號包起來: '{{ var1 }} - {{ var2 }}'
-        
-        # 移除開頭和結尾的空白
-        value = value.strip()
-        
-        # 檢查是否用引號包起來
-        if (value.startswith('"') and value.endswith('"')) or \
-           (value.startswith("'") and value.endswith("'")):
-            # 已經用引號包起來，檢查引號是否完整
-            # 例如防止: "{{ var1 }} - {{ var2 }} (缺少結尾引號)
-            quote_char = value[0]
-            inner_content = value[1:-1]
-            
-            # 檢查內部是否有未轉義的引號（可能導致解析問題）
-            # 簡化檢查：只要首尾有匹配的引號就認為正確
-            return None
-        
-        # 值包含 Jinja2 但沒有用引號包起來
-        # 生成友好的錯誤訊息和建議
-        suggested_fix = f'{key}="{value}"'
-        
-        return (
-            False,
-            f"第 {line_number} 行: 變數 '{key}' 包含 Jinja2 模板 {{{{...}}}}，必須用引號包起來以避免 Ansible 解析錯誤。\n"
-            f"  當前寫法: {line}\n"
-            f"  建議修正: {suggested_fix}",
-            line_number
-        )
+        # 不再執行檢查，直接返回 None（表示沒有錯誤）
+        return None
     
     @staticmethod
     def validate(content: str) -> Dict:
