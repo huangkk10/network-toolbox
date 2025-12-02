@@ -457,6 +457,7 @@ class PathValidator:
             - 'windows_relative' : Windows 相對路徑
             - 'linux_relative'   : Linux 相對路徑
             - 'mixed'            : 混合格式（錯誤）
+            - 'windows_typo'     : Windows 路徑但磁碟代號有錯誤（如 C; 應為 C:）
             - 'ambiguous'        : 無法確定
             - 'empty'            : 空路徑
         """
@@ -483,6 +484,15 @@ class PathValidator:
                 if has_backslash and has_forwardslash:
                     return 'mixed'
                 return 'windows_local'
+        
+        # 2.1 檢查常見的磁碟代號錯誤（如 C; 應為 C:）
+        if len(path) >= 2 and path[0].upper() in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+            # 檢查第二個字符是否是常見的打字錯誤
+            if path[1] in ';':  # 分號是冒號的常見打字錯誤
+                return 'windows_typo'
+            # 如果第一個字符是磁碟代號，且後面直接接反斜線（缺少冒號）
+            if path[1] == '\\':
+                return 'windows_typo'
         
         # 3. Linux 絕對路徑: /path/to/...
         if path.startswith('/'):
@@ -669,6 +679,19 @@ class PathValidator:
         
         if path_type == 'empty':
             result['warnings'].append('路徑為空')
+            return result
+        
+        if path_type == 'windows_typo':
+            result['is_valid'] = False
+            # 判斷具體是什麼錯誤
+            if len(path) >= 2 and path[1] == ';':
+                result['errors'].append(f'磁碟代號格式錯誤: "{path[0]};\" 應該是 "{path[0]}:\\"（分號應改為冒號）')
+                result['suggestion'] = path[0].upper() + ':' + path[2:]
+            elif len(path) >= 2 and path[1] == '\\':
+                result['errors'].append(f'磁碟代號格式錯誤: "{path[0]}\\" 缺少冒號，應該是 "{path[0].upper()}:\\"')
+                result['suggestion'] = path[0].upper() + ':' + path[1:]
+            else:
+                result['errors'].append('磁碟代號格式錯誤')
             return result
         
         if path_type == 'mixed':
