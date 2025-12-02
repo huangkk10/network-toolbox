@@ -389,6 +389,23 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         if status_filter:
             queryset = queryset.filter(last_build_status=status_filter)
         
+        # 🆕 按 Failed Stage 過濾（只顯示有該 failed_stage 的 Jobs）
+        failed_stage = self.request.query_params.get('failed_stage')
+        if failed_stage:
+            # 找出有指定 failed_stage 的 Builds 所屬的 Job IDs
+            from django.db.models import Exists, OuterRef
+            
+            queryset = queryset.filter(
+                Exists(
+                    JenkinsBuild.objects.filter(
+                        job=OuterRef('pk'),
+                        result='FAILURE',
+                        failed_stage=failed_stage
+                    )
+                )
+            )
+            logger.info(f"Failed Stage 篩選: {failed_stage}")
+        
         # 搜尋 Job 名稱
         search = self.request.query_params.get('search')
         if search:
@@ -1931,6 +1948,64 @@ class JenkinsBuildViewSet(viewsets.ModelViewSet):
                 'error': f'Failed to read validation file: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['get'], url_path='failed-stages')
+    def failed_stages(self, request):
+        """
+        獲取所有唯一的 Failed Stage 列表
+        
+        GET /api/jenkins-builds/failed-stages/
+        
+        Query Parameters:
+        - server_id: 可選，按伺服器過濾
+        - start_date: 可選，開始日期
+        - end_date: 可選，結束日期
+        
+        Returns:
+            {
+                'failed_stages': ['Stage1', 'Stage2', ...],
+                'count': int
+            }
+        """
+        try:
+            # 基礎查詢：只查詢 FAILURE 且有 failed_stage 的 Build
+            queryset = JenkinsBuild.objects.filter(
+                result='FAILURE',
+                failed_stage__isnull=False
+            ).exclude(failed_stage='')
+            
+            # 按伺服器過濾
+            server_id = request.query_params.get('server_id')
+            if server_id:
+                queryset = queryset.filter(job__server_id=server_id)
+            
+            # 按日期範圍過濾
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            if start_date:
+                queryset = queryset.filter(build_timestamp__gte=start_date)
+            if end_date:
+                queryset = queryset.filter(build_timestamp__lte=end_date)
+            
+            # 獲取唯一的 failed_stage 值並排序
+            failed_stages = list(
+                queryset.values_list('failed_stage', flat=True)
+                .distinct()
+                .order_by('failed_stage')
+            )
+            
+            logger.info(f"獲取 Failed Stages 列表: {len(failed_stages)} 個")
+            
+            return Response({
+                'failed_stages': failed_stages,
+                'count': len(failed_stages)
+            })
+            
+        except Exception as e:
+            logger.error(f'獲取 Failed Stages 列表失敗: {e}', exc_info=True)
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['get'], url_path='has_fatal_analysis')
     def has_fatal_analysis(self, request, pk=None):
         """

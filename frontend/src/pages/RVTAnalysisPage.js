@@ -138,6 +138,7 @@ const RVTAnalysisPage = () => {
             server_id: params.get('server_id') ? parseInt(params.get('server_id')) : null,
             view_name: params.get('view_name') || null,
             status: params.get('status') || null,
+            failed_stage: params.get('failed_stage') || null,  // 🆕 新增 Failed Stage 篩選
             date_range: dateRange,
             search: params.get('search') || '',
         };
@@ -163,6 +164,9 @@ const RVTAnalysisPage = () => {
     
     // 篩選條件（從 URL 初始化）
     const [filters, setFilters] = useState(getFiltersFromURL());
+    
+    // 🆕 Failed Stage 列表（從 API 獲取）
+    const [availableFailedStages, setAvailableFailedStages] = useState([]);
     
     // 分頁設置
     const [pagination, setPagination] = useState({
@@ -205,6 +209,13 @@ const RVTAnalysisPage = () => {
             params.set('status', newFilters.status);
         } else {
             params.delete('status');
+        }
+        
+        // 🆕 Failed Stage 參數
+        if (newFilters.failed_stage) {
+            params.set('failed_stage', newFilters.failed_stage);
+        } else {
+            params.delete('failed_stage');
         }
         
         if (newFilters.search) {
@@ -356,6 +367,34 @@ const RVTAnalysisPage = () => {
         }
     };
     
+    // 🆕 載入可用的 Failed Stage 列表
+    const fetchAvailableFailedStages = async (serverId = null) => {
+        try {
+            let url = '/api/jenkins-builds/failed-stages/';
+            const params = [];
+            
+            if (serverId) {
+                params.push(`server_id=${serverId}`);
+            }
+            
+            // 如果有日期範圍篩選，也傳遞到 API
+            if (filters.date_range && filters.date_range[0] && filters.date_range[1]) {
+                params.push(`start_date=${filters.date_range[0].format('YYYY-MM-DD')}`);
+                params.push(`end_date=${filters.date_range[1].format('YYYY-MM-DD')}`);
+            }
+            
+            if (params.length > 0) {
+                url += '?' + params.join('&');
+            }
+            
+            const response = await axios.get(url);
+            setAvailableFailedStages(response.data.failed_stages || []);
+        } catch (error) {
+            console.error('載入 Failed Stages 列表失敗:', error);
+            setAvailableFailedStages([]);
+        }
+    };
+    
     // 載入 Jobs 列表
     const fetchJobs = async (customFilters = null) => {
         const activeFilters = customFilters || filters;
@@ -373,6 +412,10 @@ const RVTAnalysisPage = () => {
             }
             if (activeFilters.status) {
                 params.push(`status=${activeFilters.status}`);
+            }
+            // 🆕 新增 Failed Stage 篩選
+            if (activeFilters.failed_stage) {
+                params.push(`failed_stage=${encodeURIComponent(activeFilters.failed_stage)}`);
             }
             if (activeFilters.search) {
                 params.push(`search=${activeFilters.search}`);
@@ -943,6 +986,11 @@ const RVTAnalysisPage = () => {
         fetchStatistics(range);  // 使用 URL 中的時間範圍
         fetchAvailableViews(filters.server_id);
         
+        // 🆕 如果 URL 中 status 為 FAILURE，載入 Failed Stages 列表
+        if (filters.status === 'FAILURE') {
+            fetchAvailableFailedStages(filters.server_id);
+        }
+        
         // 根據 URL 中的 date_filter 初始化 date_range
         const urlQuickFilter = getQuickDateFilterFromURL();
         setQuickDateFilter(urlQuickFilter);
@@ -1240,9 +1288,19 @@ const RVTAnalysisPage = () => {
                                         allowClear
                                         value={filters.status}
                                         onChange={(value) => {
-                                            const newFilters = { ...filters, status: value };
+                                            // 如果狀態變更為非 FAILURE，清除 failed_stage 篩選
+                                            const newFilters = { 
+                                                ...filters, 
+                                                status: value,
+                                                failed_stage: value === 'FAILURE' ? filters.failed_stage : null
+                                            };
                                             setFilters(newFilters);
                                             updateURLParams(newFilters);
+                                            
+                                            // 如果選擇了 FAILURE，載入 Failed Stages 列表
+                                            if (value === 'FAILURE') {
+                                                fetchAvailableFailedStages(filters.server_id);
+                                            }
                                         }}
                                         size="small"
                                         getPopupContainer={() => document.body}
@@ -1253,6 +1311,34 @@ const RVTAnalysisPage = () => {
                                         <Option value="ABORTED">Aborted</Option>
                                     </Select>
                                 </Col>
+                                
+                                {/* 🆕 Failed Stage 篩選 - 只在選擇 FAILURE 時顯示 */}
+                                {filters.status === 'FAILURE' && (
+                                    <Col flex="auto" style={{ maxWidth: 180 }}>
+                                        <Select
+                                            placeholder="Failed Stage"
+                                            style={{ width: '100%' }}
+                                            allowClear
+                                            value={filters.failed_stage}
+                                            onChange={(value) => {
+                                                const newFilters = { ...filters, failed_stage: value };
+                                                setFilters(newFilters);
+                                                updateURLParams(newFilters);
+                                            }}
+                                            size="small"
+                                            showSearch
+                                            filterOption={(input, option) =>
+                                                option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+                                            }
+                                            getPopupContainer={() => document.body}
+                                            notFoundContent={availableFailedStages.length === 0 ? "無 Failed Stage 資料" : null}
+                                        >
+                                            {availableFailedStages.map(stage => (
+                                                <Option key={stage} value={stage}>{stage}</Option>
+                                            ))}
+                                        </Select>
+                                    </Col>
+                                )}
                                 
                                 {/* 搜尋 */}
                                 <Col flex="1 1 auto" style={{ minWidth: 180 }}>
