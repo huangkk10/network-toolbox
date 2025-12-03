@@ -273,6 +273,7 @@ const BuildConfigValidatorPage = () => {
             uart_ssh: 'UART SSH 連線檢查',
             nas_connection: 'NAS 連線檢查',
             mdt_web: 'MDT Web 檢查',
+            fatal_errors: 'Fatal Errors 分析',
         };
         return names[item] || item;
     };
@@ -475,6 +476,19 @@ const BuildConfigValidatorPage = () => {
                                             </ul>
                                         </>
                                     )}
+
+                                    {/* Fatal Errors 查看按鈕 */}
+                                    {key === 'fatal_errors' && checkData.status !== 'success' && checkData.value !== 'N/A' && (
+                                        <div style={{ marginTop: 16 }}>
+                                            <Button 
+                                                type="primary" 
+                                                icon={<WarningOutlined />}
+                                                onClick={() => navigate(`/jenkins/builds/${buildId}/fatal-errors`)}
+                                            >
+                                                查看 Fatal Errors 詳情
+                                            </Button>
+                                        </div>
+                                    )}
                                 </div>
                             </Panel>
                         );
@@ -580,6 +594,12 @@ const BuildConfigValidatorPage = () => {
             differences: '配置差異',
             is_unknown_network: '未知網段',
             connection_error: '連線錯誤',
+            // Fatal Errors 檢查相關
+            fatal_count: 'Fatal 數量',
+            fatal_tasks_count: 'Fatal Tasks 數量',
+            sample_disk_issues: 'Sample Disk 問題',
+            analyzed_at: '分析時間',
+            analysis_path: '分析檔案路徑',
         };
         return labels[key] || key;
     };
@@ -637,6 +657,25 @@ const BuildConfigValidatorPage = () => {
                             <strong>{diff.field}</strong>: 
                             Inventory: <code>{diff.inventory_value || 'N/A'}</code>, 
                             MDT: <code>{diff.mdt_web_value || 'N/A'}</code>
+                        </li>
+                    ))}
+                </ul>
+            );
+        }
+        // Fatal Errors 檢查相關
+        if (key === 'analyzed_at') {
+            return value ? new Date(value).toLocaleString('zh-TW') : 'N/A';
+        }
+        if (key === 'sample_disk_issues' && Array.isArray(value)) {
+            if (value.length === 0) return <Tag color="success">無問題</Tag>;
+            return (
+                <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                    {value.map((issue, idx) => (
+                        <li key={idx} style={{ marginBottom: '4px' }}>
+                            <Tag color="error">{issue.pattern}</Tag>
+                            <span style={{ marginLeft: 8, color: '#666' }}>
+                                Task: {issue.task_name}
+                            </span>
                         </li>
                     ))}
                 </ul>

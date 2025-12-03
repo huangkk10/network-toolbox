@@ -79,10 +79,17 @@ class BuildConfigValidator:
                     'value': None,
                     'details': {},
                     'suggestions': []
+                },
+                'fatal_errors': {
+                    'status': 'unknown',
+                    'message': '',
+                    'value': None,
+                    'details': {},
+                    'suggestions': []
                 }
             },
             'summary': {
-                'total_checks': 6,
+                'total_checks': 7,
                 'passed': 0,
                 'warnings': 0,
                 'errors': 0
@@ -117,6 +124,7 @@ class BuildConfigValidator:
             self._check_uart_ssh_connection()
             self._check_nas_connection()
             self._check_mdt_web()
+            self._check_fatal_errors()
             self._calculate_overall_status()
             
             logger.info(f"Validation complete. Status: {self.validation_results['overall_status']}, Source: {self.config_source}")
@@ -1073,6 +1081,200 @@ class BuildConfigValidator:
         except Exception as e:
             logger.error(f"Failed to calculate MDT Web IP: {e}", exc_info=True)
             return None
+    
+    def _check_fatal_errors(self):
+        """
+        Fatal Errors 分析檢查
+        
+        分析 Build 的 Console Log 中是否包含 Sample Disk 相關的錯誤
+        （如 NVMe Device Cannot be Found 等）
+        """
+        check_result = self.validation_results['checks']['fatal_errors']
+        
+        try:
+            # 1. 檢查 Build 狀態
+            if self.build.result == 'SUCCESS':
+                check_result['status'] = 'success'
+                check_result['message'] = 'Build 成功，無需檢查 Fatal Errors'
+                check_result['value'] = 'N/A'
+                logger.info("✓ Build SUCCESS, skipping Fatal Errors check")
+                return
+            
+            # 2. 檢查 Console Log 是否存在
+            if not self.build.log_file_path:
+                check_result['status'] = 'warning'
+                check_result['message'] = '尚無 Console Log，無法分析 Fatal Errors'
+                check_result['value'] = 'N/A'
+                check_result['suggestions'] = ['等待 Build 完成並下載 Console Log']
+                logger.warning("⚠️ No console log path, cannot check Fatal Errors")
+                return
+            
+            from pathlib import Path
+            import json
+            
+            log_path = Path(self.build.log_file_path)
+            analysis_path = log_path.parent / 'fatal_analysis.json'
+            
+            # 3. 檢查 Fatal Analysis 是否存在
+            if not analysis_path.exists():
+                check_result['status'] = 'warning'
+                check_result['message'] = 'Fatal Analysis 尚未執行'
+                check_result['value'] = 'N/A'
+                check_result['details']['analysis_path'] = str(analysis_path)
+                check_result['suggestions'] = ['等待系統自動分析或手動觸發分析']
+                logger.warning(f"⚠️ Fatal analysis file not found: {analysis_path}")
+                return
+            
+            # 4. 讀取 Fatal Analysis
+            with open(analysis_path, 'r', encoding='utf-8') as f:
+                analysis_data = json.load(f)
+            
+            fatal_count = analysis_data.get('summary', {}).get('total_fatal_count', 0)
+            fatal_tasks = analysis_data.get('fatal_tasks', [])
+            
+            check_result['details']['fatal_count'] = fatal_count
+            check_result['details']['fatal_tasks_count'] = len(fatal_tasks)
+            check_result['details']['analyzed_at'] = analysis_data.get('build_info', {}).get('analyzed_at')
+            
+            if fatal_count == 0:
+                check_result['status'] = 'success'
+                check_result['message'] = 'Build 失敗但無 Fatal Errors 記錄'
+                check_result['value'] = '0 個 Fatal'
+                logger.info("✓ No Fatal Errors found in analysis")
+                return
+            
+            # 5. 分析 Fatal 內容，識別 Sample Disk 問題
+            sample_disk_issues = self._analyze_sample_disk_issues(fatal_tasks)
+            
+            check_result['value'] = f'{fatal_count} 個 Fatal'
+            check_result['details']['sample_disk_issues'] = sample_disk_issues
+            
+            if sample_disk_issues:
+                check_result['status'] = 'error'
+                check_result['message'] = f'檢測到 Sample Disk 問題：{len(sample_disk_issues)} 個'
+                check_result['suggestions'] = [
+                    '檢查 NVMe 設備是否正確連接',
+                    '確認 Sample Disk 已正確安裝',
+                    '檢查設備電源和連接線',
+                    '嘗試重新插拔 NVMe 設備',
+                ]
+                
+                # 記錄具體問題（最多顯示 3 個）
+                for issue in sample_disk_issues[:3]:
+                    check_result['suggestions'].append(
+                        f"  • {issue['pattern']}: Task [{issue['task_name']}]"
+                    )
+                
+                logger.error(f"❌ Sample Disk issues detected: {len(sample_disk_issues)}")
+            else:
+                check_result['status'] = 'warning'
+                check_result['message'] = f'有 {fatal_count} 個 Fatal Errors，但非 Sample Disk 問題'
+                check_result['suggestions'] = [
+                    '請查看 Fatal Errors 詳情頁面了解具體錯誤',
+                    '點擊「查看 Fatal Errors」按鈕查看完整分析'
+                ]
+                logger.warning(f"⚠️ {fatal_count} Fatal Errors found, but no Sample Disk issues")
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Fatal Analysis JSON: {e}", exc_info=True)
+            check_result['status'] = 'error'
+            check_result['message'] = 'Fatal Analysis 檔案格式錯誤'
+            check_result['suggestions'] = ['請重新執行 Fatal Error 分析']
+            
+        except Exception as e:
+            logger.error(f"Failed to check Fatal Errors: {e}", exc_info=True)
+            check_result['status'] = 'error'
+            check_result['message'] = f'分析 Fatal Errors 時發生錯誤: {str(e)}'
+            check_result['suggestions'] = ['檢查系統日誌']
+    
+    def _analyze_sample_disk_issues(self, fatal_tasks: List[Dict]) -> List[Dict]:
+        """
+        分析 Fatal Tasks 中是否包含 Sample Disk 相關問題
+        
+        Args:
+            fatal_tasks: Fatal Tasks 列表
+        
+        Returns:
+            List of detected issues: [{'pattern': str, 'task_name': str, 'matched_text': str}]
+        """
+        # Sample Disk 問題關鍵詞模式（模式, 描述）
+        SAMPLE_DISK_PATTERNS = [
+            # NVMe 相關
+            (r'NVMe\s+Device\s+Cannot\s+be\s+Found', 'NVMe 設備未找到'),
+            (r'The\s+NVMe\s+Device\s+Cannot\s+be\s+Found', 'NVMe 設備未找到'),
+            (r'NVMe.*not\s+found', 'NVMe 未找到'),
+            (r'NVMe.*missing', 'NVMe 缺失'),
+            (r'No\s+NVMe\s+device', '無 NVMe 設備'),
+            
+            # 磁碟/儲存相關
+            (r'sample.*disk.*not\s+found', 'Sample Disk 未找到'),
+            (r'disk.*cannot.*found', '磁碟無法找到'),
+            (r'InitializeDefaultDrives.*failed', '初始化預設磁碟機失敗'),
+            (r'FileSystem.*provider\s+failed', '檔案系統提供者失敗'),
+            (r'storage.*device.*not.*detected', '儲存設備未檢測到'),
+            (r'drive.*not.*available', '磁碟機不可用'),
+            
+            # 測試樣品相關
+            (r'sample.*not.*detected', '測試樣品未檢測到'),
+            (r'DUT.*not.*found', 'DUT 未找到'),
+            (r'target.*device.*missing', '目標設備缺失'),
+        ]
+        
+        detected_issues = []
+        
+        for task in fatal_tasks:
+            # 收集所有可能包含錯誤信息的內容
+            content_parts = []
+            
+            # 檢查 task_content / content
+            task_content = task.get('content', '') or task.get('task_content', '')
+            if task_content:
+                content_parts.append(task_content)
+            
+            # 檢查 fatal_occurrences 中的 line_content
+            occurrences = task.get('fatal_occurrences', [])
+            for occ in occurrences:
+                line_content = occ.get('line_content', '')
+                if line_content:
+                    content_parts.append(line_content)
+                
+                # 也檢查 context_lines
+                context_lines = occ.get('context_lines', [])
+                for ctx_line in context_lines:
+                    if ctx_line:
+                        content_parts.append(ctx_line)
+            
+            # 檢查 fatal_snippets
+            snippets = task.get('fatal_snippets', [])
+            for snippet in snippets:
+                if isinstance(snippet, str) and snippet:
+                    content_parts.append(snippet)
+            
+            # 合併所有內容
+            full_content = '\n'.join(content_parts)
+            
+            # 匹配關鍵詞
+            for pattern, description in SAMPLE_DISK_PATTERNS:
+                matches = list(re.finditer(pattern, full_content, re.IGNORECASE))
+                for match in matches:
+                    detected_issues.append({
+                        'pattern': description,
+                        'matched_text': match.group(),
+                        'task_name': task.get('task_name', 'Unknown Task'),
+                        'line_number': task.get('start_line', 0) or task.get('task_start_line', 0),
+                    })
+        
+        # 去重（基於 pattern + task_name）
+        seen = set()
+        unique_issues = []
+        for issue in detected_issues:
+            key = (issue['pattern'], issue['task_name'])
+            if key not in seen:
+                seen.add(key)
+                unique_issues.append(issue)
+        
+        logger.info(f"Sample Disk issue analysis: {len(unique_issues)} unique issues found")
+        return unique_issues
 
 
 def validate_build_config(build_id: int, dhcp_server_ids: Optional[List[int]] = None) -> Dict:

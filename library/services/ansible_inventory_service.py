@@ -20,12 +20,18 @@ logger = logging.getLogger(__name__)
 class AnsibleInventoryService:
     """Ansible Inventory 管理服務"""
     
+    # NAS IP 到掛載點的映射表
+    NAS_MOUNT_MAP = {
+        '10.250.0.1': '/mnt/mdt',
+        '10.8.246.11': '/mnt/nas_10.8.246.11',
+    }
+    
     def __init__(self, nas_base_path: str = '/mnt/mdt'):
         """
         初始化服務
         
         Args:
-            nas_base_path: NAS 掛載的基礎路徑（預設 /mnt/mdt）
+            nas_base_path: NAS 掛載的基礎路徑（預設 /mnt/mdt，作為未知 NAS 的後備）
         """
         self.nas_base_path = nas_base_path
         logger.info(f"AnsibleInventoryService initialized with nas_base_path: {nas_base_path}")
@@ -36,7 +42,7 @@ class AnsibleInventoryService:
         
         範例:
             \\\\10.250.0.1\\mdt\\Script\\test -> /mnt/mdt/Script/test
-            \\10.250.0.1\mdt\Script\test -> /mnt/mdt/Script/test
+            \\10.8.246.11\mdt\Script\test -> /mnt/nas_10.8.246.11/Script/test
         
         Args:
             windows_path: Windows 格式的路徑
@@ -50,6 +56,19 @@ class AnsibleInventoryService:
         path = windows_path.replace('\\', '/')
         logger.debug(f"After replacing backslashes: {path}")
         
+        # 提取 NAS IP 地址
+        ip_match = re.match(r'^//([\d\.]+)/', path)
+        nas_ip = ip_match.group(1) if ip_match else None
+        logger.debug(f"Extracted NAS IP: {nas_ip}")
+        
+        # 根據 NAS IP 選擇掛載點
+        if nas_ip and nas_ip in self.NAS_MOUNT_MAP:
+            mount_point = self.NAS_MOUNT_MAP[nas_ip]
+            logger.debug(f"Using mount point for {nas_ip}: {mount_point}")
+        else:
+            mount_point = self.nas_base_path
+            logger.debug(f"Using default mount point: {mount_point}")
+        
         # 移除開頭的網路路徑格式
         # 範例: //10.250.0.1/mdt/Script/test -> Script/test
         # 支援格式: //IP/mdt/... 或 //IP/share/mdt/...
@@ -61,7 +80,7 @@ class AnsibleInventoryService:
             path = path.lstrip('/')
         
         # 組合完整路徑
-        linux_path = os.path.join(self.nas_base_path, path)
+        linux_path = os.path.join(mount_point, path)
         
         logger.info(f"Converted Windows path '{windows_path}' to Linux path '{linux_path}'")
         return linux_path
