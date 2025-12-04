@@ -46,7 +46,7 @@ const AnsibleConfigDrawer = ({
         if (visible && jobId) {
             fetchInventoryData();
         }
-    }, [visible, jobId]);
+    }, [visible, jobId, buildNumber]);  // 新增 buildNumber 依賴
 
     // 獲取 Inventory 資料
     const fetchInventoryData = async (useCache = true) => {
@@ -54,7 +54,8 @@ const AnsibleConfigDrawer = ({
         setError(null);
 
         try {
-            const response = await getAnsibleInventory(jobId, useCache);
+            // 傳入 buildNumber 以獲取指定 Build 的 inventory
+            const response = await getAnsibleInventory(jobId, useCache, buildNumber);
             
             if (response.success) {
                 setInventoryData(response);

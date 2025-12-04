@@ -588,9 +588,57 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
     
     # ==================== Ansible Inventory 相關 API ====================
     
+    def _get_build_inventory_path(self, job: 'JenkinsJob', build_number: int = None) -> tuple:
+        """
+        獲取指定 Build 或最新 Build 的 inventory/hosts 文件路徑
+        
+        Args:
+            job: JenkinsJob 實例
+            build_number: 指定的 Build 號碼，如果為 None 則使用最新 Build
+        
+        Returns:
+            tuple: (inventory_path, build) 元組，如果不存在返回 (None, None)
+        """
+        from django.conf import settings
+        from pathlib import Path
+        
+        # 根據是否指定 build_number 來獲取 Build
+        if build_number is not None:
+            # 獲取指定的 Build
+            build = job.builds.filter(
+                build_number=build_number,
+                is_artifacts_stored=True
+            ).first()
+            
+            if not build:
+                logger.warning(f"Job {job.name} Build #{build_number} 不存在或沒有 artifacts")
+                return None, None
+        else:
+            # 獲取最新的 Build（有 artifacts 的）
+            build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
+            
+            if not build:
+                logger.warning(f"Job {job.name} 沒有包含 artifacts 的 Build")
+                return None, None
+        
+        # 檢查是否有 artifacts_path
+        if not build.artifacts_path:
+            logger.warning(f"Build {build.build_number} 沒有 artifacts_path")
+            return None, None
+        
+        # 構建 inventory 文件路徑（使用 artifacts_path）
+        artifacts_path = Path(build.artifacts_path)
+        inventory_path = artifacts_path / 'inventory' / 'hosts'
+        
+        if not inventory_path.exists():
+            logger.warning(f"Inventory 文件不存在: {inventory_path}")
+            return None, None
+        
+        return str(inventory_path), build
+    
     def _get_latest_build_inventory_path(self, job: 'JenkinsJob') -> Optional[str]:
         """
-        獲取最新 Build 的 inventory/hosts 文件路徑
+        獲取最新 Build 的 inventory/hosts 文件路徑（向後兼容）
         
         Args:
             job: JenkinsJob 實例
@@ -598,30 +646,8 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         Returns:
             str: inventory 文件路徑，如果不存在返回 None
         """
-        from django.conf import settings
-        from pathlib import Path
-        
-        # 獲取最新的 Build（有 artifacts 的）
-        latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
-        
-        if not latest_build:
-            logger.warning(f"Job {job.name} 沒有包含 artifacts 的 Build")
-            return None
-        
-        # 檢查是否有 artifacts_path
-        if not latest_build.artifacts_path:
-            logger.warning(f"Build {latest_build.build_number} 沒有 artifacts_path")
-            return None
-        
-        # 構建 inventory 文件路徑（使用 artifacts_path）
-        artifacts_path = Path(latest_build.artifacts_path)
-        inventory_path = artifacts_path / 'inventory' / 'hosts'
-        
-        if not inventory_path.exists():
-            logger.warning(f"Inventory 文件不存在: {inventory_path}")
-            return None
-        
-        return str(inventory_path)
+        inventory_path, _ = self._get_build_inventory_path(job)
+        return inventory_path
     
     @action(detail=True, methods=['get'], url_path='ansible-inventory')
     def ansible_inventory(self, request, pk=None):
@@ -633,6 +659,7 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         Query Parameters:
             - use_cache: 是否使用快取（默認 true）
             - force_refresh: 強制刷新（清除快取後重新解析）
+            - build_number: 指定 Build 號碼（可選，默認使用最新 Build）
         
         Returns:
             完整的 inventory JSON 數據
@@ -643,13 +670,18 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         use_cache = request.query_params.get('use_cache', 'true').lower() == 'true'
         force_refresh = request.query_params.get('force_refresh', 'false').lower() == 'true'
         
-        # 獲取 inventory 文件路徑
-        inventory_path = self._get_latest_build_inventory_path(job)
+        # 獲取指定的 build_number（可選）
+        build_number_str = request.query_params.get('build_number')
+        build_number = int(build_number_str) if build_number_str else None
+        
+        # 獲取 inventory 文件路徑（支援指定 build_number）
+        inventory_path, build = self._get_build_inventory_path(job, build_number)
         if not inventory_path:
+            error_msg = f'Build #{build_number} 沒有 inventory 文件' if build_number else '該 Job 沒有包含 inventory/hosts 的 Build'
             return Response({
                 'success': False,
                 'error': '找不到 inventory 文件',
-                'message': '該 Job 沒有包含 inventory/hosts 的 Build'
+                'message': error_msg
             }, status=status.HTTP_404_NOT_FOUND)
         
         try:
@@ -664,16 +696,13 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             result = service.get_full_inventory(use_cache=use_cache)
             
             if result['success']:
-                # 獲取 Build 信息
-                latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
-                
                 return Response({
                     'success': True,
                     'job_id': job.id,
                     'job_name': job.name,
-                    'build_number': latest_build.build_number if latest_build else None,
+                    'build_number': build.build_number,
                     'cached': result['cached'],
-                    'inventory_path': inventory_path,  # 新增：Inventory 路徑
+                    'inventory_path': inventory_path,
                     'data': result['data']
                 })
             else:
@@ -702,6 +731,7 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         
         Query Parameters:
             - use_cache: 是否使用快取（默認 true）
+            - build_number: 指定 Build 號碼（可選，默認使用最新 Build）
         
         Returns:
             主機列表摘要（hostname, IP, device_number, groups）
@@ -711,7 +741,11 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         job = self.get_object()
         use_cache = request.query_params.get('use_cache', 'true').lower() == 'true'
         
-        inventory_path = self._get_latest_build_inventory_path(job)
+        # 獲取指定的 build_number（可選）
+        build_number_str = request.query_params.get('build_number')
+        build_number = int(build_number_str) if build_number_str else None
+        
+        inventory_path, build = self._get_build_inventory_path(job, build_number)
         if not inventory_path:
             return Response({
                 'success': False,
@@ -723,13 +757,11 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             result = service.list_all_hosts(use_cache=use_cache)
             
             if result['success']:
-                latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
-                
                 return Response({
                     'success': True,
                     'job_id': job.id,
                     'job_name': job.name,
-                    'build_number': latest_build.build_number if latest_build else None,
+                    'build_number': build.build_number,
                     'cached': result['cached'],
                     'total_hosts': result['total_hosts'],
                     'hosts': result['hosts']
@@ -753,6 +785,7 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         
         Query Parameters:
             - use_cache: 是否使用快取（默認 true）
+            - build_number: 指定 Build 號碼（可選，默認使用最新 Build）
         
         Returns:
             {
@@ -782,7 +815,11 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         job = self.get_object()
         use_cache = request.query_params.get('use_cache', 'true').lower() == 'true'
         
-        inventory_path = self._get_latest_build_inventory_path(job)
+        # 獲取指定的 build_number（可選）
+        build_number_str = request.query_params.get('build_number')
+        build_number = int(build_number_str) if build_number_str else None
+        
+        inventory_path, build = self._get_build_inventory_path(job, build_number)
         if not inventory_path:
             return Response({
                 'success': False,
@@ -794,8 +831,6 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
             result = service.get_host_config(hostname, use_cache=use_cache)
             
             if result['success']:
-                latest_build = job.builds.filter(is_artifacts_stored=True).order_by('-build_number').first()
-                
                 config = result['config']
                 uart_config = None  # 預設值
                 
@@ -842,7 +877,7 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
                     'success': True,
                     'job_id': job.id,
                     'job_name': job.name,
-                    'build_number': latest_build.build_number if latest_build else None,
+                    'build_number': build.build_number,
                     'cached': result['cached'],
                     'hostname': hostname,
                     'config': config,

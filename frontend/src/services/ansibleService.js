@@ -12,15 +12,18 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api';
  * 獲取 Job 的完整 Ansible Inventory
  * @param {number} jobId - Jenkins Job ID
  * @param {boolean} useCache - 是否使用快取（預設 true）
+ * @param {number} buildNumber - 指定的 Build 號碼（可選，默認使用最新 Build）
  * @returns {Promise} API 響應
  */
-export const getAnsibleInventory = async (jobId, useCache = true) => {
+export const getAnsibleInventory = async (jobId, useCache = true, buildNumber = null) => {
     try {
+        const params = { use_cache: useCache };
+        if (buildNumber !== null) {
+            params.build_number = buildNumber;
+        }
         const response = await axios.get(
             `${API_BASE_URL}/jenkins-jobs/${jobId}/ansible-inventory/`,
-            {
-                params: { use_cache: useCache }
-            }
+            { params }
         );
         return response.data;
     } catch (error) {
