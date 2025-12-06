@@ -51,6 +51,9 @@ from .ipxe_analytics import (
 # Network Switch Views
 from .network_switches import NetworkSwitchViewSet, SwitchPortViewSet
 
+# Network Quality Views
+from .network_quality import NetworkQualityViewSet
+
 # Jenkins Views
 from .jenkins import (
     JenkinsServerViewSet,
@@ -114,6 +117,9 @@ __all__ = [
     # Network Switches
     'NetworkSwitchViewSet',
     'SwitchPortViewSet',
+    
+    # Network Quality
+    'NetworkQualityViewSet',
     
     # Jenkins
     'JenkinsServerViewSet',

@@ -1,133 +1,46 @@
 """
-DHCP Server 管理 Views
-包含 DHCP Server 的 CRUD 操作和自動同步功能
+網路品質監控 Views
+
+提供 DHCP Server 到 Switch 的網路品質監控 API 端點
 """
 
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from ..models import DHCPServer
-from ..serializers import DHCPServerSerializer
-import logging
+from rest_framework.permissions import AllowAny
+
+from api.models import DHCPServer, NetworkSwitch, NetworkQualityRecord
+from api.serializers import NetworkQualityRecordSerializer
 
 logger = logging.getLogger(__name__)
 
 
-class DHCPServerViewSet(viewsets.ModelViewSet):
-    """DHCP Server API ViewSet"""
-    queryset = DHCPServer.objects.all()
-    serializer_class = DHCPServerSerializer
-    permission_classes = [AllowAny]
+class NetworkQualityViewSet(viewsets.ViewSet):
+    """
+    網路品質監控 API
     
-    def create(self, request, *args, **kwargs):
-        """
-        創建新的 DHCP Server 並自動執行初始同步
-        """
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        # 保存 DHCP Server
-        server = serializer.save()
-        logger.info(f'成功創建 DHCP Server: {server.name} ({server.ip_address})')
-        
-        # 自動執行初始同步
-        sync_result = self._auto_sync_new_server(server)
-        
-        # 返回創建結果和同步統計
-        response_data = serializer.data
-        response_data['auto_sync'] = sync_result
-        
-        return Response(response_data, status=status.HTTP_201_CREATED)
+    提供 DHCP Server 到 Switch 的網路品質查詢和手動刷新功能
+    """
     
-    def _auto_sync_new_server(self, server):
-        """
-        自動同步新創建的 DHCP Server
-        
-        Args:
-            server: DHCPServer 實例
-        
-        Returns:
-            同步結果字典
-        """
-        sync_result = {
-            'enabled': True,
-            'scopes': {'success': False, 'stats': {}},
-            'leases': {'success': False, 'stats': {}},
-            'logs': {'success': False, 'stats': {}},
-            'errors': [],
-        }
-        
-        try:
-            from ..ssh_powershell_service import WindowsSSHPowerShellService
-            from ..services import DHCPLogService
-            
-            logger.info(f'開始自動同步 DHCP Server: {server.name} ({server.ip_address})')
-            
-            # 1. 同步 Scopes 和 Leases（使用 SSH + PowerShell）
-            try:
-                with WindowsSSHPowerShellService(server) as service:
-                    # 同步 Scopes
-                    scope_stats = service.sync_scopes_to_db()
-                    sync_result['scopes'] = {
-                        'success': True,
-                        'stats': scope_stats
-                    }
-                    logger.info(f'Scopes 同步完成: {scope_stats}')
-                    
-                    # 同步 Leases
-                    lease_stats = service.sync_leases_to_db()
-                    sync_result['leases'] = {
-                        'success': True,
-                        'stats': lease_stats
-                    }
-                    logger.info(f'Leases 同步完成: {lease_stats}')
-            
-            except Exception as e:
-                error_msg = f'同步 Scopes/Leases 失敗: {str(e)}'
-                logger.error(error_msg, exc_info=True)
-                sync_result['errors'].append(error_msg)
-            
-            # 2. 同步 Logs（使用 DHCPLogService）
-            try:
-                log_service = DHCPLogService(server)
-                log_stats = log_service.sync_logs_to_db(limit=1000)
-                sync_result['logs'] = {
-                    'success': True,
-                    'stats': log_stats
-                }
-                logger.info(f'Logs 同步完成: {log_stats}')
-            
-            except Exception as e:
-                error_msg = f'同步 Logs 失敗: {str(e)}'
-                logger.error(error_msg, exc_info=True)
-                sync_result['errors'].append(error_msg)
-            
-            logger.info(f'DHCP Server 自動同步完成: {server.name}')
-            
-        except Exception as e:
-            error_msg = f'自動同步失敗: {str(e)}'
-            logger.error(error_msg, exc_info=True)
-            sync_result['errors'].append(error_msg)
-        
-        return sync_result
+    permission_classes = [AllowAny]  # 開發環境使用，生產環境應改為 IsAuthenticated
     
-    # ==================== 網路品質監控 API ====================
-    
-    def _get_network_quality_service(self):
+    def _get_service(self):
         """獲取網路品質服務實例"""
         from library.services.network_quality_service import NetworkQualityService
         return NetworkQualityService()
     
     @action(detail=True, methods=['get'], url_path='network-quality')
-    def network_quality(self, request, pk=None):
+    def current_quality(self, request, pk=None):
         """
         獲取當前網路品質
         
         GET /api/dhcp-servers/{id}/network-quality/
+        
+        返回該 DHCP Server 到所有關聯 Switch 的當前網路品質
         """
         try:
-            service = self._get_network_quality_service()
+            service = self._get_service()
             result = service.get_current_quality(int(pk))
             
             if 'error' in result:
@@ -136,7 +49,10 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            return Response({'success': True, 'data': result})
+            return Response({
+                'success': True,
+                'data': result
+            })
             
         except Exception as e:
             logger.error(f"Failed to get current quality for server {pk}: {e}", exc_info=True)
@@ -146,11 +62,15 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
             )
     
     @action(detail=True, methods=['get'], url_path='network-quality/history')
-    def network_quality_history(self, request, pk=None):
+    def quality_history(self, request, pk=None):
         """
         獲取歷史網路品質
         
         GET /api/dhcp-servers/{id}/network-quality/history/?time_range=24h&switch_ids=1,2,3
+        
+        Query Parameters:
+            - time_range: 時間範圍（1h, 6h, 24h, 7d, 30d），預設 24h
+            - switch_ids: Switch ID 列表，逗號分隔（可選）
         """
         try:
             time_range = request.query_params.get('time_range', '24h')
@@ -175,7 +95,7 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            service = self._get_network_quality_service()
+            service = self._get_service()
             result = service.get_history(int(pk), time_range, switch_ids)
             
             if 'error' in result:
@@ -184,7 +104,10 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            return Response({'success': True, 'data': result})
+            return Response({
+                'success': True,
+                'data': result
+            })
             
         except Exception as e:
             logger.error(f"Failed to get quality history for server {pk}: {e}", exc_info=True)
@@ -194,11 +117,18 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
             )
     
     @action(detail=True, methods=['post'], url_path='network-quality/refresh')
-    def network_quality_refresh(self, request, pk=None):
+    def refresh_quality(self, request, pk=None):
         """
         手動觸發品質檢測
         
         POST /api/dhcp-servers/{id}/network-quality/refresh/
+        
+        Request Body (Optional):
+            {
+                "switch_ids": [1, 2, 3]
+            }
+        
+        注意：此操作會同步執行 Ping 測試，可能需要數秒時間
         """
         try:
             # 檢查 DHCP Server 是否存在
@@ -210,7 +140,7 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            service = self._get_network_quality_service()
+            service = self._get_service()
             result = service.collect_server_quality(int(pk))
             
             return Response({
@@ -227,16 +157,18 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
             )
     
     @action(detail=True, methods=['get'], url_path='network-quality/summary')
-    def network_quality_summary(self, request, pk=None):
+    def quality_summary(self, request, pk=None):
         """
         獲取品質統計摘要
         
-        GET /api/dhcp-servers/{id}/network-quality/summary/?time_range=24h
+        GET /api/dhcp-servers/{id}/network-quality/summary/
+        
+        返回指定時間範圍內的統計摘要
         """
         try:
             time_range = request.query_params.get('time_range', '24h')
             
-            service = self._get_network_quality_service()
+            service = self._get_service()
             result = service.get_history(int(pk), time_range)
             
             if 'error' in result:
@@ -245,6 +177,7 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
+            # 只返回統計部分
             return Response({
                 'success': True,
                 'data': {
@@ -257,6 +190,43 @@ class DHCPServerViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             logger.error(f"Failed to get quality summary for server {pk}: {e}", exc_info=True)
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'], url_path='network-quality/all')
+    def all_servers_quality(self, request):
+        """
+        獲取所有 DHCP Server 的網路品質概覽
+        
+        GET /api/dhcp-servers/network-quality/all/
+        """
+        try:
+            servers = DHCPServer.objects.filter(status='online')
+            service = self._get_service()
+            
+            results = []
+            for server in servers:
+                quality = service.get_current_quality(server.id)
+                results.append({
+                    'server_id': server.id,
+                    'server_name': server.name,
+                    'server_ip': server.ip_address,
+                    'summary': quality.get('summary', {}),
+                    'recorded_at': quality.get('recorded_at')
+                })
+            
+            return Response({
+                'success': True,
+                'data': {
+                    'total_servers': len(results),
+                    'servers': results
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to get all servers quality: {e}", exc_info=True)
             return Response(
                 {'success': False, 'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

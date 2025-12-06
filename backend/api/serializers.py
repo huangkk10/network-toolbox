@@ -507,3 +507,75 @@ class InventoryEditLogSerializer(serializers.ModelSerializer):
         model = InventoryEditLog
         fields = '__all__'
         read_only_fields = ('created_at',)
+
+
+# ==================== 網路品質監控 ====================
+
+class NetworkQualityRecordSerializer(serializers.ModelSerializer):
+    """網路品質記錄序列化器"""
+    
+    dhcp_server_name = serializers.CharField(source='dhcp_server.name', read_only=True)
+    dhcp_server_ip = serializers.CharField(source='dhcp_server.ip_address', read_only=True)
+    switch_name = serializers.CharField(source='switch.name', read_only=True)
+    switch_ip = serializers.CharField(source='switch.ip_address', read_only=True)
+    quality_status = serializers.ReadOnlyField()
+    
+    # 時間格式化
+    recorded_at = serializers.SerializerMethodField()
+    
+    def get_recorded_at(self, obj):
+        """將 UTC 時間轉換為當前時區"""
+        if obj.recorded_at:
+            local_time = django_timezone.localtime(obj.recorded_at)
+            return local_time.strftime('%Y-%m-%d %H:%M:%S')
+        return None
+    
+    class Meta:
+        model = None  # 將在 __init__ 中設置
+        fields = (
+            'id',
+            'dhcp_server', 'dhcp_server_name', 'dhcp_server_ip',
+            'switch', 'switch_name', 'switch_ip',
+            'latency_ms', 'latency_min_ms', 'latency_max_ms',
+            'packet_loss', 'jitter_ms',
+            'is_reachable', 'quality_status',
+            'packets_sent', 'packets_received',
+            'error_message',
+            'recorded_at'
+        )
+        read_only_fields = ('recorded_at',)
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 延遲導入以避免循環導入
+        from .models import NetworkQualityRecord
+        self.Meta.model = NetworkQualityRecord
+
+
+class NetworkQualitySummarySerializer(serializers.Serializer):
+    """網路品質摘要序列化器"""
+    
+    total_switches = serializers.IntegerField()
+    reachable = serializers.IntegerField()
+    unreachable = serializers.IntegerField()
+    avg_latency_ms = serializers.FloatField()
+    avg_packet_loss = serializers.FloatField()
+
+
+class SwitchQualitySerializer(serializers.Serializer):
+    """單個 Switch 品質序列化器"""
+    
+    switch_id = serializers.IntegerField()
+    switch_name = serializers.CharField()
+    switch_ip = serializers.CharField(allow_null=True)
+    quality = serializers.DictField(allow_null=True)
+    recorded_at = serializers.CharField(allow_null=True)
+
+
+class NetworkQualityResponseSerializer(serializers.Serializer):
+    """網路品質響應序列化器"""
+    
+    dhcp_server = serializers.DictField()
+    recorded_at = serializers.CharField()
+    summary = NetworkQualitySummarySerializer()
+    switches = SwitchQualitySerializer(many=True)

@@ -1403,3 +1403,117 @@ class WebsiteUsageStats(models.Model):
     
     def __str__(self):
         return f"網站使用統計 @ {self.date} - 訪問: {self.total_page_views}, API: {self.total_api_requests}"
+
+
+class NetworkQualityRecord(models.Model):
+    """
+    網路連線品質記錄
+    
+    記錄 DHCP Server 到 Switch 的網路品質指標
+    用於監控網路連線品質趨勢
+    """
+    
+    # 關聯
+    dhcp_server = models.ForeignKey(
+        DHCPServer,
+        on_delete=models.CASCADE,
+        related_name='network_quality_records',
+        verbose_name='DHCP Server'
+    )
+    switch = models.ForeignKey(
+        NetworkSwitch,
+        on_delete=models.CASCADE,
+        related_name='network_quality_records',
+        verbose_name='Switch'
+    )
+    
+    # 品質指標
+    latency_ms = models.FloatField(
+        verbose_name='延遲 (ms)',
+        help_text='Ping 往返時間（平均值）'
+    )
+    latency_min_ms = models.FloatField(
+        verbose_name='最小延遲 (ms)',
+        null=True,
+        blank=True
+    )
+    latency_max_ms = models.FloatField(
+        verbose_name='最大延遲 (ms)',
+        null=True,
+        blank=True
+    )
+    packet_loss = models.FloatField(
+        verbose_name='封包遺失率 (%)',
+        help_text='0-100 的百分比值'
+    )
+    jitter_ms = models.FloatField(
+        verbose_name='抖動 (ms)',
+        null=True,
+        blank=True,
+        help_text='延遲變化程度 (mdev)'
+    )
+    
+    # 連線狀態
+    is_reachable = models.BooleanField(
+        default=True,
+        verbose_name='是否可達'
+    )
+    
+    # Ping 詳細資訊
+    packets_sent = models.IntegerField(
+        default=5,
+        verbose_name='發送封包數'
+    )
+    packets_received = models.IntegerField(
+        default=5,
+        verbose_name='接收封包數'
+    )
+    
+    # 錯誤訊息（當連線失敗時）
+    error_message = models.TextField(
+        blank=True,
+        verbose_name='錯誤訊息'
+    )
+    
+    # 時間戳
+    recorded_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        verbose_name='記錄時間'
+    )
+    
+    class Meta:
+        db_table = 'network_quality_record'
+        verbose_name = '網路品質記錄'
+        verbose_name_plural = '網路品質記錄'
+        indexes = [
+            models.Index(fields=['dhcp_server', 'switch', 'recorded_at'], name='idx_nq_server_switch_time'),
+            models.Index(fields=['dhcp_server', 'recorded_at'], name='idx_nq_server_time'),
+            models.Index(fields=['switch', 'recorded_at'], name='idx_nq_switch_time'),
+            models.Index(fields=['recorded_at'], name='idx_nq_recorded_at'),
+            models.Index(fields=['is_reachable'], name='idx_nq_reachable'),
+        ]
+        ordering = ['-recorded_at']
+    
+    def __str__(self):
+        if self.is_reachable:
+            return f"{self.dhcp_server.name} -> {self.switch.name}: {self.latency_ms}ms ({self.recorded_at})"
+        return f"{self.dhcp_server.name} -> {self.switch.name}: Unreachable ({self.recorded_at})"
+    
+    @property
+    def quality_status(self):
+        """
+        計算品質狀態
+        
+        Returns:
+            str: excellent, good, fair, poor, offline
+        """
+        if not self.is_reachable or self.packet_loss == 100:
+            return 'offline'
+        if self.latency_ms < 1 and self.packet_loss == 0:
+            return 'excellent'
+        if self.latency_ms < 5 and self.packet_loss < 1:
+            return 'good'
+        if self.latency_ms < 20 and self.packet_loss < 5:
+            return 'fair'
+        return 'poor'

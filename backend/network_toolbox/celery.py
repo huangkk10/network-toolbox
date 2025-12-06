@@ -301,6 +301,30 @@ app.conf.beat_schedule = {
         }
     },
     
+    # 任務 22：Switch 網路品質監控（每 5 分鐘，含 CPU 保護機制）
+    'collect-network-quality-every-5-minutes': {
+        'task': 'api.tasks.collect_network_quality_task',
+        'schedule': crontab(minute='*/5'),  # 每 5 分鐘執行一次
+        'kwargs': {
+            'dhcp_server_id': None    # None 表示處理所有在線 Server
+        },
+        'options': {
+            'expires': 240,           # 任務超時 4 分鐘（避免與下次重疊）
+        }
+    },
+    
+    # 任務 23：清理舊的網路品質記錄（每天凌晨 3:30）
+    'cleanup-old-network-quality-records-daily': {
+        'task': 'api.tasks.cleanup_old_quality_records_task',
+        'schedule': crontab(hour=3, minute=30),  # 每天 03:30 執行
+        'kwargs': {
+            'days': 7                  # 保留最近 7 天的數據
+        },
+        'options': {
+            'expires': 3600,           # 任務超時 1 小時
+        }
+    },
+    
     # ============================================================================
     # 🧠 智能自適應同步任務（可選啟用）
     # ============================================================================

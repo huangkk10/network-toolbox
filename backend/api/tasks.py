@@ -6802,3 +6802,157 @@ def cleanup_old_nas_jenkins_storage_task(
             stats['duration'] = duration
             stats['error_message'] = str(exc)
             return stats
+
+
+# ==================== 網路品質監控任務 ====================
+
+@shared_task(
+    bind=True,
+    name='api.tasks.collect_network_quality_task',
+    max_retries=3,
+    default_retry_delay=60,
+    time_limit=300,   # 5 分鐘硬限制
+    soft_time_limit=240  # 4 分鐘軟限制
+)
+def collect_network_quality_task(self, dhcp_server_id: int = None):
+    """
+    收集網路品質數據
+    
+    每 5 分鐘執行一次，檢測所有 DHCP Server 到其關聯 Switch 的網路品質
+    
+    保護機制：
+    - CPU 使用率 >= 80% 時跳過執行
+    - 失敗時最多重試 3 次，間隔 60 秒
+    
+    Args:
+        dhcp_server_id: 指定 DHCP Server ID（不傳則檢測全部）
+        
+    Returns:
+        dict: {
+            'status': str,           # 'success', 'skipped', 'failed'
+            'cpu_percent': float,    # 執行時的 CPU 使用率
+            'total_records': int,    # 收集的記錄數
+            ...
+        }
+    """
+    import psutil
+    
+    CPU_THRESHOLD = 80
+    
+    try:
+        # ========== CPU 使用率檢查 ==========
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        if cpu_percent >= CPU_THRESHOLD:
+            logger.warning(
+                f'[collect_network_quality_task] Skipped due to high CPU usage: {cpu_percent}%'
+            )
+            return {
+                'status': 'skipped',
+                'reason': f'CPU usage {cpu_percent}% >= {CPU_THRESHOLD}%',
+                'cpu_percent': cpu_percent
+            }
+        # =====================================
+        
+        logger.info(f'[collect_network_quality_task] Starting (CPU: {cpu_percent}%)')
+        
+        from library.services.network_quality_service import NetworkQualityService
+        service = NetworkQualityService()
+        
+        if dhcp_server_id:
+            results = service.collect_server_quality(dhcp_server_id)
+        else:
+            results = service.collect_all_quality()
+        
+        total_records = results.get('total_records', 0)
+        
+        logger.info(
+            f'[collect_network_quality_task] Completed: {total_records} records (CPU: {cpu_percent}%)'
+        )
+        
+        return {
+            'status': 'success',
+            'cpu_percent': cpu_percent,
+            **results
+        }
+        
+    except Exception as exc:
+        logger.error(f'[collect_network_quality_task] Failed: {exc}', exc_info=True)
+        
+        try:
+            raise self.retry(exc=exc, countdown=60)
+        except self.MaxRetriesExceededError:
+            logger.error('[collect_network_quality_task] Max retries exceeded')
+            return {
+                'status': 'failed',
+                'error': str(exc)
+            }
+
+
+@shared_task(
+    name='api.tasks.cleanup_old_quality_records_task',
+    time_limit=600,
+    soft_time_limit=540
+)
+def cleanup_old_quality_records_task(days: int = 7):
+    """
+    清理舊的網路品質記錄
+    
+    每天凌晨執行，清理超過保留期限的數據
+    
+    保護機制：
+    - CPU 使用率 >= 80% 時跳過執行
+    
+    Args:
+        days: 保留天數（預設 7 天）
+        
+    Returns:
+        dict: {
+            'status': str,
+            'deleted': int,
+            'cpu_percent': float
+        }
+    """
+    import psutil
+    
+    CPU_THRESHOLD = 80
+    
+    try:
+        # ========== CPU 使用率檢查 ==========
+        cpu_percent = psutil.cpu_percent(interval=1)
+        
+        if cpu_percent >= CPU_THRESHOLD:
+            logger.warning(
+                f'[cleanup_old_quality_records_task] Skipped due to high CPU usage: {cpu_percent}%'
+            )
+            return {
+                'status': 'skipped',
+                'reason': f'CPU usage {cpu_percent}% >= {CPU_THRESHOLD}%',
+                'cpu_percent': cpu_percent,
+                'deleted': 0
+            }
+        # =====================================
+        
+        logger.info(f'[cleanup_old_quality_records_task] Starting (CPU: {cpu_percent}%)')
+        
+        from library.services.network_quality_service import NetworkQualityService
+        service = NetworkQualityService()
+        
+        deleted = service.cleanup_old_records(days=days)
+        
+        logger.info(f'[cleanup_old_quality_records_task] Cleaned up {deleted} old records')
+        
+        return {
+            'status': 'success',
+            'deleted': deleted,
+            'cpu_percent': cpu_percent,
+            'retention_days': days
+        }
+        
+    except Exception as exc:
+        logger.error(f'[cleanup_old_quality_records_task] Failed: {exc}', exc_info=True)
+        return {
+            'status': 'failed',
+            'error': str(exc),
+            'deleted': 0
+        }

@@ -10,8 +10,10 @@ import {
     EyeOutlined,
     SyncOutlined,
     NodeIndexOutlined,
+    LineChartOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
+import { NetworkQualityTab } from '../NetworkQuality';
 
 const SwitchTab = ({ serverId }) => {
     const [loading, setLoading] = useState(false);
@@ -429,6 +431,11 @@ const SwitchTab = ({ serverId }) => {
             key: 'top',
             label: <span><NodeIndexOutlined /> Top Switch</span>,
             children: renderTopSwitchesTab(),
+        },
+        {
+            key: 'quality',
+            label: <span><LineChartOutlined /> 網路品質</span>,
+            children: <NetworkQualityTab serverId={serverId} />,
         },
     ];
 
