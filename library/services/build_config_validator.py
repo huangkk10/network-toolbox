@@ -908,27 +908,24 @@ class BuildConfigValidator:
             check_result['value'] = device_number
             check_result['details']['device_number'] = device_number
             
-            # 獲取 DHCP Server IP 用於計算 MDT Web IP
-            dhcp_server_ip = self._get_dhcp_server_ip_for_mdt()
+            # 優先從 HOST_IP 計算 MDT Web IP（最可靠的方式）
+            mdt_web_ip = self._get_mdt_web_ip_from_host()
             
-            if not dhcp_server_ip:
-                check_result['status'] = 'warning'
-                check_result['message'] = '無法確定 DHCP Server IP，跳過 MDT Web 檢查'
-                check_result['suggestions'] = ['請確認 Build 關聯的 DHCP Server']
-                logger.warning("⚠️ Cannot determine DHCP Server IP for MDT Web check")
-                return
-            
-            check_result['details']['dhcp_server_ip'] = dhcp_server_ip
-            
-            # 計算 MDT Web IP（前三段相同，最後一段為 .2）
-            mdt_web_ip = self._calculate_mdt_web_ip(dhcp_server_ip)
-            check_result['details']['mdt_web_ip'] = mdt_web_ip
+            # 備用：如果無法從 HOST_IP 計算，嘗試從 DHCP Server 推斷
+            if not mdt_web_ip:
+                dhcp_server_ip = self._get_dhcp_server_ip_for_mdt()
+                if dhcp_server_ip:
+                    check_result['details']['dhcp_server_ip'] = dhcp_server_ip
+                    mdt_web_ip = self._calculate_mdt_web_ip(dhcp_server_ip)
             
             if not mdt_web_ip:
                 check_result['status'] = 'warning'
-                check_result['message'] = '無法計算 MDT Web IP'
-                check_result['suggestions'] = ['檢查 DHCP Server IP 格式']
+                check_result['message'] = '無法確定 MDT Web IP，跳過檢查'
+                check_result['suggestions'] = ['請確認 HOST_IP 設定正確']
+                logger.warning("⚠️ Cannot determine MDT Web IP for MDT Web check")
                 return
+            
+            check_result['details']['mdt_web_ip'] = mdt_web_ip
             
             # 連接 MDT Web 服務
             from library.services.mdt_web_service import MDTWebService
@@ -1023,38 +1020,53 @@ class BuildConfigValidator:
             check_result['message'] = f'MDT Web 檢查時發生錯誤: {str(e)}'
             check_result['suggestions'] = ['檢查系統日誌']
     
+    def _get_mdt_web_ip_from_host(self) -> Optional[str]:
+        """
+        根據 HOST_IP 計算 MDT Web IP
+        
+        MDT Web IP 規則：與設備 IP 同網段，最後一段為 .2
+        例如：
+        - HOST_IP: 10.250.10.100 → MDT Web: 10.250.10.2
+        - HOST_IP: 10.250.50.55 → MDT Web: 10.250.50.2
+        
+        這是最可靠的方式，因為 MDT Web 與設備在同一個網段
+        """
+        try:
+            host_ip = self.config.get('HOST_IP', '').strip()
+            
+            if not host_ip or not self._is_valid_ip(host_ip):
+                logger.warning(f"MDT Web: Invalid or missing HOST_IP: {host_ip}")
+                return None
+            
+            # 計算 MDT Web IP（前三段相同，最後一段為 .2）
+            octets = host_ip.split('.')
+            mdt_web_ip = f"{octets[0]}.{octets[1]}.{octets[2]}.2"
+            
+            logger.info(f"MDT Web: Calculated from HOST_IP {host_ip} → {mdt_web_ip}")
+            return mdt_web_ip
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate MDT Web IP from HOST_IP: {e}", exc_info=True)
+            return None
+    
     def _get_dhcp_server_ip_for_mdt(self) -> Optional[str]:
         """
-        獲取用於 MDT Web 檢查的 DHCP Server IP
+        獲取用於 MDT Web 檢查的 DHCP Server IP（備用方法）
+        
+        注意：此方法已不作為主要方式使用
+        MDT Web IP 現在優先從 HOST_IP 計算（見 _get_mdt_web_ip_from_host）
         
         優先順序：
-        1. 從 Build 關聯的 Job 獲取 DHCP Server
-        2. 從已指定的 DHCP Server IDs 獲取
-        3. 從 config 中的 DHCP_SERVER 名稱查詢
-        
-        注意：不從 HOST_IP 推斷，因為設備 IP 可能與 DHCP Server 不在同一網段
+        1. 從 config 中的 DHCP_SERVER 名稱查詢
+        2. 從已指定的 DHCP Server IDs 獲取（如果網段匹配 HOST_IP）
         """
         try:
             from api.models import DHCPServer
             
-            # 方法 1: 從 Build 關聯的 Job 獲取 DHCP Server
-            if self.build and self.build.job:
-                job = self.build.job
-                # JenkinsJob 有 dhcp_server 外鍵關聯
-                if hasattr(job, 'dhcp_server') and job.dhcp_server:
-                    dhcp_server = job.dhcp_server
-                    if dhcp_server.ip_address:
-                        logger.info(f"MDT Web: Got DHCP Server IP from Job.dhcp_server: {dhcp_server.ip_address}")
-                        return dhcp_server.ip_address
+            host_ip = self.config.get('HOST_IP', '').strip()
+            host_network_prefix = '.'.join(host_ip.split('.')[:3]) if host_ip and self._is_valid_ip(host_ip) else None
             
-            # 方法 2: 從已指定的 DHCP Server IDs 獲取
-            if self.dhcp_server_ids:
-                server = DHCPServer.objects.filter(id=self.dhcp_server_ids[0]).first()
-                if server and server.ip_address:
-                    logger.info(f"MDT Web: Got DHCP Server IP from dhcp_server_ids: {server.ip_address}")
-                    return server.ip_address
-            
-            # 方法 3: 從 config 中的 DHCP_SERVER 名稱查詢
+            # 方法 1: 從 config 中的 DHCP_SERVER 名稱查詢
             dhcp_server_name = self.config.get('DHCP_SERVER', '').strip()
             if dhcp_server_name:
                 server = DHCPServer.objects.filter(name=dhcp_server_name).first()
@@ -1062,7 +1074,20 @@ class BuildConfigValidator:
                     logger.info(f"MDT Web: Got DHCP Server IP from config DHCP_SERVER: {server.ip_address}")
                     return server.ip_address
             
-            logger.warning("MDT Web: Cannot determine DHCP Server IP")
+            # 方法 2: 從已指定的 DHCP Server IDs 獲取（但要驗證網段匹配）
+            if self.dhcp_server_ids and host_network_prefix:
+                for server_id in self.dhcp_server_ids:
+                    server = DHCPServer.objects.filter(id=server_id).first()
+                    if server and server.ip_address:
+                        server_network_prefix = '.'.join(server.ip_address.split('.')[:3])
+                        if server_network_prefix == host_network_prefix:
+                            logger.info(f"MDT Web: Got matching DHCP Server IP: {server.ip_address} (matches HOST_IP network)")
+                            return server.ip_address
+                
+                # 沒有匹配的，記錄警告
+                logger.warning(f"MDT Web: No DHCP Server matches HOST_IP network {host_network_prefix}")
+            
+            logger.warning("MDT Web: Cannot determine DHCP Server IP from traditional methods")
             return None
             
         except Exception as e:
