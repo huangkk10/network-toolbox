@@ -92,13 +92,33 @@ class EnhancedINIValidator:
             if stripped == '[]':
                 return False, f"第 {i} 行: 組名稱不能為空", i
             
-            # 檢查未閉合的括號
-            if stripped.startswith('[') and not stripped.endswith(']'):
-                return False, f"第 {i} 行: 組標題缺少閉合的中括號 ']'", i
-            
-            # 檢查是否為組標題，更新當前 section
+            # 檢查以 [ 開頭的行（可能是組標題）
             if stripped.startswith('['):
-                current_section = stripped[1:-1]  # 移除 [ 和 ]
+                # 檢查是否包含閉合的 ]
+                if ']' not in stripped:
+                    return False, f"第 {i} 行: 組標題缺少閉合的中括號 ']'", i
+                
+                # 找到 ] 的位置
+                bracket_end = stripped.index(']')
+                
+                # 檢查 ] 後面是否有多餘的內容
+                after_bracket = stripped[bracket_end + 1:].strip()
+                if after_bracket:
+                    # ] 後面有內容
+                    if after_bracket.startswith(';') or after_bracket.startswith('#'):
+                        # 這是註解，在 Ansible INI 中組標題行不允許行尾註解
+                        return False, f"第 {i} 行: 組標題後不允許添加註解，請將註解移到單獨一行", i
+                    else:
+                        # 其他多餘內容
+                        return False, f"第 {i} 行: 組標題 '{stripped[:bracket_end+1]}' 後有多餘的內容 '{after_bracket}'", i
+                
+                # 檢查組名是否為空（排除 :children 和 :vars 後綴）
+                group_name = stripped[1:bracket_end]
+                base_group_name = group_name.split(':')[0]
+                if not base_group_name:
+                    return False, f"第 {i} 行: 組名稱不能為空", i
+                
+                current_section = group_name
                 continue
             
             # 檢查 YAML 語法（冒號後有空格）

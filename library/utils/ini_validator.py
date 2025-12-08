@@ -119,9 +119,9 @@ class INIValidator:
         """驗證組標題"""
         line = line.strip()
         
-        # 檢查是否有閉合括號
-        if not line.endswith(']'):
-            # 記錄未閉合的括號
+        # 檢查是否包含閉合括號
+        if ']' not in line:
+            # 沒有閉合括號
             self.bracket_stack.append((line_num, line))
             raise INIValidationError(
                 "組標題缺少閉合的中括號 ']'",
@@ -129,8 +129,30 @@ class INIValidator:
                 line_content=line
             )
         
+        # 找到 ] 的位置
+        bracket_end = line.index(']')
+        
+        # 檢查 ] 後面是否有多餘的內容
+        after_bracket = line[bracket_end + 1:].strip()
+        if after_bracket:
+            # ] 後面有內容
+            if after_bracket.startswith(';') or after_bracket.startswith('#'):
+                # 這是註解，在 Ansible INI 中組標題行不允許行尾註解
+                raise INIValidationError(
+                    "組標題後不允許添加註解，請將註解移到單獨一行",
+                    line_number=line_num,
+                    line_content=line
+                )
+            else:
+                # 其他多餘內容
+                raise INIValidationError(
+                    f"組標題 '{line[:bracket_end+1]}' 後有多餘的內容 '{after_bracket}'",
+                    line_number=line_num,
+                    line_content=line
+                )
+        
         # 提取組名稱
-        group_content = line[1:-1].strip()
+        group_content = line[1:bracket_end].strip()
         
         # 檢查組名稱是否為空
         if not group_content:
