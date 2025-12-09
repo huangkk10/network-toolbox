@@ -1457,12 +1457,23 @@ def auto_store_workspaces(self, dry_run=False, max_builds=10):
     from library.services.jenkins_storage_service import JenkinsStorageService
     import re
     import time
+    import psutil
     
     start_time = time.time()
     
     try:
+        # ✅ CPU 保護機制：檢查 CPU 使用率
+        cpu_percent = psutil.cpu_percent(interval=1)
+        if cpu_percent > 60.0:
+            logger.warning(
+                f'[Celery] ⚠️  CPU 使用率過高 ({cpu_percent}%)，'
+                f'延遲執行 auto_store_workspaces'
+            )
+            # 延遲 5 分鐘後重試
+            raise self.retry(countdown=300)
+        
         logger.info('=' * 60)
-        logger.info('[Celery] 開始自動存儲 Jenkins Workspace')
+        logger.info(f'[Celery] 開始自動存儲 Jenkins Workspace (CPU: {cpu_percent}%)')
         logger.info('=' * 60)
         logger.info(f'[Celery] 模式: {"試運行" if dry_run else "正式執行"}')
         logger.info(f'[Celery] 每次最多存儲: {max_builds} 個 Build')
@@ -3597,9 +3608,23 @@ def auto_store_jenkins_builds_task(self, limit: int = 20) -> Dict[str, Any]:
         }
     """
     from django.conf import settings
+    import psutil
     
     try:
-        logger.info(f'[Celery] 開始自動存儲任務掃描 - Limit: {limit}')
+        # ✅ CPU 保護機制：檢查 CPU 使用率
+        cpu_percent = psutil.cpu_percent(interval=1)
+        if cpu_percent > 60.0:
+            logger.warning(
+                f'[Celery] ⚠️  CPU 使用率過高 ({cpu_percent}%)，'
+                f'延遲執行 auto_store_jenkins_builds_task'
+            )
+            # 延遲 5 分鐘後重試
+            raise self.retry(countdown=300)
+        
+        logger.info(
+            f'[Celery] 開始自動存儲任務掃描 - '
+            f'Limit: {limit}, CPU: {cpu_percent}%'
+        )
         
         # 獲取存儲策略配置
         storage_policy = getattr(settings, 'JENKINS_STORAGE_POLICY', {})
@@ -3945,11 +3970,22 @@ def auto_analyze_missing_fatal_errors_task(self, limit: int = 20, days: int = 7)
     from pathlib import Path
     from django.utils import timezone
     from datetime import timedelta
+    import psutil
     
     try:
+        # ✅ CPU 保護機制：檢查 CPU 使用率
+        cpu_percent = psutil.cpu_percent(interval=1)
+        if cpu_percent > 60.0:
+            logger.warning(
+                f'[Celery] ⚠️  CPU 使用率過高 ({cpu_percent}%)，'
+                f'延遲執行 auto_analyze_missing_fatal_errors_task'
+            )
+            # 延遲 5 分鐘後重試
+            raise self.retry(countdown=300)
+        
         logger.info(
             f'[Celery] 🔍 開始掃描缺失的 Fatal Error 分析 - '
-            f'Limit: {limit}, Days: {days}'
+            f'Limit: {limit}, Days: {days}, CPU: {cpu_percent}%'
         )
         
         # 計算時間範圍
@@ -6837,7 +6873,7 @@ def collect_network_quality_task(self, dhcp_server_id: int = None):
     """
     import psutil
     
-    CPU_THRESHOLD = 80
+    CPU_THRESHOLD = 60  # ✅ 從 80% 降低到 60%
     
     try:
         # ========== CPU 使用率檢查 ==========

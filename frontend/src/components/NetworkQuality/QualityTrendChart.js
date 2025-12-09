@@ -114,6 +114,25 @@ const QualityTrendChart = ({
         return transformChartData(historyData, selectedSwitchIds);
     }, [historyData, selectedSwitchIds]);
     
+    // 計算時間跨度（用於決定時間格式）
+    const timeSpanInfo = useMemo(() => {
+        if (!chartData || chartData.length < 2) {
+            return { spanMinutes: 0, needsDate: false };
+        }
+        const first = new Date(chartData[0].timestamp);
+        const last = new Date(chartData[chartData.length - 1].timestamp);
+        const spanMs = last - first;
+        const spanMinutes = spanMs / (1000 * 60);
+        const spanHours = spanMinutes / 60;
+        
+        return {
+            spanMinutes,
+            spanHours,
+            needsDate: spanHours > 24,  // 超過 24 小時顯示日期
+            needsSeconds: spanMinutes < 5  // 少於 5 分鐘顯示秒
+        };
+    }, [chartData]);
+    
     // 計算 Y 軸最大值（用於品質區域）
     const yAxisMax = useMemo(() => {
         if (!chartData || chartData.length === 0) return 20;
@@ -131,6 +150,12 @@ const QualityTrendChart = ({
         // 確保至少顯示到 20ms，讓品質區域可見
         return Math.max(Math.ceil(maxValue * 1.2), 20);
     }, [chartData, selectedSwitchIds, metric]);
+    
+    // 計算唯一時間點數量
+    const uniqueTimePoints = useMemo(() => {
+        if (!chartData) return 0;
+        return chartData.length;
+    }, [chartData]);
     
     const metricConfig = {
         latency: { 
@@ -153,13 +178,32 @@ const QualityTrendChart = ({
     const config = metricConfig[metric] || metricConfig.latency;
     const qualityLevels = QUALITY_LEVELS[metric] || QUALITY_LEVELS.latency;
     
-    // 格式化時間戳
+    // 格式化時間戳（根據時間跨度智能選擇格式）
     const formatTime = (timestamp) => {
         const date = new Date(timestamp);
-        return date.toLocaleTimeString('zh-TW', { 
-            hour: '2-digit', 
-            minute: '2-digit' 
-        });
+        
+        if (timeSpanInfo.needsDate) {
+            // 超過 24 小時，顯示 月/日 時:分
+            return date.toLocaleString('zh-TW', { 
+                month: 'numeric',
+                day: 'numeric',
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+        } else if (timeSpanInfo.needsSeconds) {
+            // 少於 5 分鐘，顯示 時:分:秒
+            return date.toLocaleTimeString('zh-TW', { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        } else {
+            // 正常情況，顯示 時:分
+            return date.toLocaleTimeString('zh-TW', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+        }
     };
     
     // 格式化日期時間（用於 Tooltip）
@@ -179,24 +223,34 @@ const QualityTrendChart = ({
                 <Space>
                     <span>📈 延遲趨勢圖</span>
                     <QualityLegend levels={qualityLevels} />
+                    {uniqueTimePoints > 0 && uniqueTimePoints < 3 && (
+                        <Tag color="warning" style={{ marginLeft: 8 }}>
+                            數據收集中（{uniqueTimePoints} 個時間點）
+                        </Tag>
+                    )}
                 </Space>
             }
             extra={
-                <Select
-                    mode="multiple"
-                    placeholder="選擇 Switch"
-                    value={selectedSwitchIds}
-                    onChange={onSwitchChange}
-                    style={{ minWidth: 250 }}
-                    maxTagCount={2}
-                    allowClear
-                >
-                    {switches.map(sw => (
-                        <Select.Option key={sw.switch_id} value={sw.switch_id}>
-                            {sw.switch_name} ({sw.ip_address || 'N/A'})
-                        </Select.Option>
-                    ))}
-                </Select>
+                <Space>
+                    {selectedSwitchIds.length > 5 && (
+                        <Tag color="warning">建議選擇 ≤5 個 Switch</Tag>
+                    )}
+                    <Select
+                        mode="multiple"
+                        placeholder="選擇 Switch（建議 1-3 個）"
+                        value={selectedSwitchIds}
+                        onChange={onSwitchChange}
+                        style={{ minWidth: 280 }}
+                        maxTagCount={2}
+                        allowClear
+                    >
+                        {switches.map(sw => (
+                            <Select.Option key={sw.switch_id} value={sw.switch_id}>
+                                {sw.switch_name} ({sw.ip_address || 'N/A'})
+                            </Select.Option>
+                        ))}
+                    </Select>
+                </Space>
             }
             style={{ marginBottom: '24px' }}
         >
@@ -225,6 +279,8 @@ const QualityTrendChart = ({
                                 tickFormatter={formatTime}
                                 tick={{ fontSize: 11 }}
                                 axisLine={{ stroke: '#d9d9d9' }}
+                                interval="preserveStartEnd"
+                                minTickGap={50}
                             />
                             <YAxis 
                                 domain={[0, yAxisMax]}
@@ -270,18 +326,22 @@ const QualityTrendChart = ({
                                     }
                                     return value;
                                 }}
+                                wrapperStyle={{
+                                    paddingTop: '10px',
+                                    fontSize: '12px'
+                                }}
                             />
-                            {selectedSwitchIds.map((switchId, index) => (
+                            {selectedSwitchIds.slice(0, 10).map((switchId, index) => (
                                 <Line
                                     key={switchId}
                                     type="monotone"
                                     dataKey={`switch_${switchId}${config.suffix}`}
                                     name={`switch_${switchId}${config.suffix}`}
                                     stroke={COLORS[index % COLORS.length]}
-                                    dot={{ r: 3, fill: COLORS[index % COLORS.length] }}
+                                    dot={{ r: 4, fill: COLORS[index % COLORS.length] }}
                                     strokeWidth={2}
                                     connectNulls
-                                    activeDot={{ r: 5, strokeWidth: 2 }}
+                                    activeDot={{ r: 6, strokeWidth: 2 }}
                                 />
                             ))}
                         </LineChart>
@@ -290,8 +350,10 @@ const QualityTrendChart = ({
                     <Empty 
                         description={
                             selectedSwitchIds.length === 0 
-                                ? "請選擇要查看的 Switch" 
-                                : "暫無數據"
+                                ? "請選擇要查看的 Switch（建議選擇 1-3 個）" 
+                                : uniqueTimePoints < 2
+                                    ? "數據點不足，趨勢圖需要至少 2 個時間點的數據。請等待定時任務收集更多數據（每 5 分鐘收集一次）"
+                                    : "暫無數據"
                         } 
                     />
                 )}

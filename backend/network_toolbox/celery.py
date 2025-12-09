@@ -163,7 +163,7 @@ app.conf.beat_schedule = {
         'task': 'api.tasks.auto_store_jenkins_builds_task',
         'schedule': crontab(minute=45),  # ✅ 改為每小時 XX:45 執行（降低頻率，錯開 NAS I/O）
         'kwargs': {
-            'limit': 100        # ✅ 每次處理 100 個 Builds（因頻率降低而增加批次）
+            'limit': 20        # ✅ 降低到 20 個（避免 CPU 過載，從 100 改為 20）
         },
         'options': {
             'expires': 900,   # 任務超時 15 分鐘（避免與下次重疊）
@@ -245,24 +245,25 @@ app.conf.beat_schedule = {
     },
     
     # 任務 18：補充缺失的 Fatal Error 分析（每小時 15 分）
-    'auto-analyze-missing-fatal-errors-hourly': {
-        'task': 'api.tasks.auto_analyze_missing_fatal_errors_task',
-        'schedule': crontab(minute=15),  # 每小時 XX:15 執行
-        'kwargs': {
-            'limit': 50,       # 每次處理最多 50 個 Builds
-            'days': 7          # 檢查最近 7 天的 Builds
-        },
-        'options': {
-            'expires': 2700,   # 任務超時 45 分鐘（避免與下次重疊）
-        }
-    },
+    # ✅ 已取消：避免與每日批量處理重複，減少 CPU 負載
+    # 'auto-analyze-missing-fatal-errors-hourly': {
+    #     'task': 'api.tasks.auto_analyze_missing_fatal_errors_task',
+    #     'schedule': crontab(minute=15),  # 每小時 XX:15 執行
+    #     'kwargs': {
+    #         'limit': 50,       # 每次處理最多 50 個 Builds
+    #         'days': 7          # 檢查最近 7 天的 Builds
+    #     },
+    #     'options': {
+    #         'expires': 2700,   # 任務超時 45 分鐘（避免與下次重疊）
+    #     }
+    # },
     
     # 任務 19：補充缺失的 Fatal Error 分析（每日批量處理，凌晨 2:30）
     'auto-analyze-missing-fatal-errors-daily': {
         'task': 'api.tasks.auto_analyze_missing_fatal_errors_task',
         'schedule': crontab(hour=2, minute=30),  # 每天 02:30 執行
         'kwargs': {
-            'limit': 200,      # 每次處理最多 200 個 Builds
+            'limit': 100,      # ✅ 降低到 100 個（避免 CPU 過載，從 200 改為 100）
             'days': 30         # 檢查最近 30 天的 Builds
         },
         'options': {
@@ -277,8 +278,8 @@ app.conf.beat_schedule = {
         'kwargs': {
             'max_age_days': 30,           # 清理超過 30 天的資料
             'dry_run': False,             # 正式執行模式
-            'cpu_high_threshold': 80.0,   # CPU 上限 80%
-            'cpu_low_threshold': 60.0,    # CPU 恢復閾值 60%
+            'cpu_high_threshold': 60.0,   # ✅ CPU 上限 60%（從 80% 改為 60%）
+            'cpu_low_threshold': 45.0,    # ✅ CPU 恢復閾值 45%（從 60% 改為 45%）
             'batch_size': 10,             # 每批 10 個資料夾
             'batch_delay': 2.0            # 批次間隔 2 秒
         },

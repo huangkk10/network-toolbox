@@ -10,10 +10,14 @@ import re
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from django.utils import timezone
 from django.db.models import Avg, Min, Max, Count
 
 logger = logging.getLogger(__name__)
+
+# 並行執行的最大線程數
+MAX_PING_WORKERS = 10
 
 
 class NetworkQualityService:
@@ -183,9 +187,30 @@ class NetworkQualityService:
         status_map = {0: 'good', 1: 'warning', 2: 'critical'}
         return status_map.get(max_score, 'unknown')
     
+    def _test_single_switch(self, switch_info: tuple) -> Dict:
+        """
+        測試單個 Switch 的連接品質（用於並行執行）
+        
+        Args:
+            switch_info: (switch_id, switch_name, ip_address) 元組
+            
+        Returns:
+            Dict: 包含 switch 資訊和測試結果
+        """
+        switch_id, switch_name, ip_address = switch_info
+        test_result = self.test_switch_connectivity(ip_address)
+        return {
+            'switch_id': switch_id,
+            'switch_name': switch_name,
+            'ip_address': ip_address,
+            **test_result
+        }
+    
     def collect_server_quality(self, server_id: int) -> Dict:
         """
         收集指定 DHCP Server 下所有 Switch 的網路品質數據
+        
+        使用並行 ping 來提高效率，最多同時執行 MAX_PING_WORKERS 個 ping 測試
         
         Args:
             server_id: DHCP Server ID
@@ -201,52 +226,83 @@ class NetworkQualityService:
             return {'error': f'DHCP Server {server_id} not found'}
         
         # 取得此伺服器關聯的所有 Switch（有設置 IP 地址的）
-        switches = NetworkSwitch.objects.filter(
+        switches = list(NetworkSwitch.objects.filter(
             dhcp_server=server,
             ip_address__isnull=False
-        )
+        ).values_list('id', 'name', 'ip_address'))
+        
+        if not switches:
+            return {
+                'server_id': server_id,
+                'server_name': server.name,
+                'total_switches': 0,
+                'total_records': 0,
+                'success_count': 0,
+                'error_count': 0,
+                'results': []
+            }
+        
+        logger.info(f"並行測試 Server {server.name} 的 {len(switches)} 個 Switch（最多 {MAX_PING_WORKERS} 個並行）")
         
         results = []
         success_count = 0
         error_count = 0
         
-        for switch in switches:
-            logger.info(f"測試 Switch {switch.name or switch.remote_id} ({switch.ip_address})")
+        # 使用 ThreadPoolExecutor 並行執行 ping 測試
+        with ThreadPoolExecutor(max_workers=MAX_PING_WORKERS) as executor:
+            # 提交所有任務
+            future_to_switch = {
+                executor.submit(self._test_single_switch, (sw_id, sw_name or f'Switch-{sw_id}', sw_ip)): sw_id
+                for sw_id, sw_name, sw_ip in switches
+            }
             
-            test_result = self.test_switch_connectivity(switch.ip_address)
-            
-            # 儲存測試結果到資料庫（適配現有模型欄位）
-            is_reachable = test_result.get('success', False)
-            latency = test_result.get('latency') or 0
-            packet_loss = test_result.get('packet_loss') or (100 if not is_reachable else 0)
-            
-            record = NetworkQualityRecord.objects.create(
-                dhcp_server=server,
-                switch=switch,
-                latency_ms=latency,
-                latency_min_ms=test_result.get('min_latency'),
-                latency_max_ms=test_result.get('max_latency'),
-                packet_loss=packet_loss,
-                jitter_ms=test_result.get('jitter'),
-                is_reachable=is_reachable,
-                packets_sent=5,  # ping -c 5
-                packets_received=int(5 * (100 - packet_loss) / 100) if packet_loss is not None else 5,
-                error_message=test_result.get('error', ''),
-            )
-            
-            if is_reachable:
-                success_count += 1
-            else:
-                error_count += 1
-            
-            results.append({
-                'switch_id': switch.id,
-                'switch_name': switch.name or switch.remote_id,
-                'ip_address': switch.ip_address,
-                'record_id': record.id,
-                'status': record.quality_status,
-                **test_result
-            })
+            # 收集結果
+            for future in as_completed(future_to_switch):
+                switch_id = future_to_switch[future]
+                try:
+                    test_result = future.result()
+                    
+                    # 獲取 Switch 對象（用於儲存記錄）
+                    switch = NetworkSwitch.objects.get(id=test_result['switch_id'])
+                    
+                    # 儲存測試結果到資料庫
+                    is_reachable = test_result.get('success', False)
+                    latency = test_result.get('latency') or 0
+                    packet_loss = test_result.get('packet_loss') or (100 if not is_reachable else 0)
+                    
+                    record = NetworkQualityRecord.objects.create(
+                        dhcp_server=server,
+                        switch=switch,
+                        latency_ms=latency,
+                        latency_min_ms=test_result.get('min_latency'),
+                        latency_max_ms=test_result.get('max_latency'),
+                        packet_loss=packet_loss,
+                        jitter_ms=test_result.get('jitter'),
+                        is_reachable=is_reachable,
+                        packets_sent=5,
+                        packets_received=int(5 * (100 - packet_loss) / 100) if packet_loss is not None else 5,
+                        error_message=test_result.get('error', ''),
+                    )
+                    
+                    if is_reachable:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                    
+                    results.append({
+                        'switch_id': switch.id,
+                        'switch_name': switch.name or switch.remote_id,
+                        'ip_address': switch.ip_address,
+                        'record_id': record.id,
+                        'status': record.quality_status,
+                        **test_result
+                    })
+                    
+                except Exception as exc:
+                    logger.error(f"Switch {switch_id} 測試失敗: {exc}")
+                    error_count += 1
+        
+        logger.info(f"Server {server.name} 測試完成: {success_count} 成功, {error_count} 失敗")
         
         return {
             'server_id': server_id,
