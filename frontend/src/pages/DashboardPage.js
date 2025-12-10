@@ -428,10 +428,10 @@ const DashboardPage = () => {
                 </Col>
             </Row>
 
-            {/* 過去7天頁面瀏覽趨勢 */}
+            {/* 過去7天使用人數趨勢 */}
             {websiteUsage.trend && websiteUsage.trend.length > 0 && (
                 <Card
-                    title="📈 過去 7 天頁面瀏覽趨勢"
+                    title="📈 過去 7 天使用人數趨勢"
                     style={{ marginTop: 16 }}
                 >
                     <ResponsiveContainer width="100%" height={300}>
@@ -443,21 +443,21 @@ const DashboardPage = () => {
                             />
                             <YAxis
                                 tick={{ fontSize: 12 }}
-                                label={{ value: '瀏覽次數', angle: -90, position: 'insideLeft' }}
+                                label={{ value: '使用人數', angle: -90, position: 'insideLeft' }}
                             />
                             <Tooltip
                                 contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
-                                formatter={(value) => [`${value} 次`, '頁面瀏覽']}
+                                formatter={(value) => [`${value} 人`, '唯一訪客']}
                             />
                             <Legend />
                             <Line
                                 type="monotone"
-                                dataKey="page_views"
+                                dataKey="unique_visitors"
                                 stroke="#2196f3"
                                 strokeWidth={3}
                                 dot={{ fill: '#2196f3', r: 5 }}
                                 activeDot={{ r: 7 }}
-                                name="頁面瀏覽次數"
+                                name="每日使用人數"
                             />
                         </LineChart>
                     </ResponsiveContainer>

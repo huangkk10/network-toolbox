@@ -18,12 +18,17 @@ class WebsiteUsageMiddleware(MiddlewareMixin):
     
     統計內容：
     1. 總頁面瀏覽次數
-    2. 唯一訪客數（基於 IP）
+    2. 唯一訪客數（優先基於登入帳戶，否則基於 Session/IP）
     3. API 請求次數（按 HTTP 方法分類）
     4. 各頁面訪問次數（Dashboard、DHCP、iPXE、Jenkins、Ansible）
     5. 功能使用次數（DHCP 同步、iPXE 操作、Jenkins Build、Ansible 執行）
     6. 錯誤統計（4xx、5xx）
     7. 熱門頁面和 API 端點
+    8. 最活躍使用者統計（登入用戶）
+    
+    唯一訪客計算規則：
+    - 如果用戶已登入：以帳戶 username 作為唯一識別（同一帳戶每天只計算一次）
+    - 如果用戶未登入：以 Session 或 IP 地址作為唯一識別
     """
     
     # 排除不需要統計的路徑
@@ -100,10 +105,47 @@ class WebsiteUsageMiddleware(MiddlewareMixin):
                 # 1. 總頁面瀏覽次數
                 stats.total_page_views += 1
                 
-                # 2. 唯一訪客數（基於 session 或 IP）
-                if not request.session.get(f'visited_today_{today}'):
+                # 2. 唯一訪客數（優先基於登入帳戶，否則基於 Session/IP）
+                visitor_key = None
+                if request.user and request.user.is_authenticated:
+                    # 如果有登入帳戶，使用帳戶作為唯一識別
+                    visitor_key = f'user_{request.user.username}'
+                else:
+                    # 未登入則使用 Session
+                    visitor_key = f'session_{request.session.session_key or request.META.get("REMOTE_ADDR", "unknown")}'
+                
+                # 記錄唯一訪客（檢查是否今天已經訪問過）
+                session_visited_key = f'visited_today_{today}_{visitor_key}'
+                if not request.session.get(session_visited_key):
                     stats.unique_visitors += 1
-                    request.session[f'visited_today_{today}'] = True
+                    request.session[session_visited_key] = True
+                    
+                    # 記錄使用者到 top_users（如果是登入用戶）
+                    if request.user and request.user.is_authenticated:
+                        if not isinstance(stats.top_users, list):
+                            stats.top_users = []
+                        
+                        # 檢查使用者是否已在列表中
+                        user_found = False
+                        for user_stat in stats.top_users:
+                            if user_stat.get('username') == request.user.username:
+                                user_stat['visit_count'] = user_stat.get('visit_count', 0) + 1
+                                user_found = True
+                                break
+                        
+                        # 如果是新使用者，添加到列表
+                        if not user_found:
+                            stats.top_users.append({
+                                'username': request.user.username,
+                                'visit_count': 1,
+                            })
+                        
+                        # 按訪問次數排序，只保留前10名
+                        stats.top_users = sorted(
+                            stats.top_users,
+                            key=lambda x: x.get('visit_count', 0),
+                            reverse=True
+                        )[:10]
                 
                 # 3. API 請求統計
                 if path.startswith('/api/'):
