@@ -105,20 +105,39 @@ class WebsiteUsageMiddleware(MiddlewareMixin):
                 # 1. 總頁面瀏覽次數
                 stats.total_page_views += 1
                 
-                # 2. 唯一訪客數（優先基於登入帳戶，否則基於 Session/IP）
+                # 2. 唯一訪客數（優先基於登入帳戶，否則基於 IP）
                 visitor_key = None
                 if request.user and request.user.is_authenticated:
                     # 如果有登入帳戶，使用帳戶作為唯一識別
                     visitor_key = f'user_{request.user.username}'
                 else:
-                    # 未登入則使用 Session
-                    visitor_key = f'session_{request.session.session_key or request.META.get("REMOTE_ADDR", "unknown")}'
+                    # 未登入則使用 IP 地址（避免 Session 尚未創建導致重複計數）
+                    ip_address = request.META.get('REMOTE_ADDR', 'unknown')
+                    # 如果有 X-Forwarded-For（通過 Nginx 代理），使用真實 IP
+                    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+                    if forwarded_for:
+                        ip_address = forwarded_for.split(',')[0].strip()
+                    visitor_key = f'ip_{ip_address}'
                 
-                # 記錄唯一訪客（檢查是否今天已經訪問過）
-                session_visited_key = f'visited_today_{today}_{visitor_key}'
-                if not request.session.get(session_visited_key):
+                # 記錄唯一訪客（使用資料庫記錄而非 Session，避免 API 請求無 Session 的問題）
+                visited_record_key = f'visited_{today}_{visitor_key}'
+                
+                # 檢查今天是否已經記錄過此訪客（使用 top_pages 的特殊欄位臨時存儲）
+                if not isinstance(stats.top_pages, dict):
+                    stats.top_pages = {}
+                
+                # 使用 _visitors_set 臨時存儲今天訪問過的 visitor_key（僅用於去重）
+                if '_visitors_set' not in stats.top_pages:
+                    stats.top_pages['_visitors_set'] = []
+                
+                visitors_set = stats.top_pages['_visitors_set']
+                if visitor_key not in visitors_set:
                     stats.unique_visitors += 1
-                    request.session[session_visited_key] = True
+                    visitors_set.append(visitor_key)
+                    # 限制列表大小，避免過大（最多保留 1000 個）
+                    if len(visitors_set) > 1000:
+                        visitors_set = visitors_set[-1000:]
+                    stats.top_pages['_visitors_set'] = visitors_set
                     
                     # 記錄使用者到 top_users（如果是登入用戶）
                     if request.user and request.user.is_authenticated:
