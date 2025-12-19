@@ -18,6 +18,9 @@ from .models import DHCPServer, DHCPLog, DHCPLease, DHCPScope, JenkinsBuild, Jen
 from .services import DHCPLogService
 from library.services.jenkins_storage_service import JenkinsStorageService
 
+# CPU 保護機制
+from library.utils.cpu_protection import cpu_protected_task
+
 logger = logging.getLogger(__name__)
 
 
@@ -1422,6 +1425,12 @@ def check_gitlab_connection_task(self):
     time_limit=3300,  # 硬限制 55 分鐘
     soft_time_limit=3000  # 軟限制 50 分鐘
 )
+@cpu_protected_task(
+    high_threshold=70.0,    # CPU > 70% 時等待
+    low_threshold=50.0,     # 等到 CPU < 50% 才執行
+    max_wait=300,           # 最多等待 5 分鐘
+    skip_on_timeout=True    # 等太久則跳過
+)
 def auto_store_workspaces(self, dry_run=False, max_builds=10):
     """
     自動存儲 Jenkins Workspace 到 NAS
@@ -1730,6 +1739,12 @@ def auto_store_workspaces(self, dry_run=False, max_builds=10):
     time_limit=3600,  # 硬限制 1 小時
     soft_time_limit=3300  # 軟限制 55 分鐘
 )
+@cpu_protected_task(
+    high_threshold=70.0,    # CPU > 70% 時等待
+    low_threshold=50.0,     # 等到 CPU < 50% 才執行
+    max_wait=300,           # 最多等待 5 分鐘
+    skip_on_timeout=True    # 等太久則跳過（10 分鐘後下一個週期會再執行）
+)
 def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_days=3):
     """
     同步 Jenkins Builds 到資料庫（只處理新 Builds）
@@ -1907,6 +1922,12 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                 building = build_data.get('building', False)
                                 duration = build_data.get('duration', 0)
                                 url = build_data.get('url', '')
+                                parameters = build_data.get('parameters', {})  # 🆕 獲取 Build 參數
+                                git_branch = build_data.get('git_branch', '')  # 🆕 獲取 Git Branch（從 SCM）
+                                
+                                # 🆕 將 git_branch 存入 parameters（以便後續批量更新能讀取）
+                                if git_branch and not parameters.get('GIT_BRANCH'):
+                                    parameters['GIT_BRANCH'] = git_branch
                                 
                                 # 轉換時間戳
                                 timestamp = build_data.get('timestamp', 0) / 1000
@@ -1917,7 +1938,7 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                     builds_skipped += 1
                                     continue
                                 
-                                # 🆕 創建 Build 記錄
+                                # 🆕 創建 Build 記錄（包含 parameters）
                                 build = JenkinsBuild.objects.create(
                                     job=job,
                                     build_number=build_number,
@@ -1927,9 +1948,25 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                                     is_building=building,
                                     duration=duration,
                                     build_timestamp=build_timestamp,
+                                    parameters=parameters,  # 🆕 保存 Build 參數
                                 )
                                 builds_created += 1
                                 logger.debug(f'[Celery]     ✅ 創建 Build: {job.name} #{build_number} ({result})')
+                                
+                                # 🆕 從 git_branch（SCM）或 parameters 中提取 branch 並更新 Job
+                                # 優先使用 git_branch（從 Git SCM BuildData 取得），其次是 parameters
+                                branch = git_branch or (
+                                    parameters.get('BRANCH') or 
+                                    parameters.get('GIT_BRANCH') or 
+                                    parameters.get('branch') or 
+                                    parameters.get('git_branch') or
+                                    ''
+                                ) if parameters else ''
+                                
+                                if branch and branch != job.current_branch:
+                                    job.current_branch = branch
+                                    job_needs_update = True
+                                    logger.debug(f'[Celery]     🌿 更新 Job branch: {branch}')
                                 
                                 # ✅ V2 優化：標記 Job 需要更新（不立即 save）
                                 if not job.last_build_time or build_timestamp > job.last_build_time:
@@ -2114,12 +2151,32 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
                 if client:
                     client.close()
         
-        # ✅ V2 優化：批量更新所有 Jobs
+        # ✅ V2 優化：批量更新所有 Jobs（包含 current_branch）
         if jobs_to_update:
             try:
+                # 🆕 更新每個 Job 的 current_branch（從最新 Build 的 parameters 取得）
+                for job in jobs_to_update:
+                    try:
+                        latest_build = JenkinsBuild.objects.filter(job=job).order_by('-build_number').first()
+                        if latest_build and latest_build.parameters:
+                            # 嘗試從 parameters 中取得 branch 資訊
+                            # 支援多種參數名稱：BRANCH, GIT_BRANCH, branch, git_branch
+                            params = latest_build.parameters
+                            branch = (
+                                params.get('BRANCH') or 
+                                params.get('GIT_BRANCH') or 
+                                params.get('branch') or 
+                                params.get('git_branch') or
+                                ''
+                            )
+                            if branch:
+                                job.current_branch = branch
+                    except Exception as e:
+                        logger.warning(f'[Celery] ⚠️ 無法更新 Job {job.name} 的 current_branch: {e}')
+                
                 JenkinsJob.objects.bulk_update(
                     jobs_to_update,
-                    ['last_build_time', 'last_build_number', 'last_build_status'],
+                    ['last_build_time', 'last_build_number', 'last_build_status', 'current_branch'],
                     batch_size=100
                 )
                 logger.info(f'[Celery] 📊 批量更新 {len(jobs_to_update)} 個 Jobs')
@@ -2198,6 +2255,12 @@ def sync_jenkins_builds(self, server_id=None, max_builds_per_job=20, max_age_day
     name='api.tasks.sync_active_jenkins_builds',
     max_retries=2,
     time_limit=60  # 1 分鐘超時
+)
+@cpu_protected_task(
+    high_threshold=80.0,    # CPU > 80% 時才等待（輕量任務可提高閾值）
+    low_threshold=60.0,     # 等到 CPU < 60% 才執行
+    max_wait=30,            # 最多等待 30 秒（因為是 1 分鐘執行一次）
+    skip_on_timeout=True    # 等太久則跳過
 )
 def sync_active_jenkins_builds(self, server_id=None):
     """
@@ -3588,6 +3651,12 @@ def store_jenkins_build_task(self, build_id: int) -> Dict[str, Any]:
     time_limit=600,
     soft_time_limit=540
 )
+@cpu_protected_task(
+    high_threshold=70.0,    # CPU > 70% 時等待
+    low_threshold=50.0,     # 等到 CPU < 50% 才執行
+    max_wait=300,           # 最多等待 5 分鐘
+    skip_on_timeout=True    # 等太久則跳過
+)
 def auto_store_jenkins_builds_task(self, limit: int = 20) -> Dict[str, Any]:
     """
     自動掃描並存儲未存儲的 Jenkins Builds
@@ -4344,6 +4413,12 @@ def store_jenkins_artifacts_task(self, build_id):
     time_limit=7200,  # 硬限制 2 小時
     soft_time_limit=6900  # 軟限制 1 小時 55 分鐘
 )
+@cpu_protected_task(
+    high_threshold=70.0,    # CPU > 70% 時等待
+    low_threshold=50.0,     # 等到 CPU < 50% 才執行
+    max_wait=300,           # 最多等待 5 分鐘
+    skip_on_timeout=True    # 等太久則跳過
+)
 def auto_store_jenkins_artifacts_task(self, max_builds=50, max_age_hours=168):
     """
     自動批量存儲 Jenkins Artifacts 到 NAS（定時任務）
@@ -4947,6 +5022,12 @@ def sync_ntp_time_task(self):
     default_retry_delay=300,  # 失敗後 5 分鐘重試
     time_limit=1800,  # 硬限制 30 分鐘
     soft_time_limit=1650  # 軟限制 27.5 分鐘
+)
+@cpu_protected_task(
+    high_threshold=70.0,    # CPU > 70% 時等待
+    low_threshold=50.0,     # 等到 CPU < 50% 才執行
+    max_wait=300,           # 最多等待 5 分鐘
+    skip_on_timeout=True    # 等太久則跳過
 )
 def sync_all_jenkins_jobs_task(self, server_id=None):
     """

@@ -384,6 +384,16 @@ class JenkinsJobViewSet(viewsets.ModelViewSet):
         if view_name:
             queryset = queryset.filter(view_name=view_name)
         
+        # 🆕 按 Branch 過濾
+        branch = self.request.query_params.get('branch')
+        if branch:
+            if branch == '__empty__':
+                # 特殊值表示「未設定」的 Branch
+                queryset = queryset.filter(Q(current_branch__isnull=True) | Q(current_branch=''))
+            else:
+                queryset = queryset.filter(current_branch=branch)
+            logger.info(f"Branch 篩選: {branch}")
+        
         # 按 Build 狀態過濾（使用 last_build_status 欄位）
         status_filter = self.request.query_params.get('status')
         if status_filter:

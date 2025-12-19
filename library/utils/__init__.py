@@ -49,6 +49,15 @@ from .cache_decorators import (
     warm_cache,
 )
 
+# CPU 保護工具
+from .cpu_protection import (
+    cpu_protected_task,
+    check_cpu_before_task,
+    TaskCPUGuard,
+    CPUProtectionConfig,
+    get_cpu_protection_stats,
+)
+
 __all__ = [
     # MAC 工具
     'parse_windows_client_id',
@@ -80,4 +89,10 @@ __all__ = [
     'cache_jenkins_log',
     'get_cache_stats',
     'warm_cache',
+    # CPU 保護工具
+    'cpu_protected_task',
+    'check_cpu_before_task',
+    'TaskCPUGuard',
+    'CPUProtectionConfig',
+    'get_cpu_protection_stats',
 ]

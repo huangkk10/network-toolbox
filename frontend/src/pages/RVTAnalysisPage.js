@@ -44,6 +44,7 @@ import {
     DownOutlined,
     SaveOutlined,
     SettingOutlined,
+    BranchesOutlined,
 } from '@ant-design/icons';
 import axios from 'axios';
 import dayjs from 'dayjs';
@@ -137,6 +138,7 @@ const RVTAnalysisPage = () => {
         return {
             server_id: params.get('server_id') ? parseInt(params.get('server_id')) : null,
             view_name: params.get('view_name') || null,
+            branch: params.get('branch') || null,  // 🆕 新增 Branch 篩選
             status: params.get('status') || null,
             failed_stage: params.get('failed_stage') || null,  // 🆕 新增 Failed Stage 篩選
             date_range: dateRange,
@@ -188,6 +190,9 @@ const RVTAnalysisPage = () => {
     // View 列表（從 Jobs 中提取唯一的 view_name）
     const [availableViews, setAvailableViews] = useState([]);
     
+    // 🆕 Branch 列表（從 Jobs 中提取唯一的 current_branch）
+    const [availableBranches, setAvailableBranches] = useState([]);
+
     // 更新 URL 參數（保持篩選條件持久化）
     const updateURLParams = (newFilters, newQuickDateFilter = null) => {
         const params = new URLSearchParams(location.search);
@@ -203,6 +208,13 @@ const RVTAnalysisPage = () => {
             params.set('view_name', newFilters.view_name);
         } else {
             params.delete('view_name');
+        }
+        
+        // 🆕 Branch 參數
+        if (newFilters.branch) {
+            params.set('branch', newFilters.branch);
+        } else {
+            params.delete('branch');
         }
         
         if (newFilters.status) {
@@ -367,6 +379,45 @@ const RVTAnalysisPage = () => {
         }
     };
     
+    // 🆕 載入可用的 Branch 列表（根據當前選擇的伺服器）
+    const fetchAvailableBranches = async (serverId = null) => {
+        try {
+            // 根據 serverId 過濾 Jobs
+            let url = '/api/jenkins-jobs/';
+            if (serverId) {
+                url += `?server_id=${serverId}`;
+            }
+            
+            const response = await axios.get(url);
+            
+            // 提取唯一的 Branch 名稱列表
+            // 將空字串的 branch 標記為特殊值 '__empty__'
+            const branchCounts = {};
+            response.data.forEach(job => {
+                const branch = job.current_branch || '__empty__';
+                branchCounts[branch] = (branchCounts[branch] || 0) + 1;
+            });
+            
+            // 轉換為選項列表並排序
+            const branchOptions = Object.entries(branchCounts)
+                .map(([branch, count]) => ({
+                    value: branch,
+                    label: branch === '__empty__' ? '未設定' : branch,
+                    count: count
+                }))
+                .sort((a, b) => {
+                    // '未設定' 放最後
+                    if (a.value === '__empty__') return 1;
+                    if (b.value === '__empty__') return -1;
+                    return a.label.localeCompare(b.label);
+                });
+            
+            setAvailableBranches(branchOptions);
+        } catch (error) {
+            console.error('載入 Branch 列表失敗:', error);
+        }
+    };
+
     // 🆕 載入可用的 Failed Stage 列表
     const fetchAvailableFailedStages = async (serverId = null) => {
         try {
@@ -410,6 +461,10 @@ const RVTAnalysisPage = () => {
             if (activeFilters.view_name) {
                 params.push(`view_name=${encodeURIComponent(activeFilters.view_name)}`);
             }
+            // 🆕 新增 Branch 篩選
+            if (activeFilters.branch) {
+                params.push(`branch=${encodeURIComponent(activeFilters.branch)}`);
+            }
             if (activeFilters.status) {
                 params.push(`status=${activeFilters.status}`);
             }
@@ -444,6 +499,7 @@ const RVTAnalysisPage = () => {
                 server_name: job.server_name || `Server ${job.server}`,
                 name: job.name,
                 view_name: job.view_name || '',  // ← 添加 view_name 字段
+                current_branch: job.current_branch || '',  // ← 添加 current_branch 字段
                 status: job.status,
                 last_build_time: job.last_build_time || 'N/A',
                 last_build_status: job.last_build_status || null,  // ← 添加 last_build_status
@@ -783,6 +839,23 @@ const RVTAnalysisPage = () => {
             },
         },
         {
+            title: 'Branch',
+            dataIndex: 'current_branch',
+            key: 'branch',
+            width: 120,
+            render: (text, record) => {
+                if (record.type === 'job') {
+                    if (text) {
+                        return <Tag color="cyan">{text}</Tag>;
+                    } else {
+                        return <Tag color="default">未設定</Tag>;
+                    }
+                } else {
+                    return <span style={{ color: '#ccc' }}>-</span>;
+                }
+            },
+        },
+        {
             title: 'View',
             dataIndex: 'view_name',
             key: 'view_name',
@@ -985,6 +1058,7 @@ const RVTAnalysisPage = () => {
         setTimeRange(range);
         fetchStatistics(range);  // 使用 URL 中的時間範圍
         fetchAvailableViews(filters.server_id);
+        fetchAvailableBranches(filters.server_id);  // 🆕 載入 Branch 列表
         
         // 🆕 如果 URL 中 status 為 FAILURE，載入 Failed Stages 列表
         if (filters.status === 'FAILURE') {
@@ -1230,10 +1304,12 @@ const RVTAnalysisPage = () => {
                                             allowClear
                                             value={filters.server_id}
                                             onChange={(value) => {
-                                                const newFilters = { ...filters, server_id: value, view_name: null };
+                                                // 切換伺服器時，同時清除 view_name 和 branch
+                                                const newFilters = { ...filters, server_id: value, view_name: null, branch: null };
                                                 setFilters(newFilters);
                                                 updateURLParams(newFilters);
                                                 fetchAvailableViews(value);
+                                                fetchAvailableBranches(value);  // 🆕 重新載入 Branch 列表
                                             }}
                                             size="small"
                                             getPopupContainer={() => document.body}
@@ -1274,6 +1350,39 @@ const RVTAnalysisPage = () => {
                                                 <Option key={view} value={view}>
                                                     <FolderOutlined style={{ marginRight: 6, fontSize: 12 }} />
                                                     {view}
+                                                </Option>
+                                            ))}
+                                        </Select>
+                                    </Space>
+                                </Col>
+                                
+                                {/* 🆕 Branch */}
+                                <Col flex="auto" style={{ maxWidth: 200 }}>
+                                    <Space size={4} style={{ width: '100%', flexWrap: 'nowrap' }}>
+                                        <span style={{ fontSize: 13, color: '#666', whiteSpace: 'nowrap' }}>Branch:</span>
+                                        <Select
+                                            placeholder="選擇 Branch"
+                                            style={{ flex: 1, minWidth: 0 }}
+                                            dropdownStyle={{ minWidth: 250 }}
+                                            allowClear
+                                            value={filters.branch}
+                                            onChange={(value) => {
+                                                const newFilters = { ...filters, branch: value };
+                                                setFilters(newFilters);
+                                                updateURLParams(newFilters);
+                                            }}
+                                            size="small"
+                                            showSearch
+                                            filterOption={(input, option) =>
+                                                option.children.props?.children?.[1]?.toLowerCase().indexOf(input.toLowerCase()) >= 0 ||
+                                                option.children?.toLowerCase?.().indexOf(input.toLowerCase()) >= 0
+                                            }
+                                            getPopupContainer={() => document.body}
+                                        >
+                                            {availableBranches.map(branch => (
+                                                <Option key={branch.value} value={branch.value}>
+                                                    <BranchesOutlined style={{ marginRight: 6, fontSize: 12 }} />
+                                                    {branch.label} ({branch.count})
                                                 </Option>
                                             ))}
                                         </Select>

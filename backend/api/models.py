@@ -804,6 +804,9 @@ class JenkinsJob(models.Model):
     last_build_status = models.CharField(max_length=50, blank=True, verbose_name='最後 Build 狀態')
     last_build_time = models.DateTimeField(null=True, blank=True, verbose_name='最後 Build 時間')
     
+    # 分支資訊
+    current_branch = models.CharField(max_length=200, blank=True, default='', verbose_name='目前分支')
+    
     # 統計
     total_builds = models.IntegerField(default=0, verbose_name='Build 總數')
     success_rate = models.FloatField(default=0.0, verbose_name='成功率 (%)')

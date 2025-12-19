@@ -168,13 +168,53 @@ class JenkinsClient:
             limit: 返回的 Build 數量限制
             
         Returns:
-            list: Build 列表
+            list: Build 列表（包含 parameters 和 git_branch）
         """
-        # 使用 tree 參數只獲取需要的字段，提高效率
-        url = f"{self.base_url}/job/{job_name}/api/json?tree=builds[number,url,result,timestamp,duration,building]{{0,{limit}}}"
+        # 使用 tree 參數獲取需要的字段，包含 actions 以獲取 parameters 和 Git 資訊
+        # actions[parameters[name,value]] 用於獲取 Build 參數
+        # actions[lastBuiltRevision[branch[name]]] 用於獲取 Git branch（從 BuildData）
+        url = f"{self.base_url}/job/{job_name}/api/json?tree=builds[number,url,result,timestamp,duration,building,actions[parameters[name,value],lastBuiltRevision[branch[name,SHA1]]]]{{0,{limit}}}"
         response = self._make_request('GET', url)
         data = response.json()
         builds = data.get('builds', [])
+        
+        # 解析每個 Build 的 parameters 和 git_branch
+        for build in builds:
+            parameters = {}
+            git_branch = None
+            git_sha = None
+            
+            actions = build.get('actions', [])
+            for action in actions:
+                if not action:
+                    continue
+                    
+                # 解析 Build 參數
+                if 'parameters' in action:
+                    for param in action.get('parameters', []):
+                        if param.get('name') and param.get('value') is not None:
+                            parameters[param['name']] = param['value']
+                
+                # 解析 Git branch（從 hudson.plugins.git.util.BuildData）
+                if 'lastBuiltRevision' in action:
+                    revision = action.get('lastBuiltRevision', {})
+                    branches = revision.get('branch', [])
+                    if branches and len(branches) > 0:
+                        branch_name = branches[0].get('name', '')
+                        # 移除各種 Git ref 前綴，只保留 branch 名稱
+                        # 例如: refs/remotes/origin/main -> main
+                        #       refs/heads/main -> main
+                        #       origin/main -> main
+                        for prefix in ['refs/remotes/origin/', 'refs/heads/', 'origin/']:
+                            if branch_name.startswith(prefix):
+                                branch_name = branch_name[len(prefix):]
+                                break
+                        git_branch = branch_name
+                        git_sha = branches[0].get('SHA1', '')
+            
+            build['parameters'] = parameters
+            build['git_branch'] = git_branch
+            build['git_sha'] = git_sha
         
         logger.info(f"獲取 Job '{job_name}' 的 Builds: 共 {len(builds)} 個")
         return builds
